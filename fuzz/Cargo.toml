@@ -1,5 +1,5 @@
 [package]
-name = "pass-mgr-fuzz"
+name = "vaultis-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -10,8 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-[dependencies.pass-mgr-core]
-path = "../crates/pass-mgr-core"
+[dependencies.vaultis-core]
+path = "../crates/vaultis-core"
 
 # Each target is one libfuzzer binary. They feed random bytes into the
 # untrusted-input parsers and assert the code never panics/over-allocates.

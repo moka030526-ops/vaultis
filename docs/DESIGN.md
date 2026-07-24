@@ -1,10 +1,10 @@
-# pass-mgr — Design Document
+# vaultis — Design Document
 
 _Last updated: 2026-06-15. Format version 4 (partitioned document store)._
 
 ## 1. Purpose
 
-`pass-mgr` is a **standalone, offline, two-password encrypted estate vault**. It
+`vaultis` is a **standalone, offline, two-password encrypted estate vault**. It
 keeps the things a family needs to settle an estate — account credentials, asset
 and liability records, real-estate details, trust/will documents, and free-text
 instructions — in one strongly-encrypted location on the local disk, together
@@ -381,7 +381,7 @@ breaking old vaults. Secrets are memory-locked (§9.6) and zeroized on drop.
   who has the file and guesses offline (§9.2, §9.7).
 - **History retains old passwords** in the (encrypted) vault by design (§9.4).
 - **Confidentiality, not anti-forensics.** The plaintext header leaks that this
-  is a pass-mgr vault and its KDF cost; file size leaks the rough data volume.
+  is a vaultis vault and its KDF cost; file size leaks the rough data volume.
 - **At-rest only.** Once unlocked, the key and plaintext live in process memory;
   a compromised host (malware, keylogger, debugger, cold-boot) defeats every
   in-process measure (§9.14). Memory zeroization/locking is best-effort (§9.6).
@@ -394,9 +394,9 @@ breaking old vaults. Secrets are memory-locked (§9.6) and zeroized on drop.
 
 ### 5.5 How this compares to BitLocker, Office/Excel passwords, and encrypted disks
 
-It is worth being precise about where `pass-mgr` sits relative to the encryption
+It is worth being precise about where `vaultis` sits relative to the encryption
 people already know, because the systems solve *different* problems and the
-honest comparison is "complementary, not competing." `pass-mgr` is **application-
+honest comparison is "complementary, not competing." `vaultis` is **application-
 level, file-scoped, authenticated encryption that you actively unlock and that
 re-locks** — it protects one small estate vault even while you are logged in and
 even from other programs running as you. Full-disk encryption (FDE) —
@@ -411,31 +411,31 @@ Three axes matter most:
 
 | | KDF (offline-guessing cost) | Cipher / integrity | Scope & escrow |
 |---|---|---|---|
-| **pass-mgr** | **Argon2id**, memory-hard (64 MiB), chained over **two** required passwords | **XChaCha20-Poly1305 AEAD** — authenticated; tampering fails closed | one file-set; **no escrow/recovery, no backdoor** |
+| **vaultis** | **Argon2id**, memory-hard (64 MiB), chained over **two** required passwords | **XChaCha20-Poly1305 AEAD** — authenticated; tampering fails closed | one file-set; **no escrow/recovery, no backdoor** |
 | **BitLocker** | volume key **sealed to the TPM** (+ optional PIN); not a memory-hard passphrase hash. 48-digit recovery key = 128-bit random | **AES-XTS** — confidentiality only, **no authentication** (malleable; tamper not detected) | whole volume; recovery key is often **escrowed** to AD/Azure/Microsoft account |
-| **LUKS2** | **Argon2id** (comparable to pass-mgr) | AES-XTS — **no authentication** by default (dm-integrity is separate) | whole volume; multiple key slots (any one unlocks) |
+| **LUKS2** | **Argon2id** (comparable to vaultis) | AES-XTS — **no authentication** by default (dm-integrity is separate) | whole volume; multiple key slots (any one unlocks) |
 | **FileVault / VeraCrypt** | **PBKDF2**, many iterations (fast on GPUs relative to Argon2id) | AES-XTS — no authentication | whole volume; FileVault offers a recovery-key escrow |
 | **Excel / Office (.xlsx, 2013+)** | **iterated SHA-512** (e.g. ~100 k spins) — *not* memory-hard, fast to crack on GPUs; older `.xls` RC4 is trivially broken, and "protect sheet/workbook" is just a removable flag, not encryption | AES-CBC + an HMAC integrity check (agile encryption) | one document; no escrow |
 
-The upshot: pass-mgr's **key-derivation hardness matches the strongest of these
+The upshot: vaultis's **key-derivation hardness matches the strongest of these
 (LUKS2's Argon2id)** and is far stronger than Excel's fast SHA-512 or FileVault/
 VeraCrypt's PBKDF2 against an attacker who has the file and guesses offline.
 Its **authentication is stronger than every disk encryptor's**: AES-XTS used by
 BitLocker/LUKS/FileVault/VeraCrypt provides confidentiality but is *malleable* and
-detects neither bit-flips nor swaps, whereas pass-mgr's AEAD (and its per-frame
+detects neither bit-flips nor swaps, whereas vaultis's AEAD (and its per-frame
 `vault_id ‖ partition ‖ id` binding, §4.3) makes any tampering fail closed. It is
 also **escrow-free with no recovery path** — unlike BitLocker's commonly-escrowed
-recovery key, losing both pass-mgr passwords means the data is gone (intentional
+recovery key, losing both vaultis passwords means the data is gone (intentional
 for a two-trustee estate vault; a footgun if you simply forget). And its
 **two-passwords-both-required** design is unusual: BitLocker can require TPM+PIN
 (an AND, but bound to one machine's hardware), LUKS exposes multiple slots that
 each unlock independently (an OR), and Excel takes a single password.
 
-What pass-mgr deliberately gives up: FDE's *transparent, whole-disk* coverage (it
+What vaultis deliberately gives up: FDE's *transparent, whole-disk* coverage (it
 protects only its own vault, not your `/home` or temp files), and BitLocker's
 hardware-bound, anti-hammering TPM and enterprise recovery. So the recommended
-posture is to run pass-mgr **on top of** an encrypted disk: FDE protects
-everything at rest and ties the key to the machine/TPM; pass-mgr adds a second,
+posture is to run vaultis **on top of** an encrypted disk: FDE protects
+everything at rest and ties the key to the machine/TPM; vaultis adds a second,
 independently-keyed, authenticated, app-isolated layer for the estate secrets
 that stays locked while you work and that no other process — or a future you who
 only remembers one password — can open without both secrets.
@@ -448,7 +448,7 @@ The vault is a **directory** `mypath/` holding three things:
 mypath/vault.pmv          encrypted JSON vault (header + AEAD ciphertext)
 mypath/manifest/manifest.<N>  encrypted per-partition document index
 mypath/volume/vol.<N>         append-only, per-blob-encrypted document frames
-mypath/pass-mgr.lock          single-writer advisory lock (empty; writable opens only)
+mypath/vaultis.lock          single-writer advisory lock (empty; writable opens only)
 mypath/last_update_<UTC>      non-secret change marker (exactly one; see §6.3) — NOT vault content
 ```
 
@@ -534,8 +534,8 @@ fully-decrypted directory that *mirrors its structure* (distinct from `extract`,
 which writes a human-readable virtual tree and is one-way):
 
 ```
-pass-mgr export-tree [DIR] OUTDIR    # decrypt the whole vault into a plaintext mirror
-pass-mgr import-tree  SRCDIR [DIR]   # build a NEW encrypted vault from a mirror
+vaultis export-tree [DIR] OUTDIR    # decrypt the whole vault into a plaintext mirror
+vaultis import-tree  SRCDIR [DIR]   # build a NEW encrypted vault from a mirror
 ```
 
 **Mirror layout** (everything decrypted, names mirroring the encrypted tree):
@@ -591,9 +591,9 @@ ephemeral storage and delete it promptly (§9.10, §9.17).
 
 ### 6.4 Cross-vault merge — "update from another vault"
 
-`update-from` (CLI `pass-mgr update-from OTHER [DIR]`; GUI Config → *Update from another
+`update-from` (CLI `vaultis update-from OTHER [DIR]`; GUI Config → *Update from another
 vault…*; TUI Config → **Ctrl+U**) pulls changes from a SECOND vault into the current one.
-It is implemented by `pass-mgr-core::merge` (the plan/report types + the pure, `Record`-
+It is implemented by `vaultis-core::merge` (the plan/report types + the pure, `Record`-
 generic diff helpers `collection_changes`/`merge_records`) plus `OpenVault::plan_merge_from`
 (preview, read-only) and `OpenVault::apply_merge_from` (commit, requires `--write`).
 
@@ -708,7 +708,7 @@ include URGENT.) The four screens are:
    (`vault_root` in `prefs.json`, alongside the theme and export dir — **never** in the
    vault), written on a successful open/create (`save_vault_root`) and re-seeded at startup
    by `launch::initial_root_and_name`, whose precedence is **argument > cwd > saved
-   preference > per-user default**: an explicitly launched vault (`pass-mgr DIR`) always
+   preference > per-user default**: an explicitly launched vault (`vaultis DIR`) always
    wins (root = its parent, name = its folder); otherwise a **launch directory that is
    itself a vault root** wins (`launch::cwd_vault_root` — the cwd qualifies iff
    `discover_vaults` finds at least one vault directly beneath it, so the `vault.pmv` marker
@@ -882,7 +882,7 @@ trustworthy *while the vault is unlocked* (host compromise is out of scope, belo
 ### 8.1 Mobile viewer and the FFI boundary
 
 The Compose Multiplatform app (`mobile/`) is a **read-only viewer** that drives the
-same audited core through a UniFFI boundary (`crates/pass-mgr-ffi`). It widens the
+same audited core through a UniFFI boundary (`crates/vaultis-ffi`). It widens the
 attack surface in three specific, bounded ways:
 
 - **It never writes vaults.** It calls only the open/read path, so it inherits every
@@ -901,8 +901,8 @@ attack surface in three specific, bounded ways:
   desktop, and `mlockall`-style locking is neither portable nor useful inside an app
   sandbox. The cryptographic core is otherwise identical.
 
-The FFI crate (`pass-mgr-ffi`) is the **only** crate permitted `unsafe`, confined to
-the generated UniFFI scaffolding; `pass-mgr-core` keeps `#![forbid(unsafe_code)]`.
+The FFI crate (`vaultis-ffi`) is the **only** crate permitted `unsafe`, confined to
+the generated UniFFI scaffolding; `vaultis-core` keeps `#![forbid(unsafe_code)]`.
 
 ## 9. Security caveats & known limitations
 
@@ -984,7 +984,7 @@ parent ACL, the file could be more exposed than on Linux. The encryption (both
 passwords required) remains the primary defense regardless of platform.
 
 ### 9.10 The CLI `decrypt` prints all secrets in plaintext
-`pass-mgr decrypt [VAULT]` writes the entire decrypted vault as JSON to stdout,
+`vaultis decrypt [VAULT]` writes the entire decrypted vault as JSON to stdout,
 including every password (and the password history). This is intentional — it is
 an export/recovery escape hatch — but it means secrets can land in your terminal
 scrollback, shell history (if redirected), or a file. The command prompts for
@@ -1070,7 +1070,7 @@ are not tried. This keeps honest recovery working while bounding the forced work
 a small constant rather than `mirror + MAX_REDUNDANCY` derivations.
 
 ### 9.14 Trust boundary — host compromise is out of scope
-pass-mgr protects data **at rest** and assumes the machine is trustworthy *while
+vaultis protects data **at rest** and assumes the machine is trustworthy *while
 the vault is open*. It does **not** defend against a compromised host: malware
 running as your user, a kernel keylogger, screen capture/scraping while records
 are revealed, a debugger attached to the process, or a cold-boot/DMA attack
@@ -1082,17 +1082,17 @@ disk full-disk-encrypted, and the vault closed when unattended.
 
 ### 9.15 Distributing the binary — integrity is the user's responsibility
 The build is reproducible from source, but the project does not ship a signed
-binary. The build produces **two** executables on Windows — `pass-mgr-gui.exe` (the
-windowed app end users run, §13.3) and `pass-mgr.exe` (the console/CLI build) — and
+binary. The build produces **two** executables on Windows — `vaultis-gui.exe` (the
+windowed app end users run, §13.3) and `vaultis.exe` (the console/CLI build) — and
 recipients should verify whichever they run: publish a SHA-256 checksum alongside
-each (`sha256sum target/release/pass-mgr*` on Linux, `Get-FileHash` on Windows) and,
+each (`sha256sum target/release/vaultis*` on Linux, `Get-FileHash` on Windows) and,
 ideally, **code-sign** the Windows `.exe`s with your own Authenticode certificate
-(`signtool sign /fd SHA256 /a pass-mgr-gui.exe`, and likewise `pass-mgr.exe`) so
+(`signtool sign /fd SHA256 /a vaultis-gui.exe`, and likewise `vaultis.exe`) so
 SmartScreen and AV trust them. Without that, a tampered download cannot be
 distinguished from a genuine one.
 
 ### 9.16 Concurrency is single-writer, best-effort for readers
-A writable open takes an OS advisory lock on `mypath/pass-mgr.lock` (via
+A writable open takes an OS advisory lock on `mypath/vaultis.lock` (via
 `File::try_lock`, released automatically when the process exits — no stale lock to
 clear), so a second writable instance fails fast with `VaultError::Locked`.
 Read-only opens and the CLI read facilities (`decrypt`/`manifest`/`extract`) do
@@ -1213,7 +1213,7 @@ The append-only volume never shrinks on its own: an update appends a new frame a
 drops the old manifest entry; a delete drops the entry. The old frames remain as
 **garbage** in `[0, end_offset)`. Separately, every record carries an append-only
 per-edit `history` log that grows monotonically. The CLI `compact` command reclaims
-both, individually or together (`pass-mgr compact [DIR] --volume --json …`):
+both, individually or together (`vaultis compact [DIR] --volume --json …`):
 
 - **Volume compaction (`--volume`)** rewrites the document store keeping only the
   **live** blobs (those still referenced by a manifest entry), dropping every dead
@@ -1456,7 +1456,7 @@ explicit about all three and what each means in practice:
    recovers to the last committed state, losing at most the one operation.
 2. **At-rest / media corruption** (bit-rot, a bad sector, a failing disk, a
    truncated or garbled file from an interrupted *copy* to a USB stick). Unrelated
-   to any pass-mgr operation; this section is mainly about these.
+   to any vaultis operation; this section is mainly about these.
 3. **Deliberate tampering by someone without the two passwords.** *Recovering* from
    this is out of scope as a goal (an attacker with write access to the files can
    always delete or roll them back — see §8 and §9.12), but the cryptography still
@@ -1581,7 +1581,7 @@ via the normal auto-save on the next open.
 **Known limitation — recovery from a generation is a rollback.** Falling back to a
 prior generation happens only when the live file **and** its mirror are both
 unreadable (a rare double-failure), and it is inherently lossy (the most recent
-save(s) are gone). pass-mgr **surfaces** this with the recovery notice rather than
+save(s) are gone). vaultis **surfaces** this with the recovery notice rather than
 silently committing it, but it does not keep a separate monotonic high-water mark to
 *refuse* the rollback — off-device backups remain the authority for "is this the
 newest state?". This is a deliberate scope choice: a double-corruption that loses both
@@ -1608,7 +1608,7 @@ below is a correctness, durability, resource-limit, or memory-hygiene improvemen
 
 ### 13.1 Single-instance guard (`src/single_instance.rs`)
 
-**Symptom.** A user returned to their machine and found *many* pass-mgr windows
+**Symptom.** A user returned to their machine and found *many* vaultis windows
 open, each of which had to be closed individually. The binary never spawns itself;
 the cause was structural: `gui::run` opened a window via `eframe::run_native`
 **immediately**, at the lock screen, *before* the vault (and thus the single-writer
@@ -1882,18 +1882,18 @@ requires Win32 FFI, i.e. an `unsafe` block, which the crate forbids
 **Mechanism.** The project therefore builds **two binaries** (the `python.exe` /
 `pythonw.exe` pattern):
 
-- **`pass-mgr`** (`src/main.rs`) — the existing **console** binary: all CLI
+- **`vaultis`** (`src/main.rs`) — the existing **console** binary: all CLI
   subcommands plus the `--tui` terminal UI, unchanged.
-- **`pass-mgr-gui`** (`src/bin/pass-mgr-gui.rs`) — a thin **GUI-subsystem** launcher
+- **`vaultis-gui`** (`src/bin/vaultis-gui.rs`) — a thin **GUI-subsystem** launcher
   carrying `#![cfg_attr(windows, windows_subsystem = "windows")]`. It parses only an
   interactive launch (optional vault `DIR` + `--write`) and calls `gui::run`. The
-  `cfg_attr` makes the attribute inert off Windows, so elsewhere `pass-mgr-gui` is
+  `cfg_attr` makes the attribute inert off Windows, so elsewhere `vaultis-gui` is
   simply "the GUI".
 
 To guarantee both binaries resolve the vault path identically, the shared path/flag
 logic (`default_vault_path`, `vault_file`, `resolve_interactive`) moved out of
-`main.rs` into a small library module, `pass_mgr::launch`; `main.rs` imports it, so
-its call sites are unchanged. `default-run = "pass-mgr"` keeps `cargo run` /
+`main.rs` into a small library module, `vaultis::launch`; `main.rs` imports it, so
+its call sites are unchanged. `default-run = "vaultis"` keeps `cargo run` /
 `cargo install` pointed at the console binary, and the Windows cross-compile CI job
 (§12.5/IMPLEMENTATION) now builds `--bins`, so the GUI-subsystem build is checked on
 every push. No new dependencies, no `unsafe`.

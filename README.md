@@ -1,6 +1,6 @@
-# pass-mgr — your private, offline estate vault
+# vaultis — your private, offline estate vault
 
-pass-mgr is a small program that keeps your important life and estate information
+vaultis is a small program that keeps your important life and estate information
 in **one safe, locked place on your own computer**: account logins, where your
 money and property are, your will and trust details, and scans of important
 documents. It is locked with **two passwords**, everything is strongly encrypted,
@@ -28,18 +28,18 @@ family or executor would need in one organized, protected file.
 
 ---
 
-# Part 1 — Using pass-mgr (no technical knowledge needed)
+# Part 1 — Using vaultis (no technical knowledge needed)
 
 These steps assume the program is already installed on your computer. If it
 isn't, see **Part 2** (or ask whoever set it up for you).
 
 ## Starting the program
 
-- **Windows:** double-click **`pass-mgr-gui.exe`**. A window opens, with no
-  command/console window alongside it. (There is also a `pass-mgr.exe` — that one is
+- **Windows:** double-click **`vaultis-gui.exe`**. A window opens, with no
+  command/console window alongside it. (There is also a `vaultis.exe` — that one is
   the command-line version and *does* show a console; it's only for the advanced
-  commands further down. For everyday use, always launch `pass-mgr-gui.exe`.)
-- **Mac/Linux:** double-click the **`pass-mgr-gui`** program (or `pass-mgr`), or open
+  commands further down. For everyday use, always launch `vaultis-gui.exe`.)
+- **Mac/Linux:** double-click the **`vaultis-gui`** program (or `vaultis`), or open
   it the way the person who set it up showed you.
 
 When it opens it is in **View-only mode** (a 🔒 READ-ONLY badge shows at the
@@ -53,23 +53,23 @@ To **create** a vault or **change** anything, the program must be started in
 **Edit mode**. The easiest way is to make an "Edit" shortcut once:
 
 **On Windows:**
-1. Right-click **`pass-mgr-gui.exe`** → **Show more options** → **Create shortcut**.
-   (Use `pass-mgr-gui.exe`, not `pass-mgr.exe`, so edit mode also opens with no
+1. Right-click **`vaultis-gui.exe`** → **Show more options** → **Create shortcut**.
+   (Use `vaultis-gui.exe`, not `vaultis.exe`, so edit mode also opens with no
    console window.)
 2. Right-click the new shortcut → **Properties**.
 3. In the **Target** box, go to the very end, add a space, then type `--write`.
-   It should end with `...\pass-mgr-gui.exe --write`.
-4. Click **OK**. Rename the shortcut to **"pass-mgr (Edit)"**.
+   It should end with `...\vaultis-gui.exe --write`.
+4. Click **OK**. Rename the shortcut to **"vaultis (Edit)"**.
 
-Now: **double-click "pass-mgr (Edit)" when you want to add or change things**, and
+Now: **double-click "vaultis (Edit)" when you want to add or change things**, and
 the plain program when you only want to look.
 
 > The everyday program stays view-only on purpose. Keep the Edit shortcut for
 > when you actually need to make changes.
 
 > **Ready-made shortcuts with icons.** The [`packaging/`](packaging/) folder has
-> both shortcuts done for you — **pass-mgr (View)** with a **locked-vault** icon and
-> **pass-mgr (Edit)** with an **unlocked-vault** icon. On Linux run
+> both shortcuts done for you — **vaultis (View)** with a **locked-vault** icon and
+> **vaultis (Edit)** with an **unlocked-vault** icon. On Linux run
 > `packaging/linux/install-shortcuts.sh`; on Windows run
 > `packaging\windows\make-shortcuts.ps1`. See [`packaging/README.md`](packaging/README.md).
 
@@ -244,7 +244,7 @@ Notes:
   it back (a record that depends on a document you deleted is simply skipped, and the
   preview says so).
 - It's wise to **back up first** (the update overwrites the matching records here).
-- From the command line: `pass-mgr update-from OTHER [DIR]` (add `--dry-run` to preview
+- From the command line: `vaultis update-from OTHER [DIR]` (add `--dry-run` to preview
   only). It asks for four passwords in order: **this** vault's two, then the **other**
   vault's two.
 
@@ -268,7 +268,7 @@ new ones). So after changing your passwords:
 
 ## If something goes wrong (power loss, crash, disk full)
 
-pass-mgr is built so that a power cut, a forced shutdown, or a full disk **cannot
+vaultis is built so that a power cut, a forced shutdown, or a full disk **cannot
 corrupt your vault**. Whatever you were doing either fully completed or did not
 happen at all — there is never a half-saved, broken state. In almost every case the
 fix is the same: **just open the vault again.** It repairs itself automatically when
@@ -297,24 +297,24 @@ What to expect after an interruption, by what you were doing at the time:
 
 **Two rules:**
 
-1. **Always safe to reopen.** After any crash, just start pass-mgr again — recovery
+1. **Always safe to reopen.** After any crash, just start vaultis again — recovery
    is automatic; there is nothing manual to run.
 2. **Never hand-edit the vault folder.** Don't move, rename, or delete the files
    inside it (`vault.pmv`, the `manifest/` and `volume/` folders, a temporary
-   `.rekey/` folder, or `pass-mgr.lock`). They are a matched set — let the program
+   `.rekey/` folder, or `vaultis.lock`). They are a matched set — let the program
    manage them. If it ever reports the vault is "locked" after a hard crash, make
-   sure no other pass-mgr window is open and try again; the lock releases itself when
+   sure no other vaultis window is open and try again; the lock releases itself when
    the program exits.
 
 ## If the vault file itself is damaged (a failing disk or a bad copy)
 
 The protections above are about *interruptions*. A separate, rarer problem is the
 file being physically **damaged** — for example a failing hard drive or USB stick,
-bit-rot on old storage, or a copy that didn't finish. pass-mgr handles this safely
+bit-rot on old storage, or a copy that didn't finish. vaultis handles this safely
 too:
 
 - **It never shows you wrong information.** Every part of the vault is sealed with a
-  cryptographic check. If anything has been altered or damaged, pass-mgr reports an
+  cryptographic check. If anything has been altered or damaged, vaultis reports an
   error and refuses to open, rather than showing you scrambled or incorrect data.
   (The very same "can't open" message also appears if you simply mistype a password,
   so first just **re-check both passwords**, in order.)
@@ -351,11 +351,11 @@ Everything lives in a single locked file on the computer:
 
 | Your system | Where the vault file is |
 |-------------|--------------------------|
-| Windows | `C:\Users\<you>\AppData\Roaming\pass-mgr\vault.pmv` |
-| Mac/Linux | `~/.local/share/pass-mgr/vault.pmv` |
+| Windows | `C:\Users\<you>\AppData\Roaming\vaultis\vault.pmv` |
+| Mac/Linux | `~/.local/share/vaultis/vault.pmv` |
 
 Your uploaded documents are stored right next to it, inside `manifest/` and
-`volume/` folders in the same `pass-mgr` directory. Everything is encrypted and
+`volume/` folders in the same `vaultis` directory. Everything is encrypted and
 useless to anyone without your two passwords — so treat the **whole folder** as one
 unit: back it up together, and don't move or delete pieces of it. Keep it — and your
 backups — safe.
@@ -366,9 +366,9 @@ data, so it's fine if it's lost:
 
 | Your system | Where `prefs.json` is |
 |-------------|------------------------|
-| Windows | `C:\Users\<you>\AppData\Roaming\passmgr\pass-mgr\config\prefs.json` |
-| macOS | `~/Library/Application Support/dev.passmgr.pass-mgr/prefs.json` |
-| Linux | `~/.config/pass-mgr/prefs.json` |
+| Windows | `C:\Users\<you>\AppData\Roaming\vaultis\vaultis\config\prefs.json` |
+| macOS | `~/Library/Application Support/dev.vaultis.vaultis/prefs.json` |
+| Linux | `~/.config/vaultis/prefs.json` |
 
 (The **❓ Help** screen shows the exact paths for your machine.)
 
@@ -378,20 +378,20 @@ data, so it's fine if it's lost:
 
 ## Getting the program (build from source)
 
-pass-mgr is written in Rust. Install the toolchain from <https://rustup.rs> if you
+vaultis is written in Rust. Install the toolchain from <https://rustup.rs> if you
 don't have it, then build:
 
 ### Linux
 
 ```bash
 cargo build --release
-./target/release/pass-mgr-gui         # graphical window
-./target/release/pass-mgr --tui       # terminal version (works over SSH)
-./target/release/pass-mgr decrypt …   # command-line tools (see "advanced" below)
+./target/release/vaultis-gui         # graphical window
+./target/release/vaultis --tui       # terminal version (works over SSH)
+./target/release/vaultis decrypt …   # command-line tools (see "advanced" below)
 ```
 
-The build produces **two programs**: `pass-mgr-gui` (the graphical app) and
-`pass-mgr` (the command-line/terminal version). On Linux/Mac they behave the same
+The build produces **two programs**: `vaultis-gui` (the graphical app) and
+`vaultis` (the command-line/terminal version). On Linux/Mac they behave the same
 way; the split matters on Windows (next), where the GUI build avoids popping a
 console window.
 
@@ -409,14 +409,14 @@ the musl target with the GUI/clipboard features turned off:
 
 ```bash
 rustup target add x86_64-unknown-linux-musl                 # one-time
-cargo build --release -p pass-mgr --bin pass-mgr \
+cargo build --release -p vaultis --bin vaultis \
   --no-default-features --target x86_64-unknown-linux-musl
-# -> target/x86_64-unknown-linux-musl/release/pass-mgr  (~2 MB, fully static)
+# -> target/x86_64-unknown-linux-musl/release/vaultis  (~2 MB, fully static)
 
-ldd target/x86_64-unknown-linux-musl/release/pass-mgr       # => "statically linked"
+ldd target/x86_64-unknown-linux-musl/release/vaultis       # => "statically linked"
 ```
 
-Copy that one file to any x86-64 Linux machine and run `pass-mgr --tui` (or the CLI
+Copy that one file to any x86-64 Linux machine and run `vaultis --tui` (or the CLI
 subcommands) — it needs no libraries at all. The trade-offs of this minimal build:
 **no graphical window** (terminal UI only) and **no OS-clipboard copy** (the on-screen
 copy becomes a no-op — fine over SSH, where there's no clipboard anyway). The
@@ -433,17 +433,17 @@ sudo apt install libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0
 
 ```powershell
 cargo build --release
-.\target\release\pass-mgr-gui.exe        # the graphical app — no console window
-.\target\release\pass-mgr.exe --help     # the command-line version
+.\target\release\vaultis-gui.exe        # the graphical app — no console window
+.\target\release\vaultis.exe --help     # the command-line version
 ```
 
 The build produces **two `.exe` files**:
 
-- **`pass-mgr-gui.exe`** — the graphical app, built as a Windows *GUI-subsystem*
+- **`vaultis-gui.exe`** — the graphical app, built as a Windows *GUI-subsystem*
   program so launching it opens **only** the window, with no command/console window
   beside it. **This is the one to hand to a non-technical user** (along with the
   "Edit shortcut" steps in Part 1).
-- **`pass-mgr.exe`** — the *console* version, for the advanced command-line tools
+- **`vaultis.exe`** — the *console* version, for the advanced command-line tools
   (`decrypt`, `extract`, `compact`, …) and the `--tui` terminal UI, which need a
   console to show their output.
 
@@ -453,7 +453,7 @@ run with nothing to install.
 
 > Why two files? A Windows executable is fixed at build time as either a console or
 > a GUI program; one file can't be both. So, exactly like Python ships `python.exe`
-> (console) and `pythonw.exe` (windowed), pass-mgr ships a console and a windowed
+> (console) and `pythonw.exe` (windowed), vaultis ships a console and a windowed
 > build. (The crate forbids `unsafe` code, which rules out the alternative of one
 > executable that attaches/detaches a console at runtime.)
 
@@ -466,8 +466,8 @@ sudo apt install mingw-w64                    # one-time: the cross-linker + dll
 # don't have to ship those DLLs beside it:
 RUSTFLAGS="-C target-feature=+crt-static" \
   cargo build --release --target x86_64-pc-windows-gnu
-# -> target/x86_64-pc-windows-gnu/release/pass-mgr-gui.exe  (graphical, no console)
-# -> target/x86_64-pc-windows-gnu/release/pass-mgr.exe      (command-line / --tui)
+# -> target/x86_64-pc-windows-gnu/release/vaultis-gui.exe  (graphical, no console)
+# -> target/x86_64-pc-windows-gnu/release/vaultis.exe      (command-line / --tui)
 ```
 
 (Building **on Windows** with the default MSVC toolchain is simpler and already
@@ -476,35 +476,35 @@ Use the GNU cross-build only when you must produce a Windows `.exe` from Linux.)
 
 ## Command-line options (advanced)
 
-These are commands of the **console** `pass-mgr` build. For the graphical app, use
-**`pass-mgr-gui`** instead (same as `pass-mgr [VAULT]`, but with no console window on
+These are commands of the **console** `vaultis` build. For the graphical app, use
+**`vaultis-gui`** instead (same as `vaultis [VAULT]`, but with no console window on
 Windows); the `--tui` terminal UI and the subcommands below need the console build.
 
 ```text
-pass-mgr [VAULT]              Launch the graphical UI (READ-ONLY; or use pass-mgr-gui)
-pass-mgr --write [VAULT]      Launch in edit mode (create / edit / delete / upload)
-pass-mgr --tui [VAULT]        Launch the terminal UI instead (add --write to edit)
-pass-mgr --vol PATH ...       Use PATH as the document archive instead of <VAULT>.vol
-pass-mgr decrypt [VAULT]      Decrypt the vault and print its JSON to stdout
-pass-mgr extract [VAULT] DIR  Decrypt all stored documents into DIR
-pass-mgr backup [VAULT] DIR   Copy the encrypted vault + archive into DIR (timestamped)
-pass-mgr compact [VAULT] ...  Reclaim space: re-pack documents and/or trim history
-pass-mgr --help               Show help
+vaultis [VAULT]              Launch the graphical UI (READ-ONLY; or use vaultis-gui)
+vaultis --write [VAULT]      Launch in edit mode (create / edit / delete / upload)
+vaultis --tui [VAULT]        Launch the terminal UI instead (add --write to edit)
+vaultis --vol PATH ...       Use PATH as the document archive instead of <VAULT>.vol
+vaultis decrypt [VAULT]      Decrypt the vault and print its JSON to stdout
+vaultis extract [VAULT] DIR  Decrypt all stored documents into DIR
+vaultis backup [VAULT] DIR   Copy the encrypted vault + archive into DIR (timestamped)
+vaultis compact [VAULT] ...  Reclaim space: re-pack documents and/or trim history
+vaultis --help               Show help
 ```
 
 - **Read-only by default.** The UI opens read-only; pass **`--write`** to enable
   creating, editing, deleting, uploading documents, and changing the master
   passwords. A read-only session writes **nothing** to disk. The window shows a
   `🔒 READ-ONLY` badge and hides write controls when not in edit mode.
-- Pass a path to use a specific file: `pass-mgr ./work-vault.pmv`.
-- **Launching from a folder of vaults** (`cd /my/vaults && pass-mgr`) uses that folder as
+- Pass a path to use a specific file: `vaultis ./work-vault.pmv`.
+- **Launching from a folder of vaults** (`cd /my/vaults && vaultis`) uses that folder as
   the start page's **Vault root**, ahead of the remembered root and the per-user default.
   It applies only when the folder actually holds vaults — i.e. at least one sub-folder
   with a `vault.pmv` in it, the same test the dropdown uses. An explicit `[VAULT]`
   argument still wins over it.
 - **`--vol PATH`** relocates the encrypted document archive (default
   `<VAULT>.vol`, kept beside the vault) — e.g. onto a removable drive:
-  `pass-mgr --write --vol /mnt/usb/docs.vol`. Works with the UI, `extract`, and
+  `vaultis --write --vol /mnt/usb/docs.vol`. Works with the UI, `extract`, and
   `backup`. The archive is cryptographically bound to its vault, so a mismatched
   `.vol` is rejected.
 
@@ -515,9 +515,9 @@ care); `extract` writes decrypted copies of all stored documents into a folder.
 Both prompt for the two passwords and never modify the vault.
 
 ```bash
-pass-mgr decrypt ./vault.pmv > backup.json        # interactive prompts
-printf 'pw1\npw2\n' | pass-mgr decrypt ./vault.pmv # scripted (passwords via stdin)
-pass-mgr extract ./vault.pmv ./out                 # documents -> ./out/...
+vaultis decrypt ./vault.pmv > backup.json        # interactive prompts
+printf 'pw1\npw2\n' | vaultis decrypt ./vault.pmv # scripted (passwords via stdin)
+vaultis extract ./vault.pmv ./out                 # documents -> ./out/...
 ```
 
 ### Compacting (reclaim space)
@@ -529,11 +529,11 @@ encrypted vault **before** it starts. It is crash-safe (a power loss leaves eith
 the old or the compacted vault, never a mix).
 
 ```bash
-pass-mgr compact ./myvault --volume                       # drop dead document data
-pass-mgr compact ./myvault --json --history-all           # remove all edit history
-pass-mgr compact ./myvault --json --history-before 2025-01-01  # keep history on/after that date
-pass-mgr compact ./myvault --volume --json --history-all  # both at once
-pass-mgr compact ./myvault --volume --dry-run             # just report what it would free
+vaultis compact ./myvault --volume                       # drop dead document data
+vaultis compact ./myvault --json --history-all           # remove all edit history
+vaultis compact ./myvault --json --history-before 2025-01-01  # keep history on/after that date
+vaultis compact ./myvault --volume --json --history-all  # both at once
+vaultis compact ./myvault --volume --dry-run             # just report what it would free
 ```
 
 - **`--volume`** re-packs the document store, removing the dead blocks left by edits
@@ -603,11 +603,11 @@ There are now native **Android** and **iOS** apps, built as one **Compose
 Multiplatform** (Kotlin) UI on top of the *same audited Rust core* — no crypto or
 storage logic is reimplemented. The repo is a Cargo workspace:
 
-- `crates/pass-mgr-core` — the headless, audited vault (crypto + storage + records
+- `crates/vaultis-core` — the headless, audited vault (crypto + storage + records
   + `OpenVault`), reused by every front-end; `#![forbid(unsafe_code)]`.
-- `crates/pass-mgr-desktop` — the desktop CLI/TUI/GUI binaries (`pass-mgr`,
-  `pass-mgr-gui`) — unchanged behaviour.
-- `crates/pass-mgr-ffi` — a thin [UniFFI](https://mozilla.github.io/uniffi-rs/)
+- `crates/vaultis-desktop` — the desktop CLI/TUI/GUI binaries (`vaultis`,
+  `vaultis-gui`) — unchanged behaviour.
+- `crates/vaultis-ffi` — a thin [UniFFI](https://mozilla.github.io/uniffi-rs/)
   wrapper the mobile apps call through ([Gobley](https://gobley.dev) generates the
   Kotlin bindings).
 - `mobile/` — the Compose Multiplatform Gradle project.

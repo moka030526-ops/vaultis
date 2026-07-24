@@ -1,4 +1,4 @@
-# pass-mgr — Execution Plan: Partitioned Volumes + Manifests (format v4)
+# vaultis — Execution Plan: Partitioned Volumes + Manifests (format v4)
 
 _Status: COMPLETE (all phases landed on `main`). Authoritative spec + execution
 history for the storage-layer redesign. Author/owner: Michael. Created 2026-06-14._
@@ -66,7 +66,7 @@ The user supplies **only** a directory, `mypath`. All names below are fixed.
 ```
 mypath/
 ├── vault.pmv              encrypted JSON vault (records, categories, settings, audit)
-├── pass-mgr.lock          advisory single-writer lockfile (see §10)
+├── vaultis.lock          advisory single-writer lockfile (see §10)
 ├── manifest/
 │   ├── manifest.0         encrypted manifest for partition 0
 │   ├── manifest.1         ...
@@ -77,7 +77,7 @@ mypath/
 
 - The `--vol` flag is **removed** (the archive location is now fixed inside
   `mypath/volume/`).
-- `pass-mgr DIR` opens the directory; if `vault.pmv` is absent and `--write` is
+- `vaultis DIR` opens the directory; if `vault.pmv` is absent and `--write` is
   given, a new vault directory is initialised.
 
 ---
@@ -233,16 +233,16 @@ ready, so there is always one complete, openable generation.
 
 Path is now a **directory**:
 ```
-pass-mgr [DIR]                      graphical UI (READ-ONLY by default)
-pass-mgr --write [DIR]              editable
-pass-mgr --tui [DIR]               terminal UI
-pass-mgr decrypt [DIR]             print the decrypted VAULT JSON to stdout
-pass-mgr manifest [DIR] [--part N] print decrypted manifest(s): partition N, or ALL (default)
-pass-mgr extract  [DIR] OUTDIR [--part N]
+vaultis [DIR]                      graphical UI (READ-ONLY by default)
+vaultis --write [DIR]              editable
+vaultis --tui [DIR]               terminal UI
+vaultis decrypt [DIR]             print the decrypted VAULT JSON to stdout
+vaultis manifest [DIR] [--part N] print decrypted manifest(s): partition N, or ALL (default)
+vaultis extract  [DIR] OUTDIR [--part N]
                                    decrypt documents to OUTDIR: ALL partitions
                                    (default) or only partition N
-pass-mgr backup   [DIR] DESTDIR    copy the whole consistent tree (timestamped)
-pass-mgr --help
+vaultis backup   [DIR] DESTDIR    copy the whole consistent tree (timestamped)
+vaultis --help
 ```
 Command-line decryption facilities (all read-only, no file mutation):
 - **Vault** — `decrypt` prints the decrypted `vault.pmv` JSON (records,
@@ -286,7 +286,7 @@ Notes:
 
 ## 10. Concurrency (review gap)
 
-Add an advisory **lockfile** `mypath/pass-mgr.lock` taken on a writable open
+Add an advisory **lockfile** `mypath/vaultis.lock` taken on a writable open
 (O_EXCL or OS advisory lock); a second `--write` instance fails fast with a clear
 message. Read-only opens do not take the lock.
 

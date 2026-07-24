@@ -1,4 +1,4 @@
-# pass-mgr — Implementation Document
+# vaultis — Implementation Document
 
 _Last updated: 2026-06-16_
 
@@ -7,7 +7,7 @@ How the code is structured, **as built**. Read `DESIGN.md` first for the "why"
 document is the "how" and the "where" — the module map, the key types and
 functions, the control flow of each operation, and where each design decision is
 enforced in code. There is **no `unsafe`** anywhere in the crate
-(`#![forbid(unsafe_code)]`) and **no networking** — pass-mgr is a fully offline,
+(`#![forbid(unsafe_code)]`) and **no networking** — vaultis is a fully offline,
 single-file-tree tool.
 
 Conventions in this doc: `path/to/file.rs` is a source file; `Type` /
@@ -22,7 +22,7 @@ The project is a Cargo **workspace** with three Rust crates plus a mobile app:
 
 ```
 crates/
-├── pass-mgr-core/    The headless, security-critical core (lib `pass_mgr_core`).
+├── vaultis-core/    The headless, security-critical core (lib `vaultis_core`).
 │   │                 `#![forbid(unsafe_code)]`; NO UI/OS deps. Reused UNCHANGED by
 │   │                 the desktop binaries AND the mobile FFI; the fuzz targets link
 │   │                 it directly. Holds all crypto/data/storage logic.
@@ -52,18 +52,18 @@ crates/
 │       ├── password.rs   Bias-free random password generator.
 │       └── fault.rs      Crash-safety fault-injection hook (feature-gated, no-op in release).
 │
-├── pass-mgr-desktop/ The desktop shell (package `pass-mgr`, lib name kept as `pass_mgr`,
-│   │                 which re-exports the core modules so `pass_mgr::…`/`crate::…`
+├── vaultis-desktop/ The desktop shell (package `vaultis`, lib name kept as `vaultis`,
+│   │                 which re-exports the core modules so `vaultis::…`/`crate::…`
 │   │                 paths resolve unchanged). Builds two binaries.
 │   └── src/
 │       ├── gui.rs           egui/eframe GUI — eight tabs (2-row bar) incl. multi-doc Taxes & RE + Summary.
 │       ├── ui.rs            ratatui TUI (`--tui`) — the same eight tabs (2-row bar).
 │       ├── single_instance.rs  GUI single-instance guard (§6.4).
 │       ├── launch.rs        Vault-path/flag resolution shared by both binaries.
-│       ├── main.rs          Console binary `pass-mgr` (CLI + `--tui` + subcommands).
-│       └── bin/pass-mgr-gui.rs  Windowed binary `pass-mgr-gui` (no console window).
+│       ├── main.rs          Console binary `vaultis` (CLI + `--tui` + subcommands).
+│       └── bin/vaultis-gui.rs  Windowed binary `vaultis-gui` (no console window).
 │
-└── pass-mgr-ffi/     Thin UniFFI wrapper (cdylib+staticlib) consumed by the mobile app.
+└── vaultis-ffi/     Thin UniFFI wrapper (cdylib+staticlib) consumed by the mobile app.
                       The ONLY crate that permits `unsafe` (the UniFFI scaffolding); it
                       does NOT inherit the core's `forbid`. v1 surface is READ-ONLY
                       (open + browse + view + history) behind an opaque `Vault` handle,
@@ -79,7 +79,7 @@ mobile/               Compose Multiplatform app — one shared Kotlin UI for And
                       `mobile/README.md`. (Android builds anywhere; iOS needs a Mac.)
 ```
 
-**Why the split.** The `pass-mgr-core` crate is the audited island: all crypto/data
+**Why the split.** The `vaultis-core` crate is the audited island: all crypto/data
 logic, no UI or OS-front-end dependencies, `#![forbid(unsafe_code)]`. The desktop
 shell, the mobile FFI, and the `cargo-fuzz` targets all sit on top of it and drive
 the one `OpenVault` API, so there is a single source of truth. The dependency
@@ -88,7 +88,7 @@ depends on `crypto`; `vault` ties `crypto` + `storage` + `records` together; the
 UIs/CLI/FFI sit on top of `vault`. The only privileged operation (locking the key's
 pages out of swap) goes through the `region` crate's safe API and is feature-gated,
 so the core's `forbid(unsafe_code)` holds with no exceptions; `unsafe` exists only
-in the generated UniFFI scaffolding inside `pass-mgr-ffi`.
+in the generated UniFFI scaffolding inside `vaultis-ffi`.
 
 ---
 
@@ -132,7 +132,7 @@ doc-id references (never the path), so reorganizing paths never touches `vault.p
 record→doc links.
 
 **Throwaway path migration (`migrate-doc-paths`).** A one-shot CLI subcommand
-(`crates/pass-mgr-desktop/src/migrate_cli.rs` + `crates/pass-mgr-core/src/vault/migrate.rs`,
+(`crates/vaultis-desktop/src/migrate_cli.rs` + `crates/vaultis-core/src/vault/migrate.rs`,
 both self-contained and deletable) rewrites an existing vault's stored document paths to the
 owner-first / ts-in-filename scheme, **deletes history** (per-record + the vault audit), and
 **compacts** the volume to shrink the vault. It re-`put`s each blob under its new path
@@ -199,7 +199,7 @@ mypath/
 ├── vault.pmv.bak1..bakN (only if redundancy on, §3.7)     — prior generations
 ├── manifest/manifest.<N>   AEAD(JSON Manifest) per partition — the document index
 ├── volume/vol.<N>          append-only encrypted frames     — the document blobs
-└── pass-mgr.lock           single-writer advisory lock
+└── vaultis.lock           single-writer advisory lock
 ```
 
 See `DESIGN.md` §6 for exact byte layouts; this section is the code's behaviour.
@@ -388,7 +388,7 @@ reading an older copy.
 ### 3.8 Single-writer lock, backup, plaintext round-trip, hardening
 
 - **Single-writer lock:** a writable open/create takes an OS advisory lock on
-  `pass-mgr.lock` (`File::try_lock`, released automatically on process exit, so no
+  `vaultis.lock` (`File::try_lock`, released automatically on process exit, so no
   stale lock); a second writable instance gets `VaultError::Locked`. Read-only
   opens skip it entirely (so any number of readers coexist — `DESIGN.md` §9.16).
 - **Backup** (`backup()`): copies the encrypted tree (`vault.pmv` + `manifest/` +
@@ -572,16 +572,16 @@ The positional argument is the vault **directory** (default: the per-user data
 dir).
 
 ```
-pass-mgr [DIR]                       graphical UI (READ-ONLY by default)
-pass-mgr --write [DIR]               writable (allow create/edit/delete/upload)
-pass-mgr --tui [DIR]                 terminal UI (add --write to edit)
-pass-mgr decrypt [DIR]               print the decrypted vault JSON (secrets!) to stdout
-pass-mgr manifest [DIR] [--part N]   print the document index: one partition or all
-pass-mgr extract [DIR] OUT [--part N]   decrypt documents into OUT: one volume or all
-pass-mgr backup [DIR] DEST           copy the whole encrypted vault tree into DEST
-pass-mgr export-tree [DIR] OUT       decrypt the whole vault into a plaintext mirror
-pass-mgr import-tree SRC [DIR]       build a new encrypted vault from a plaintext mirror
-pass-mgr compact [DIR] <what>        reclaim space: --volume and/or
+vaultis [DIR]                       graphical UI (READ-ONLY by default)
+vaultis --write [DIR]               writable (allow create/edit/delete/upload)
+vaultis --tui [DIR]                 terminal UI (add --write to edit)
+vaultis decrypt [DIR]               print the decrypted vault JSON (secrets!) to stdout
+vaultis manifest [DIR] [--part N]   print the document index: one partition or all
+vaultis extract [DIR] OUT [--part N]   decrypt documents into OUT: one volume or all
+vaultis backup [DIR] DEST           copy the whole encrypted vault tree into DEST
+vaultis export-tree [DIR] OUT       decrypt the whole vault into a plaintext mirror
+vaultis import-tree SRC [DIR]       build a new encrypted vault from a plaintext mirror
+vaultis compact [DIR] <what>        reclaim space: --volume and/or
                                      --json (--history-before YYYY-MM-DD | --history-all);
                                      --dry-run, --backup DEST, --no-backup
 ```
@@ -636,8 +636,8 @@ sudo tests/dmflakey_powerloss.sh              # real power-loss test (dm-flakey;
 ```
 
 **Test counts (current).** `cargo test --workspace` runs, by default, **192**
-`pass-mgr-core` library tests + **4** core integration tests + **31**
-`pass-mgr-ffi` tests + the desktop crate's **47** library tests and **19** binary
+`vaultis-core` library tests + **4** core integration tests + **31**
+`vaultis-ffi` tests + the desktop crate's **47** library tests and **19** binary
 (CLI) tests (plus one `#[ignore]`d ThreadSanitizer reproducer, run separately — see
 below). `cargo test --features fault-injection` adds the feature-gated fault tests
 and the **18** `tests/crash_recovery.rs` integration tests (a force-kill harness —
@@ -680,7 +680,7 @@ that the abort-based suite cannot replace (see `DESIGN.md` §12.5): it runs the 
 an ext4 fs over a `dm-flakey` device, performs each operation crashed at the commit
 labels, then reloads the device with `drop_writes` and unmounts so the page cache is
 flushed but **un-fsync'd writes are discarded** — a true power cut. On remount the
-vault must still open with the committed document intact (`pass-mgr __crashop verify`),
+vault must still open with the committed document intact (`vaultis __crashop verify`),
 which is the only way to catch a missing/incorrect `fsync` (invisible to in-process
 abort tests and to mutation testing). Run it with `sudo tests/dmflakey_powerloss.sh`;
 it builds the binary with `--features fault-injection`, sets up/tears down a loop + dm
@@ -744,7 +744,7 @@ incl. `fuzz/target` and OOM the baseline build.
 
 | Concern | Linux | Windows |
 |---------|-------|---------|
-| Data dir | `~/.local/share/pass-mgr/` | `%APPDATA%\pass-mgr\` (via `directories`) |
+| Data dir | `~/.local/share/vaultis/` | `%APPDATA%\vaultis\` (via `directories`) |
 | File privacy | explicit `0600` / `0700` | inherited per-user NTFS ACL (`DESIGN.md` §9.9) |
 | Key swap-lock | `mlock` | `VirtualLock` (both via `region`) |
 | Symlink-safe volume append | `O_NOFOLLOW` open | regular-file path (no symlink primitive) |

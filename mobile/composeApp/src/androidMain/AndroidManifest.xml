@@ -11,16 +11,16 @@
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:label="pass-mgr"
+        android:label="vaultis"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <!-- Handle config changes in-process instead of recreating the Activity.
              Compose redraws on these without losing state; recreation would
              otherwise discard the in-flight clipboard auto-clear timer (App.kt). -->
         <activity
-            android:name="com.passmgr.MainActivity"
+            android:name="com.vaultis.MainActivity"
             android:exported="true"
-            android:label="pass-mgr"
+            android:label="vaultis"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|touchscreen|uiMode|locale|layoutDirection|fontScale|density|mcc|mnc"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

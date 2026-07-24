@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=vaultis (Edit)
+GenericName=Encrypted estate vault
+Comment=Open the vault in edit mode (unlocked vault icon)
+# Filled in by install-shortcuts.sh. Note the `--write` that selects edit mode;
+# Icon points at the unlocked-vault PNG.
+Exec="__BIN__" --write
+Icon=__ICONDIR__/vaultis-unlocked.png
+Terminal=false
+Categories=Utility;Security;
+StartupNotify=true

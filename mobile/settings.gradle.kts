@@ -27,5 +27,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "pass-mgr-mobile"
+rootProject.name = "vaultis-mobile"
 include(":composeApp")

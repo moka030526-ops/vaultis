@@ -1,0 +1,693 @@
+//! Cryptographic core for vaultis.
+//!
+//! Design:
+//! - Master password -> 32-byte key via **Argon2id** (memory-hard KDF) with a
+//!   random per-vault salt. KDF parameters are stored in the vault header so the
+//!   file stays self-describing and we can raise the cost over time.
+//! - Vault bytes are encrypted with **XChaCha20-Poly1305** (AEAD). The 24-byte
+//!   nonce is random per write; the **entire vault header — magic, version,
+//!   Argon2 parameters, salt, AND the nonce — is fed in as associated data**, so
+//!   any tampering with it (a cost-parameter downgrade, a swapped salt, a flipped
+//!   nonce) is detected by the Poly1305 tag on decrypt. To make that possible the
+//!   nonce is generated first and authenticated via [`encrypt_with_nonce`].
+//! - The derived [`Key`] zeroizes its bytes on drop.
+//!
+//! Rust-reader orientation (this file assumes you may not know Rust):
+//! - `//!` at the top of a file is a *module-level doc comment* describing the
+//!   whole module; `///` documents the item immediately below it; `//` is an
+//!   ordinary inline comment. None of these affect runtime behavior.
+//! - Functions return `Result<T, E>` (either an `Ok(T)` value or an `Err(E)`).
+//!   The `?` operator after such a call means "if it's an error, stop and
+//!   return that error from this function; otherwise unwrap the success value."
+//! - `&[u8]` is a *borrowed* read-only view of a byte buffer (a "slice"); the
+//!   caller still owns the data, we just look at it. `&` = shared/borrowed.
+//! - Secret material is wiped from memory when it goes out of scope (`zeroize`),
+//!   which is why several types and locals exist purely to control cleanup.
+
+// `use` brings names from other crates (libraries) into scope, like imports.
+use argon2::{Algorithm, Argon2, Params, Version};
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    // `Key as ChaChaKey` renames the imported `Key` so it won't clash with our
+    // own `Key` type defined below.
+    Key as ChaChaKey, XChaCha20Poly1305, XNonce,
+};
+// `thiserror` auto-generates boilerplate for our error enum (see below).
+use thiserror::Error;
+// `Zeroize` is a trait providing `.zeroize()` to overwrite secret bytes with 0.
+use zeroize::Zeroize;
+
+// `pub const` = a public, compile-time constant. `usize` is the platform's
+// unsigned integer type used for sizes/lengths.
+pub const SALT_LEN: usize = 16;
+pub const NONCE_LEN: usize = 24;
+pub const KEY_LEN: usize = 32;
+
+// An `enum` is a type that is exactly one of a fixed set of variants — here, the
+// kinds of failure this module can produce. `#[derive(...)]` auto-generates trait
+// implementations: `Error` (via thiserror, using the `#[error("...")]` strings as
+// the human-readable message) and `Debug` (a developer-facing printout).
+#[derive(Error, Debug)]
+pub enum CryptoError {
+    #[error("invalid Argon2 parameters")]
+    KdfParams,
+    #[error("key derivation failed")]
+    KdfDerive,
+    #[error("encryption failed")]
+    Encrypt,
+    #[error("decryption failed — wrong password or corrupted vault")]
+    Decrypt,
+    #[error("OS random source failed: {0}")]
+    Random(String),
+    #[error("nonce must be {NONCE_LEN} bytes, got {0}")]
+    BadNonce(usize),
+}
+
+/// Tunable Argon2id cost parameters. Stored in the vault header so an existing
+/// vault always decrypts with the parameters it was written with.
+// A `struct` groups named fields into one value (like a record/class with no
+// methods of its own here). Derived traits: `Debug` (printable for diagnostics),
+// `Clone`+`Copy` (this value is small/plain, so it is duplicated by simple
+// bitwise copy on assignment instead of being "moved"), `PartialEq`+`Eq`
+// (enables `==` comparison between two `KdfParams`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KdfParams {
+    /// Memory cost in KiB.
+    pub m_cost: u32,
+    /// Iterations (time cost).
+    pub t_cost: u32,
+    /// Degree of parallelism (lanes).
+    pub p_cost: u32,
+}
+
+// `impl Trait for Type` implements an interface (`trait`) for a type. `Default`
+// is the standard trait for "the default value of this type", obtained via
+// `KdfParams::default()`. `Self` inside the block is shorthand for `KdfParams`.
+impl Default for KdfParams {
+    /// OWASP-aligned defaults: 64 MiB, 3 passes, 1 lane. Interactive-friendly on
+    /// a laptop while staying expensive for offline cracking.
+    fn default() -> Self {
+        KdfParams {
+            m_cost: 64 * 1024,
+            t_cost: 3,
+            p_cost: 1,
+        }
+    }
+}
+
+impl KdfParams {
+    /// Memory-cost floor (KiB).
+    pub const MIN_M_COST: u32 = 8;
+    /// Memory-cost ceiling (KiB) = **512 MiB**. The params live in the header and
+    /// must be used to DERIVE the key *before* the AEAD tag can reject a tampered
+    /// header, so an attacker who rewrites the header (or plants a redundancy
+    /// candidate) can force this much memory-hard work per open. The ceiling is set
+    /// well below "OOM the process" so a maxed header is a clean error, not a kill —
+    /// while staying 8× above the 64 MiB default. (Was 1 GiB; lowered per audit.)
+    pub const MAX_M_COST: u32 = 512 * 1024;
+    /// Iteration (time-cost) ceiling. Far above the default of 3.
+    pub const MAX_T_COST: u32 = 16;
+    /// Parallelism (lanes) ceiling.
+    pub const MAX_P_COST: u32 = 16;
+
+    /// Reject parameters outside the sane bounds above. Called on BOTH the read path
+    /// (`Header::parse`, a pre-derivation DoS guard) AND the write paths
+    /// (`create`/`import_tree`) so a vault can never be WRITTEN with params the reader
+    /// would later refuse — which would otherwise make it permanently unopenable.
+    pub fn validate(&self) -> Result<(), CryptoError> {
+        if self.m_cost < Self::MIN_M_COST
+            || self.m_cost > Self::MAX_M_COST
+            || self.t_cost < 1
+            || self.t_cost > Self::MAX_T_COST
+            || self.p_cost < 1
+            || self.p_cost > Self::MAX_P_COST
+            // argon2 ADDITIONALLY requires m_cost >= 8 * p_cost (Params::new returns
+            // MemoryTooLittle otherwise). Enforce it here so validate() is the complete,
+            // faithful gate for the KDF: a tampered header (e.g. m_cost=8, p_cost=2) then
+            // surfaces the precise BadParams rather than an opaque later derive failure.
+            // u64 math so the *8 can't overflow (p_cost is capped at 16 above regardless).
+            || (self.p_cost as u64) * 8 > self.m_cost as u64
+        {
+            return Err(CryptoError::KdfParams);
+        }
+        Ok(())
+    }
+}
+
+/// A derived symmetric key. The key bytes live on the heap and their page(s)
+/// are **memory-locked** (`mlock` on Unix, `VirtualLock` on Windows) so the OS
+/// will not page them to swap, where a plaintext copy could survive on disk
+/// (see `docs/DESIGN.md` §9.6). The bytes are wiped, then unlocked, on drop.
+pub struct Key {
+    // `Box<T>` is an owning pointer to a heap-allocated `T`; here the `T` is a
+    // fixed-size array of 32 bytes (`[u8; KEY_LEN]`). Heap allocation gives the
+    // key a stable address we can memory-lock.
+    bytes: Box<[u8; KEY_LEN]>,
+    /// Held for its lifetime; unlocks the page(s) when dropped. `None` if the OS
+    /// refused the lock (then the key is still usable, just not swap-protected).
+    // `Option<T>` is either `Some(value)` or `None` (Rust's null-free "maybe").
+    // The leading `_` in `_lock` tells the compiler we never read this field; we
+    // keep it only so its cleanup (unlocking the page) runs when `Key` is dropped.
+    // Gated behind the `mlock` feature; absent in the mobile build (no swap budget).
+    #[cfg(feature = "mlock")]
+    _lock: Option<region::LockGuard>,
+}
+
+// Methods of `Key`. `fn` with no `pub` keyword is private to this module.
+impl Key {
+    // Takes ownership of a 32-byte array (it is *moved* in) and wraps it in a Key.
+    fn new(bytes: [u8; KEY_LEN]) -> Key {
+        // Move the array onto the heap behind a `Box`.
+        let boxed = Box::new(bytes);
+        // Pin the page(s) holding the key. Best-effort: a failure (e.g. a tight
+        // RLIMIT_MEMLOCK) leaves the key working but unprotected from swap.
+        // `region::lock(...)` returns a `Result`; `.ok()` converts it to an
+        // `Option` (discarding the error), so a failed lock just yields `None`.
+        // Gated behind `mlock`: in the mobile build there is no lock to take (the
+        // OS grants apps no mlock budget), so the field and this call disappear.
+        #[cfg(feature = "mlock")]
+        let _lock = region::lock(boxed.as_ref().as_ptr(), KEY_LEN).ok();
+        // Construct and return the struct (last expression with no `;` is the
+        // return value in Rust).
+        Key {
+            bytes: boxed,
+            #[cfg(feature = "mlock")]
+            _lock,
+        }
+    }
+
+    // `&self` = a shared (read-only) borrow of this Key; the method can read the
+    // key but cannot modify or take ownership of it. Builds the AEAD cipher object.
+    fn cipher(&self) -> XChaCha20Poly1305 {
+        // `from_slice` reinterprets our 32 bytes as the cipher's key type.
+        let key = ChaChaKey::from_slice(self.bytes.as_ref());
+        XChaCha20Poly1305::new(key)
+    }
+
+    /// The raw 32 key bytes. Crate-private: only used to seed the second pass of
+    /// the chained two-password derivation (see [`derive_key_chained`]). `k1`
+    /// itself is zeroized when dropped at the end of that function.
+    // `pub(crate)` = visible anywhere in this crate (this program) but not to
+    // outside code. Returns `&[u8]`: a borrowed view of the bytes — the caller
+    // gets to *look* at the key without copying or owning it.
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        self.bytes.as_ref()
+    }
+}
+
+// `Drop` is the destructor trait: `drop` runs automatically when a `Key` value
+// goes out of scope. We use it to wipe the secret. Fields are dropped after this
+// body in declaration order, so `bytes` is wiped here, then `_lock` unlocks.
+impl Drop for Key {
+    // `&mut self` = an exclusive (mutable) borrow, required because we overwrite
+    // the bytes. You cannot call this directly; the compiler inserts the call.
+    fn drop(&mut self) {
+        // Wipe before the lock guard drops (which unlocks the page).
+        //
+        // NOTE: mutation testing flags this `drop` body as an un-killed mutant
+        // (replacing it with a no-op still passes the suite). That is an inherent
+        // limit, not a gap: confirming a destructor wiped its bytes means reading
+        // memory after the value is gone, which is use-after-free — undefined
+        // behavior, and impossible here since the crate is `#![forbid(unsafe_code)]`.
+        // The behavior is exercised (keys are dropped throughout the tests) and the
+        // zeroize call is a well-reviewed one-liner; see DESIGN §9.6.
+        // `self.bytes[..]` takes the whole array as a slice; `.zeroize()` (from
+        // the Zeroize trait) overwrites every byte with 0 and resists the
+        // compiler optimizing the wipe away.
+        self.bytes[..].zeroize();
+    }
+}
+
+/// Fill a fresh `[u8; N]` from the operating-system CSPRNG.
+// `<const N: usize>` is a *const generic*: the caller picks the array length `N`
+// at the call site (e.g. `random_bytes::<24>()`), and one function serves all
+// sizes. Returns `Result`, since the OS random source can theoretically fail.
+pub fn random_bytes<const N: usize>() -> Result<[u8; N], CryptoError> {
+    // `mut` marks `buf` as mutable so `getrandom::fill` can write into it.
+    let mut buf = [0u8; N];
+    // `&mut buf` lends the buffer out mutably to be filled. `.map_err(...)`
+    // converts any error into our `CryptoError` type; the `|e| ...` is a closure
+    // (an inline anonymous function taking the error `e`). The trailing `?` then
+    // returns early on error. If we reach the next line, the fill succeeded.
+    getrandom::fill(&mut buf).map_err(|e| CryptoError::Random(e.to_string()))?;
+    Ok(buf)
+}
+
+/// Derive the vault key from a master password + salt under the given parameters.
+// All three parameters are borrowed (`&`): this function reads them but does not
+// take ownership, so the caller keeps and reuses its password/salt/params.
+pub fn derive_key(
+    password: &[u8],
+    salt: &[u8],
+    params: &KdfParams,
+) -> Result<Key, CryptoError> {
+    let argon = Argon2::new(
+        Algorithm::Argon2id,
+        Version::V0x13,
+        // `Some(KEY_LEN)` requests a 32-byte output. `Params::new(...)` returns a
+        // `Result`; `.map_err(|_| ...)?` discards the original error (the `_`
+        // ignores it), substitutes our `KdfParams` error, and `?` returns early
+        // if construction failed.
+        Params::new(params.m_cost, params.t_cost, params.p_cost, Some(KEY_LEN))
+            .map_err(|_| CryptoError::KdfParams)?,
+    );
+    // A mutable local buffer for Argon2 to write the derived key into.
+    let mut key = [0u8; KEY_LEN];
+    argon
+        // `&mut key` lends the buffer mutably so it can be filled in place.
+        .hash_password_into(password, salt, &mut key)
+        .map_err(|_| CryptoError::KdfDerive)?;
+    // `key` is `Copy`, so the bytes copied into `Key` leave a copy in this local
+    // buffer too; wipe it explicitly (the copy inside `Key` is what we return).
+    let derived = Key::new(key);
+    key.zeroize();
+    Ok(derived)
+}
+
+/// Derive the vault key from **two** passwords entered sequentially (req. 9).
+///
+/// The derivation is chained so both secrets are required and neither can be
+/// verified independently of the other:
+/// ```text
+///   k1  = Argon2id(pw1, salt1, params)   // 32 bytes
+///   key = Argon2id(pw2, salt = k1, params)
+/// ```
+/// `k1` is dropped (and thus zeroized) when this function returns. `salt1` is
+/// the random per-vault salt stored in the file header. See `docs/DESIGN.md`
+/// §5.2 for the security rationale and caveats.
+pub fn derive_key_chained(
+    pw1: &[u8],
+    pw2: &[u8],
+    salt1: &[u8],
+    params: &KdfParams,
+) -> Result<Key, CryptoError> {
+    // First pass; `?` returns early if it fails. `k1` is a `Key`, so it will be
+    // automatically wiped (its `Drop`) when this function returns.
+    let k1 = derive_key(pw1, salt1, params)?;
+    // k1's 32 bytes (>= Argon2's 8-byte minimum) become the salt of the 2nd pass.
+    // No `;` and no `return`: this expression's result is what the function returns.
+    derive_key(pw2, k1.as_bytes(), params)
+}
+
+/// Encrypt `plaintext` with a freshly generated nonce, binding `aad` into the
+/// authentication tag. Returns `(nonce, ciphertext)`. Used for the document
+/// archive, whose nonce is stored alongside the ciphertext and bound implicitly
+/// (the AAD there is the vault-instance id).
+// `&Key` borrows the key (no copy of the secret is made). The return type is a
+// `Result` wrapping a *tuple* `(nonce, ciphertext)`: the fixed-size nonce array
+// plus a `Vec<u8>` (a growable, heap-allocated byte vector — the ciphertext).
+pub fn encrypt(
+    key: &Key,
+    plaintext: &[u8],
+    aad: &[u8],
+) -> Result<([u8; NONCE_LEN], Vec<u8>), CryptoError> {
+    let nonce_bytes = random_bytes::<NONCE_LEN>()?;
+    // `.map(|ct| ...)` transforms the `Ok` value: the closure receives the
+    // ciphertext `ct` and pairs it with the nonce. On error, `map` passes the
+    // error through unchanged.
+    encrypt_with_nonce(key, &nonce_bytes, plaintext, aad).map(|ct| (nonce_bytes, ct))
+}
+
+/// Encrypt `plaintext` under a **caller-supplied** nonce, binding `aad` into the
+/// authentication tag. This lets the caller place the nonce into the header and
+/// then authenticate that whole header (nonce included) as `aad` — closing any
+/// gap for an undetected nonce/salt/parameter swap. The caller must supply a
+/// fresh, unique nonce per encryption (we always pass a random one).
+// `nonce: &[u8; NONCE_LEN]` is a borrow of an exactly-24-byte array, so the wrong
+// length is impossible at compile time (unlike `decrypt` below, which takes a
+// runtime-sized slice and must check the length itself).
+pub fn encrypt_with_nonce(
+    key: &Key,
+    nonce: &[u8; NONCE_LEN],
+    plaintext: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
+    let xnonce = XNonce::from_slice(nonce);
+    key.cipher()
+        // `Payload { msg, aad }` bundles the plaintext with the associated data
+        // that gets authenticated (but not encrypted).
+        .encrypt(xnonce, Payload { msg: plaintext, aad })
+        .map_err(|_| CryptoError::Encrypt)
+}
+
+/// Decrypt `ciphertext`, verifying the tag against `aad`. Returns the plaintext
+/// or [`CryptoError::Decrypt`] for a wrong password / corrupted or tampered file.
+// Here `nonce: &[u8]` is a runtime-sized slice (length not known at compile
+// time), so we validate it before use.
+pub fn decrypt(
+    key: &Key,
+    nonce: &[u8],
+    ciphertext: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
+    // Explicit guard: reject a wrong-length nonce with a clear error instead of
+    // panicking in `from_slice`. `return Err(...)` exits the function early.
+    if nonce.len() != NONCE_LEN {
+        return Err(CryptoError::BadNonce(nonce.len()));
+    }
+    // Shadowing: rebind the name `nonce` to the cipher's nonce type. The original
+    // `&[u8]` is no longer reachable; the new binding reuses the name.
+    let nonce = XNonce::from_slice(nonce);
+    key.cipher()
+        // Verifies the Poly1305 tag over ciphertext+aad; any mismatch (wrong
+        // password, tampering) becomes `CryptoError::Decrypt`.
+        .decrypt(nonce, Payload { msg: ciphertext, aad })
+        .map_err(|_| CryptoError::Decrypt)
+}
+
+// `#[cfg(test)]` is *conditional compilation*: this whole `tests` module is only
+// compiled when running the test suite, never in the shipped binary. Inside:
+// - `#[test]` marks a function as a test the runner executes.
+// - `use super::*;` imports everything from the parent module (this file).
+// - `b"..."` is a byte-string literal (`&[u8]`), not text.
+// - `.unwrap()` extracts the `Ok`/`Some` value but *panics* (aborts the test) if
+//   it's an `Err`/`None`. Fine in tests: a panic = a failed test, and these
+//   inputs are known-good.
+// - `assert!(cond)` fails the test if `cond` is false; `assert_eq!`/`assert_ne!`
+//   check equality/inequality; `matches!(x, Pattern)` is true if `x` matches the
+//   given enum pattern.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Cheap params so the test suite stays fast; production uses the defaults.
+    fn fast() -> KdfParams {
+        KdfParams { m_cost: 256, t_cost: 1, p_cost: 1 }
+    }
+
+    #[test]
+    fn default_params_pass_their_own_validator() {
+        // Invariant: the SHIPPED default must validate — the GUI/TUI/CLI always create
+        // and import with `KdfParams::default()`, so if the default fell outside the
+        // bounds, every new vault would be rejected (BadParams). This also pins the
+        // ceilings ABOVE the default (e.g. catches MAX_M_COST being mis-set below the
+        // 64 MiB default), and the explicit value guards the constant arithmetic.
+        let d = KdfParams::default();
+        assert!(d.validate().is_ok(), "default params must be within bounds");
+        assert!(d.m_cost >= KdfParams::MIN_M_COST && d.m_cost <= KdfParams::MAX_M_COST);
+        assert!(d.t_cost >= 1 && d.t_cost <= KdfParams::MAX_T_COST);
+        assert!(d.p_cost >= 1 && d.p_cost <= KdfParams::MAX_P_COST);
+        assert_eq!(KdfParams::MAX_M_COST, 524_288, "memory ceiling is 512 MiB (in KiB)");
+        // Out-of-range params are rejected (both ends + t_cost).
+        assert!(KdfParams { m_cost: KdfParams::MAX_M_COST + 1, t_cost: 3, p_cost: 1 }.validate().is_err());
+        assert!(KdfParams { m_cost: KdfParams::MIN_M_COST - 1, t_cost: 3, p_cost: 1 }.validate().is_err());
+        assert!(KdfParams { m_cost: 65_536, t_cost: KdfParams::MAX_T_COST + 1, p_cost: 1 }.validate().is_err());
+    }
+
+    #[test]
+    fn round_trip() {
+        let key = derive_key(b"correct horse", b"sixteen-byte-slt", &fast()).unwrap();
+        let aad = b"header-bytes";
+        let (nonce, ct) = encrypt(&key, b"top secret", aad).unwrap();
+        let pt = decrypt(&key, &nonce, &ct, aad).unwrap();
+        assert_eq!(pt, b"top secret");
+    }
+
+    #[test]
+    fn wrong_password_fails() {
+        let salt = b"sixteen-byte-slt";
+        let good = derive_key(b"right", salt, &fast()).unwrap();
+        let bad = derive_key(b"wrong", salt, &fast()).unwrap();
+        let (nonce, ct) = encrypt(&good, b"secret", b"aad").unwrap();
+        assert!(matches!(
+            decrypt(&bad, &nonce, &ct, b"aad"),
+            Err(CryptoError::Decrypt)
+        ));
+    }
+
+    #[test]
+    fn tampered_ciphertext_fails() {
+        let key = derive_key(b"pw", b"sixteen-byte-slt", &fast()).unwrap();
+        let (nonce, mut ct) = encrypt(&key, b"secret", b"aad").unwrap();
+        ct[0] ^= 0xff;
+        assert!(decrypt(&key, &nonce, &ct, b"aad").is_err());
+    }
+
+    #[test]
+    fn encrypt_with_nonce_round_trips_and_binds_nonce() {
+        let key = derive_key(b"pw", b"sixteen-byte-slt", &fast()).unwrap();
+        let nonce = [7u8; NONCE_LEN];
+        let aad = b"full-header-bytes";
+        let ct = encrypt_with_nonce(&key, &nonce, b"secret", aad).unwrap();
+        assert_eq!(decrypt(&key, &nonce, &ct, aad).unwrap(), b"secret");
+        // A different nonce (or different aad) must not verify.
+        assert!(decrypt(&key, &[9u8; NONCE_LEN], &ct, aad).is_err());
+        assert!(decrypt(&key, &nonce, &ct, b"other-header").is_err());
+    }
+
+    #[test]
+    fn tampered_aad_fails() {
+        // Changing the header (aad) must invalidate the tag.
+        let key = derive_key(b"pw", b"sixteen-byte-slt", &fast()).unwrap();
+        let (nonce, ct) = encrypt(&key, b"secret", b"header-v1").unwrap();
+        assert!(decrypt(&key, &nonce, &ct, b"header-v2").is_err());
+    }
+
+    #[test]
+    fn derivation_is_deterministic() {
+        let a = derive_key(b"pw", b"sixteen-byte-slt", &fast()).unwrap();
+        let b = derive_key(b"pw", b"sixteen-byte-slt", &fast()).unwrap();
+        assert_eq!(a.as_bytes(), b.as_bytes());
+    }
+
+    #[test]
+    fn random_bytes_differ() {
+        let a = random_bytes::<NONCE_LEN>().unwrap();
+        let b = random_bytes::<NONCE_LEN>().unwrap();
+        assert_ne!(a, b, "two random nonces should not collide");
+    }
+
+    #[test]
+    fn chained_round_trip() {
+        let salt = b"sixteen-byte-slt";
+        let key = derive_key_chained(b"first", b"second", salt, &fast()).unwrap();
+        let (nonce, ct) = encrypt(&key, b"two-pw secret", b"aad").unwrap();
+        let pt = decrypt(&key, &nonce, &ct, b"aad").unwrap();
+        assert_eq!(pt, b"two-pw secret");
+    }
+
+    #[test]
+    fn chained_requires_both_passwords() {
+        let salt = b"sixteen-byte-slt";
+        let good = derive_key_chained(b"first", b"second", salt, &fast()).unwrap();
+        // Either password wrong -> different key.
+        let bad_pw1 = derive_key_chained(b"FIRST", b"second", salt, &fast()).unwrap();
+        let bad_pw2 = derive_key_chained(b"first", b"SECOND", salt, &fast()).unwrap();
+        assert_ne!(good.as_bytes(), bad_pw1.as_bytes());
+        assert_ne!(good.as_bytes(), bad_pw2.as_bytes());
+    }
+
+    #[test]
+    fn chained_is_order_sensitive() {
+        // Swapping the two passwords must yield a different key.
+        let salt = b"sixteen-byte-slt";
+        let ab = derive_key_chained(b"alpha", b"beta", salt, &fast()).unwrap();
+        let ba = derive_key_chained(b"beta", b"alpha", salt, &fast()).unwrap();
+        assert_ne!(ab.as_bytes(), ba.as_bytes());
+    }
+
+    #[test]
+    fn chained_is_deterministic() {
+        let salt = b"sixteen-byte-slt";
+        let a = derive_key_chained(b"x", b"y", salt, &fast()).unwrap();
+        let b = derive_key_chained(b"x", b"y", salt, &fast()).unwrap();
+        assert_eq!(a.as_bytes(), b.as_bytes());
+    }
+
+
+    // --- mutation-testing kill-tests (round 7: cargo-mutants survivor closure) ---
+    #[test]
+    fn mut_kdf_validate_upper_bounds_at_exact_max() {
+        // Pin each KDF ceiling at its exact value AND pin the `>` comparison in
+        // validate(): a params set sitting EXACTLY on each ceiling must validate
+        // (real: `max > max` is false), while one-over must be rejected. This kills
+        // the const `*`->`+`/`/` mutations (the resolved literal differs) together
+        // with the `>`->`>=`/`==` comparison mutants (which would reject the at-max
+        // case). Each parameter is exercised independently.
+        assert_eq!(KdfParams::MAX_M_COST, 524_288u32, "m_cost ceiling is 512 MiB in KiB");
+        assert_eq!(KdfParams::MAX_T_COST, 16u32);
+        assert_eq!(KdfParams::MAX_P_COST, 16u32);
+        assert_eq!(KdfParams::MIN_M_COST, 8u32);
+
+        // Exactly on the ceiling: must pass.
+        assert!(
+            KdfParams { m_cost: KdfParams::MAX_M_COST, t_cost: 1, p_cost: 1 }.validate().is_ok(),
+            "m_cost == MAX must validate"
+        );
+        assert!(
+            KdfParams { m_cost: KdfParams::MIN_M_COST, t_cost: KdfParams::MAX_T_COST, p_cost: 1 }.validate().is_ok(),
+            "t_cost == MAX must validate"
+        );
+        assert!(
+            KdfParams { m_cost: 8 * KdfParams::MAX_P_COST, t_cost: 1, p_cost: KdfParams::MAX_P_COST }.validate().is_ok(),
+            "p_cost == MAX must validate (with m_cost >= 8*p_cost, the argon2 floor)"
+        );
+        // The argon2 cross-invariant m_cost >= 8*p_cost is now enforced by validate(): a
+        // shape-valid-but-derivation-failing combo (m_cost=8, p_cost=2) is rejected up front.
+        assert!(
+            KdfParams { m_cost: 8, t_cost: 1, p_cost: 2 }.validate().is_err(),
+            "m_cost < 8*p_cost must be rejected (argon2 MemoryTooLittle)"
+        );
+
+        // One over each ceiling: must be rejected.
+        assert!(
+            KdfParams { m_cost: KdfParams::MAX_M_COST + 1, t_cost: 1, p_cost: 1 }.validate().is_err(),
+            "m_cost == MAX + 1 must be rejected"
+        );
+        assert!(
+            KdfParams { m_cost: KdfParams::MIN_M_COST, t_cost: KdfParams::MAX_T_COST + 1, p_cost: 1 }.validate().is_err(),
+            "t_cost == MAX + 1 must be rejected"
+        );
+        assert!(
+            KdfParams { m_cost: KdfParams::MIN_M_COST, t_cost: 1, p_cost: KdfParams::MAX_P_COST + 1 }.validate().is_err(),
+            "p_cost == MAX + 1 must be rejected"
+        );
+
+        // Exactly on the m_cost floor passes; one under is rejected (guards MIN_M_COST).
+        assert!(
+            KdfParams { m_cost: KdfParams::MIN_M_COST, t_cost: 1, p_cost: 1 }.validate().is_ok(),
+            "m_cost == MIN must validate"
+        );
+        assert!(
+            KdfParams { m_cost: KdfParams::MIN_M_COST - 1, t_cost: 1, p_cost: 1 }.validate().is_err(),
+            "m_cost == MIN - 1 must be rejected"
+        );
+    }
+
+    // --- known-answer tests (KAT) -----------------------------------------
+    // Every OTHER crypto test here compares the code against ITSELF (round-trip,
+    // determinism), so a silent dependency/configuration change that still
+    // self-round-trips would pass them all while making EVERY previously-written
+    // vault permanently undecryptable. These KATs pin the primitives to fixed,
+    // externally-anchored outputs so that failure class fails CI instead.
+
+    fn to_hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+    fn from_hex(s: &str) -> Vec<u8> {
+        assert!(s.len().is_multiple_of(2), "hex string must have even length");
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
+            .collect()
+    }
+
+    #[test]
+    fn kat_argon2id_pins_algorithm_version_and_output() {
+        // Pins that derive_key is Argon2id / Version V0x13 / 32-byte output AND the
+        // exact derived bytes. An argon2 default flip (Argon2id->Argon2i, V0x13->V0x10),
+        // an output-length change, or a dropped parameter would still self-round-trip
+        // and pass `derivation_is_deterministic`, but would diverge here.
+        let params = KdfParams { m_cost: 256, t_cost: 1, p_cost: 1 };
+        let pw = b"pass-mgr-kat-password";
+        let salt = b"pass-mgr-kat!slt"; // 16 bytes, like a real per-vault salt
+
+        // (1) Independent, explicitly-configured reference derivation.
+        let argon = Argon2::new(
+            Algorithm::Argon2id,
+            Version::V0x13,
+            Params::new(params.m_cost, params.t_cost, params.p_cost, Some(KEY_LEN)).unwrap(),
+        );
+        let mut reference = [0u8; KEY_LEN];
+        argon.hash_password_into(pw, salt, &mut reference).unwrap();
+        let derived = derive_key(pw, salt, &params).unwrap();
+        assert_eq!(
+            derived.as_bytes(),
+            &reference[..],
+            "derive_key must be Argon2id / V0x13 / {KEY_LEN}-byte output"
+        );
+
+        // (2) Frozen vector. This literal is a CONTRACT: if it ever changes, the
+        // on-disk KDF changed and existing vaults will not open — it must be paired
+        // with a FORMAT_VERSION bump + migration, never silently edited to pass.
+        assert_eq!(
+            to_hex(derived.as_bytes()),
+            "8b02325a933c6bb4a13ba99a8b455c4ccab09c7073d08f5b8643101df03cf30d",
+        );
+    }
+
+    #[test]
+    fn kat_xchacha20poly1305_matches_the_published_vector() {
+        // (1) Published external vector: draft-irtf-cfrg-xchacha-03 §A.3.1
+        // (AEAD_XCHACHA20_POLY1305). encrypt_with_nonce must produce the exact
+        // ciphertext+tag the spec specifies, and decrypt must invert it. This anchors
+        // the AEAD to the standard independently of the chacha20poly1305 crate's own
+        // tests, so a crate behaviour change (HChaCha subkey derivation, tag layout)
+        // that still self-round-trips is caught here.
+        let key = {
+            let mut k = [0u8; KEY_LEN];
+            k.copy_from_slice(&from_hex(
+                "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+            ));
+            Key::new(k)
+        };
+        let nonce: [u8; NONCE_LEN] = from_hex("404142434445464748494a4b4c4d4e4f5051525354555657")
+            .try_into()
+            .unwrap();
+        let aad = from_hex("50515253c0c1c2c3c4c5c6c7");
+        let plaintext = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+        let expected = "bd6d179d3e83d43b9576579493c0e939572a1700252bfaccbed2902c21396cbb731c7f1b0b4aa6440bf3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f3fac2bc369488f76b2383565d3fff921f9664c97637da9768812f615c68b13b52ec0875924c1c7987947deafd8780acf49";
+
+        let ct = encrypt_with_nonce(&key, &nonce, plaintext, &aad).unwrap();
+        assert_eq!(
+            to_hex(&ct),
+            expected,
+            "ciphertext+tag must match the published XChaCha20-Poly1305 vector"
+        );
+        assert_eq!(
+            decrypt(&key, &nonce, &ct, &aad).unwrap(),
+            plaintext.to_vec(),
+            "decrypt inverts the published vector"
+        );
+
+        // (2) encrypt_with_nonce must equal a hand-built XChaCha20Poly1305 call: pins
+        // that the wrapper uses this exact AEAD and binds nonce + aad the obvious way.
+        let direct = XChaCha20Poly1305::new(ChaChaKey::from_slice(key.as_bytes()))
+            .encrypt(XNonce::from_slice(&nonce), Payload { msg: &plaintext[..], aad: &aad })
+            .unwrap();
+        assert_eq!(ct, direct);
+
+        // (3) Frozen vector under our own fixed inputs (drift detector / contract).
+        let fk = Key::new([0x42u8; KEY_LEN]);
+        let fct = encrypt_with_nonce(&fk, &[0x07u8; NONCE_LEN], b"pass-mgr KAT plaintext", b"pass-mgr KAT aad")
+            .unwrap();
+        assert_eq!(
+            to_hex(&fct),
+            "876df61b4e2cf9d169efbc1f65bd6c4df1b50b431219787e2f3f9b2b6bab0281e821c4a8e4a3",
+        );
+    }
+
+    #[test]
+    fn kdf_params_feed_the_derivation() {
+        // The header binds m/t/p_cost as AAD (tampering fails the tag), but that alone
+        // does not prove the params actually CHANGE the key. If the derivation ever
+        // ignored a parameter, an attacker could rewrite the header to the minimum cost
+        // (m_cost=8) and still derive the same key, silently defeating the memory-hard
+        // work factor. Varying only one parameter at a time must change the key.
+        let pw = b"pw";
+        let salt = b"sixteen-byte-slt";
+        let base = KdfParams { m_cost: 256, t_cost: 2, p_cost: 1 };
+        let k = |p: &KdfParams| derive_key(pw, salt, p).unwrap().as_bytes().to_vec();
+        let kb = k(&base);
+        assert_ne!(kb, k(&KdfParams { m_cost: 512, ..base }), "m_cost must affect the key");
+        assert_ne!(kb, k(&KdfParams { t_cost: 3, ..base }), "t_cost must affect the key");
+        assert_ne!(kb, k(&KdfParams { p_cost: 2, ..base }), "p_cost must affect the key");
+    }
+
+    #[test]
+    fn chained_derivation_uses_k1_as_the_second_salt() {
+        // Pin the documented construction key = Argon2id(pw2, salt = Argon2id(pw1, salt1)).
+        // The existing chained tests prove order-sensitivity and both-required, but a
+        // mutant that ignored the chaining (salted pass 2 with salt1, say) could still
+        // pass those; this pins the exact algebraic relationship.
+        let salt1 = b"sixteen-byte-slt";
+        let params = fast();
+        let k1 = derive_key(b"pw1", salt1, &params).unwrap();
+        let expected = derive_key(b"pw2", k1.as_bytes(), &params).unwrap();
+        let chained = derive_key_chained(b"pw1", b"pw2", salt1, &params).unwrap();
+        assert_eq!(chained.as_bytes(), expected.as_bytes());
+        // Must NOT equal the wrong-but-plausible "salt pass 2 with salt1" construction.
+        let wrong = derive_key(b"pw2", salt1, &params).unwrap();
+        assert_ne!(chained.as_bytes(), wrong.as_bytes(), "pass 2 must be salted by k1, not salt1");
+    }
+}

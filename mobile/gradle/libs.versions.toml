@@ -1,4 +1,4 @@
-# Version catalog for the pass-mgr Compose Multiplatform app. Versions are the
+# Version catalog for the vaultis Compose Multiplatform app. Versions are the
 # known-good set from Gobley 0.3.7's own examples (Kotlin 2.1.10 / AGP 8.7.3 /
 # Compose Multiplatform 1.7.3 / Gradle 8.12).
 [versions]

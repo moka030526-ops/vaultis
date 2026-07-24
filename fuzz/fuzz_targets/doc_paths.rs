@@ -9,7 +9,7 @@
 //!   - doc_upload_dir: keeps the trusted root/timestamp prefix, contains no space,
 //!     no "/./" or "/../" traversal, and no empty path component.
 use libfuzzer_sys::fuzz_target;
-use pass_mgr_core::records::{doc_filename, doc_slug, doc_upload_dir};
+use vaultis_core::records::{doc_filename, doc_slug, doc_upload_dir};
 
 fuzz_target!(|data: &[u8]| {
     // The full byte string is the attacker-controlled input (subfolder / filename).

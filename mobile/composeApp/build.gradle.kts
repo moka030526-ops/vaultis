@@ -15,11 +15,11 @@ cargo {
     // The audited FFI crate lives in the Cargo workspace, not inside this Gradle
     // module. Gobley runs `cargo locate-project` here to find the manifest and
     // cross-builds the cdylib for the Android ABIs (and the iOS staticlib on a Mac).
-    packageDirectory = layout.projectDirectory.dir("../../crates/pass-mgr-ffi")
+    packageDirectory = layout.projectDirectory.dir("../../crates/vaultis-ffi")
 }
 
 uniffi {
-    // pass-mgr-ffi uses UniFFI proc-macros (no .udl), so generate the Kotlin
+    // vaultis-ffi uses UniFFI proc-macros (no .udl), so generate the Kotlin
     // bindings by introspecting the built library.
     generateFromLibrary()
 }
@@ -57,13 +57,13 @@ kotlin {
 }
 
 android {
-    namespace = "com.passmgr"
+    namespace = "com.vaultis"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
     // Matches the NDK installed by mobile/scripts/install-android-toolchain.sh.
     ndkVersion = "30.0.14904198"
 
     defaultConfig {
-        applicationId = "com.passmgr"
+        applicationId = "com.vaultis"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
@@ -102,7 +102,7 @@ android {
                 }
             } else {
                 project.logger.warn(
-                    "pass-mgr: no PM_KEYSTORE configured — signing the RELEASE build with the " +
+                    "vaultis: no PM_KEYSTORE configured — signing the RELEASE build with the " +
                         "PUBLIC Android debug key. This APK is for local testing ONLY and must NOT be distributed."
                 )
                 signingConfigs.getByName("debug")

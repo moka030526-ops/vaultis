@@ -3028,48 +3028,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pass-mgr"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "directories",
- "eframe",
- "egui_kittest",
- "libc",
- "pass-mgr-core",
- "ratatui",
- "serde_json",
- "zeroize",
-]
-
-[[package]]
-name = "pass-mgr-core"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "chacha20poly1305",
- "getrandom 0.4.2",
- "libc",
- "proptest",
- "region",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "zeroize",
-]
-
-[[package]]
-name = "pass-mgr-ffi"
-version = "0.1.0"
-dependencies = [
- "pass-mgr-core",
- "thiserror 2.0.18",
- "uniffi",
- "zeroize",
-]
-
-[[package]]
 name = "password-hash"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4770,6 +4728,48 @@ dependencies = [
  "js-sys",
  "serde_core",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "vaultis"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "directories",
+ "eframe",
+ "egui_kittest",
+ "libc",
+ "ratatui",
+ "serde_json",
+ "vaultis-core",
+ "zeroize",
+]
+
+[[package]]
+name = "vaultis-core"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "chacha20poly1305",
+ "getrandom 0.4.2",
+ "libc",
+ "proptest",
+ "region",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
+name = "vaultis-ffi"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "uniffi",
+ "vaultis-core",
+ "zeroize",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-# Fuzzing pass-mgr's untrusted-input parsers
+# Fuzzing vaultis's untrusted-input parsers
 
 Every byte the vault reads from disk is attacker-influenceable, so the four
 hand-written parsers are fuzzed. The invariant is strict: **arbitrary bytes must

@@ -1,14 +1,14 @@
-# Virtual workspace root. The single `pass-mgr` package was split into:
-#   crates/pass-mgr-core    — headless, audited vault core (no UI/OS deps)
-#   crates/pass-mgr-desktop — the CLI + ratatui TUI + egui GUI binaries
-#   crates/pass-mgr-ffi     — UniFFI wrapper for the Android/iOS apps (added later)
-# The `fuzz/` crate is its own (detached) workspace and links pass-mgr-core directly.
+# Virtual workspace root. The single `vaultis` package was split into:
+#   crates/vaultis-core    — headless, audited vault core (no UI/OS deps)
+#   crates/vaultis-desktop — the CLI + ratatui TUI + egui GUI binaries
+#   crates/vaultis-ffi     — UniFFI wrapper for the Android/iOS apps (added later)
+# The `fuzz/` crate is its own (detached) workspace and links vaultis-core directly.
 [workspace]
 resolver = "2"
 members = [
-    "crates/pass-mgr-core",
-    "crates/pass-mgr-desktop",
-    "crates/pass-mgr-ffi",
+    "crates/vaultis-core",
+    "crates/vaultis-desktop",
+    "crates/vaultis-ffi",
 ]
 
 [profile.release]

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the pass-mgr desktop-shortcut icons: a little vault, drawn locked
+"""Generate the vaultis desktop-shortcut icons: a little vault, drawn locked
 (read-only) and unlocked (edit).
 
 Outputs, next to this script:
-    pass-mgr-locked.png    / .ico   -> read-only shortcut
-    pass-mgr-unlocked.png  / .ico   -> edit (--write) shortcut
+    vaultis-locked.png    / .ico   -> read-only shortcut
+    vaultis-unlocked.png  / .ico   -> edit (--write) shortcut
 
 Pure Pillow, no other tools needed. Run:  python3 make_icons.py
 Everything is drawn supersampled and downscaled, so the edges stay smooth.
@@ -121,7 +121,7 @@ def paste_padlock(base: Image.Image, locked: bool):
 
 
 def main():
-    for locked, name in [(True, "pass-mgr-locked"), (False, "pass-mgr-unlocked")]:
+    for locked, name in [(True, "vaultis-locked"), (False, "vaultis-unlocked")]:
         big = draw_vault(locked)
         png = big.resize((SS // 2, SS // 2), Image.LANCZOS)          # 512px
         png.save(HERE / f"{name}.png")

@@ -12,9 +12,9 @@
 //! blob-id/path validation, the add-only blob copy, and the atomic save — over arbitrary
 //! input. (The untrusted on-disk PARSING is covered separately by parse_*/scan_volume.)
 use libfuzzer_sys::fuzz_target;
-use pass_mgr_core::crypto::KdfParams;
-use pass_mgr_core::records;
-use pass_mgr_core::vault::OpenVault;
+use vaultis_core::crypto::KdfParams;
+use vaultis_core::records;
+use vaultis_core::vault::OpenVault;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);

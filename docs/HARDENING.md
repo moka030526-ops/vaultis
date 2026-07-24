@@ -1,8 +1,8 @@
 # Hardening Report
 
 _Adversarial security review, mutation testing, fuzzing, and supply-chain audit of
-the estate-vault codebase (workspace: `pass-mgr-core`, `pass-mgr-desktop`,
-`pass-mgr-ffi`, and the Compose Multiplatform `mobile/` viewer)._
+the estate-vault codebase (workspace: `vaultis-core`, `vaultis-desktop`,
+`vaultis-ffi`, and the Compose Multiplatform `mobile/` viewer)._
 
 > **Scope and honesty.** This report describes the assurance work performed and the
 > defects it found and fixed. It is **not** a proof that the code is bug-free — no
@@ -54,7 +54,7 @@ tamper matrix, and full-crate mutation testing) on top of the static review.
 
 #### F-1 (Low) — Real Estate portal password buffers reallocated on each keystroke
 
-* **Where:** `crates/pass-mgr-desktop/src/gui.rs`, Real Estate edit tab.
+* **Where:** `crates/vaultis-desktop/src/gui.rs`, Real Estate edit tab.
 * **What:** The three portal password edit buffers (`property_mgmt_password`,
   `insurance_password`, `hoa_password`) started empty and grew as the user typed.
   Each `String` growth reallocates, and the old backing buffer is freed **without
@@ -83,7 +83,7 @@ tamper matrix, and full-crate mutation testing) on top of the static review.
 
 #### F-2 (Medium) — Mobile clipboard auto-clear timer died with the field
 
-* **Where:** `mobile/composeApp/src/commonMain/kotlin/com/passmgr/App.kt`.
+* **Where:** `mobile/composeApp/src/commonMain/kotlin/com/vaultis/App.kt`.
 * **What:** Copying a password to the clipboard scheduled a 15-second auto-clear from a
   `LaunchedEffect` **scoped to the password-field composable**. Navigating away from the
   detail screen (or locking the vault) before the timer fired *cancelled* the effect,
@@ -104,7 +104,7 @@ filtered out). Both are fixed, with a sweep confirming neither pattern recurs el
 
 #### F-3 (High) — TUI Ctrl+Y / Ctrl+G acted on the *first* password field, not the focused one
 
-* **Where:** `crates/pass-mgr-desktop/src/ui.rs` (edit-key handler).
+* **Where:** `crates/vaultis-desktop/src/ui.rs` (edit-key handler).
 * **What:** Copy-password (`Ctrl+Y`) and generate-password (`Ctrl+G`) located the field
   with `fields.iter().find(|f| matches!(f.kind, Password))` — the **first** password
   field, ignoring the focused field. Harmless on Accounts (one password), but the Real
@@ -224,7 +224,7 @@ Two real fixes landed from the re-audit; the round-5 fixes themselves were confi
 
 ### 3.1g Seventh round — full-crate mutation testing & survivor closure
 
-A **whole-crate** `cargo-mutants` run over `pass-mgr-core` (not just a diff): **1629
+A **whole-crate** `cargo-mutants` run over `vaultis-core` (not just a diff): **1629
 mutants → 107 survived** (behaviour no test pinned). A 9-agent workflow authored
 **37 targeted kill-tests** (one cluster per function; each test crafted to fail under
 its specific mutation and pass on real code, most verified by the authoring agent
@@ -322,7 +322,7 @@ test actually constrains. Adding the tests below moved the result from **106 mis
 
 The crates where the security logic lives have **no real survivors left**:
 
-* **2 FFI survivors killed** with new tests in `crates/pass-mgr-ffi/src/lib.rs`:
+* **2 FFI survivors killed** with new tests in `crates/vaultis-ffi/src/lib.rs`:
   * `previous_access_is_a_real_timestamp_not_a_constant` — `previous_access()` returns the
     stored access time, not a hard-coded constant.
   * `recovery_notice_is_some_after_mirror_recovery` — corrupt the primary copy of a
@@ -435,8 +435,8 @@ git diff <base>..HEAD > /tmp/new.diff   # <base> = the pre-feature-merge commit
 cargo mutants --in-diff /tmp/new.diff
 # The lone remaining "missed" is the no-op acquire's #[cfg(not(...))] line (§4); confirm
 # both lock configurations are actually covered:
-cargo test -p pass-mgr-core single_writer                       # feature on  (default)
-cargo test -p pass-mgr-core --no-default-features no_op_lock    # feature off (mobile)
+cargo test -p vaultis-core single_writer                       # feature on  (default)
+cargo test -p vaultis-core --no-default-features no_op_lock    # feature off (mobile)
 
 # Fuzzing (nightly toolchain) — targets: parse_header, parse_frame, parse_manifest, scan_volume
 cargo +nightly fuzz run parse_header  -- -max_total_time=90

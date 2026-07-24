@@ -1,0 +1,460 @@
+//! Launch helpers shared by the two binaries.
+//!
+//! The project ships two executables that resolve the vault location identically:
+//! the console `vaultis` (CLI subcommands + the `--tui` terminal UI) and the
+//! windowed `vaultis-gui` (the graphical UI built as a Windows **GUI-subsystem**
+//! app, so it opens *without* a command window). Keeping the path/flag logic here —
+//! instead of duplicated in each binary — guarantees `vaultis DIR` and
+//! `vaultis-gui DIR` open the same vault.
+
+use std::path::{Path, PathBuf};
+
+use directories::ProjectDirs;
+
+/// Default vault location: the per-user data directory for this app
+/// (`~/.local/share/vaultis/` on Linux, `%APPDATA%\vaultis\` on Windows).
+pub fn default_vault_path() -> PathBuf {
+    match ProjectDirs::from("dev", "vaultis", "vaultis") {
+        Some(dirs) => dirs.data_dir().join("vault.pmv"),
+        None => PathBuf::from("vault.pmv"),
+    }
+}
+
+/// The name of the encrypted vault file inside a vault directory. A directory is
+/// treated as a vault iff it directly contains a file with this name.
+const VAULT_FILE: &str = "vault.pmv";
+
+/// The vault file inside a user-supplied vault directory.
+pub fn vault_file(dir: &str) -> PathBuf {
+    PathBuf::from(dir).join(VAULT_FILE)
+}
+
+/// The outcome of scanning a root directory for vaults: the discovered vault names
+/// plus an optional human-readable `warning` to surface in the UI. The warning is
+/// `Some` when the root itself can't be read (the list is then empty) or when some
+/// entries beneath it had to be skipped because they were inaccessible.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct VaultScan {
+    pub vaults: Vec<String>,
+    pub warning: Option<String>,
+}
+
+/// The vault directory for a `root` plus a selected/typed leaf `name`. An empty name
+/// resolves to the root itself (so a vault sitting directly at the root still opens);
+/// otherwise it is `<root>/<name>`. Both sides are trimmed. This is the collapsed start
+/// page's single source of truth: the open target is always `root` + `name`.
+pub fn join_root_name(root: &str, name: &str) -> String {
+    let root = root.trim();
+    // Trim only to DECIDE empty-vs-present; when present, join the name VERBATIM so this is
+    // the exact inverse of `discover_vaults`, which returns raw directory names. Trimming the
+    // joined name would make a vault folder whose name has leading/trailing whitespace
+    // un-openable from the dropdown — the derived path wouldn't match the real folder, so the
+    // start page would silently flip to "Create" instead of opening the selected vault.
+    if name.trim().is_empty() {
+        root.to_string()
+    } else {
+        Path::new(root).join(name).display().to_string()
+    }
+}
+
+/// A working directory that is a **vault root**: it holds at least one immediate
+/// subdirectory containing a `vault.pmv`. Produced by [`cwd_vault_root`] and consumed by
+/// [`initial_root_and_name`], which needs the discovered names to decide whether the
+/// remembered last vault can be pre-selected there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CwdRoot {
+    pub root: String,
+    pub vaults: Vec<String>,
+}
+
+/// The process's current directory, iff it is a vault ROOT — i.e. [`discover_vaults`] finds
+/// at least one vault directly beneath it. This is what lets `cd /my/vaults && vaultis-gui`
+/// browse *that* folder instead of the remembered/default root.
+///
+/// "Is this a vault?" is deliberately NOT redefined here: the check is `discover_vaults`'s,
+/// so the `vault.pmv` marker stays the single definition across the whole app. A CWD that is
+/// itself a vault (holding `vault.pmv` directly) is intentionally NOT special-cased — only
+/// the root-of-vaults shape triggers this. An unreadable or non-UTF-8 CWD yields `None`,
+/// which simply falls back to the saved/default behaviour.
+pub fn cwd_vault_root() -> Option<CwdRoot> {
+    let cwd = std::env::current_dir().ok()?;
+    let root = cwd.to_str()?.to_owned();
+    let vaults = discover_vaults(&root).vaults;
+    (!vaults.is_empty()).then_some(CwdRoot { root, vaults })
+}
+
+/// Compute the start page's initial `(root, vault_name)` for a launched vault `path`, given
+/// the current directory `cwd` when it is a vault root ([`cwd_vault_root`], `None` otherwise),
+/// the persisted root preference `saved_root` and last-opened vault `saved_vault` ("" if unset).
+///
+/// Precedence is **argument > cwd > saved preference > per-user default**:
+///
+/// 1. An **explicitly launched** vault (a `path` differing from the per-user default) always
+///    wins: its parent becomes the root and its folder the selected name, so `vaultis DIR`
+///    opens exactly `DIR` — both the cwd and the saved last vault are ignored, since the user
+///    named a specific target.
+/// 2. Otherwise, a `cwd` that is a vault root becomes the root, so launching from a folder of
+///    vaults browses it. The remembered `saved_vault` is pre-selected only when it actually
+///    exists there (matched verbatim against the discovered names); otherwise the name is
+///    empty and the user picks from the dropdown.
+/// 3. Otherwise the saved root preference (if any) seeds the root — that is what makes
+///    "remember my root across startups" work — and the name is the remembered `saved_vault`,
+///    falling back to the default vault's folder only when it lives directly under that root,
+///    else empty.
+/// 4. Otherwise the default vault's own parent/folder.
+///
+/// A `saved_vault` that no longer exists under the root simply resolves to "Create" via the
+/// caller's `path.exists()` check — harmless, not an error.
+pub fn initial_root_and_name(
+    path: &Path,
+    cwd: Option<&CwdRoot>,
+    saved_root: &str,
+    saved_vault: &str,
+) -> (String, String) {
+    let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
+    let dir_parent = dir.and_then(|d| d.parent()).filter(|p| !p.as_os_str().is_empty());
+    let parent_str = dir_parent.map(|p| p.display().to_string());
+    let leaf = dir.and_then(|d| d.file_name()).and_then(|n| n.to_str()).map(str::to_owned);
+
+    let launched_default = path == default_vault_path();
+    let saved = saved_root.trim();
+    if !launched_default {
+        // Honor the launched vault: root = its parent, name = its folder.
+        (parent_str.unwrap_or_else(|| ".".into()), leaf.unwrap_or_default())
+    } else if let Some(cwd) = cwd {
+        // Launched bare from a folder of vaults: browse it. The remembered vault is
+        // pre-selected only if it is one of the vaults actually present here — comparing
+        // VERBATIM against `discover_vaults`' raw folder names, the same convention
+        // `join_root_name` inverts. A vault of the same name elsewhere must not cause a
+        // phantom selection pointing at a path that holds no vault.pmv.
+        let name = cwd.vaults.iter().find(|v| *v == saved_vault).cloned().unwrap_or_default();
+        (cwd.root.clone(), name)
+    } else if saved.is_empty() {
+        // No argument, no vault root in the cwd, no saved preference: the default vault.
+        (parent_str.unwrap_or_else(|| ".".into()), leaf.unwrap_or_default())
+    } else {
+        // Default launch + a saved root: browse that root. Prefer the remembered last vault;
+        // otherwise pre-select the default vault's folder when it lives directly under the
+        // root. The name is used VERBATIM (matching `discover_vaults`/`join_root_name`), so
+        // only the emptiness decision trims.
+        let name = if !saved_vault.trim().is_empty() {
+            saved_vault.to_string()
+        } else {
+            match (&parent_str, &leaf) {
+                (Some(p), Some(l)) if p == saved => l.clone(),
+                _ => String::new(),
+            }
+        };
+        (saved.to_string(), name)
+    }
+}
+
+/// Discover the vaults directly beneath `root`: every IMMEDIATE subdirectory that
+/// contains a `vault.pmv`. Returns the subdirectory NAMES (not full paths), sorted
+/// case-insensitively. The scan is one level deep only (never recursive) and never
+/// includes `root` itself. This powers the start-page vault dropdown in both front-ends.
+///
+/// Errors are reported, not hidden. An unreadable root (missing, not a directory, or
+/// permission-denied) yields an empty list with an explanatory `warning`. Individual
+/// entries that can't be inspected — an unreadable directory entry, a subdirectory
+/// whose metadata or vault-marker can't be read — are skipped and tallied into a
+/// "N skipped (inaccessible)" warning rather than aborting the whole scan.
+pub fn discover_vaults(root: &str) -> VaultScan {
+    let root = std::path::Path::new(root.trim());
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(e) => {
+            return VaultScan {
+                vaults: Vec::new(),
+                warning: Some(format!("Cannot read vault root '{}': {e}", root.display())),
+            };
+        }
+    };
+    let mut vaults: Vec<String> = Vec::new();
+    let mut skipped: usize = 0;
+    for entry in entries {
+        // An entry that errors mid-iteration (e.g. a racing unlink, an unreadable
+        // name) is skipped, not fatal.
+        let Ok(entry) = entry else {
+            skipped += 1;
+            continue;
+        };
+        let path = entry.path();
+        // `metadata` follows symlinks, so a subdir symlinked to a vault still counts;
+        // a permission error reading the metadata means we can't classify it → skip.
+        let is_dir = match std::fs::metadata(&path) {
+            Ok(m) => m.is_dir(),
+            Err(_) => {
+                skipped += 1;
+                continue;
+            }
+        };
+        if !is_dir {
+            continue; // a plain file under the root is simply not a vault.
+        }
+        // `try_exists` distinguishes "no marker" (Ok(false)) from "couldn't check"
+        // (Err, e.g. a permission-denied subtree) — the latter is surfaced as skipped
+        // rather than silently treated as "not a vault".
+        match path.join(VAULT_FILE).try_exists() {
+            Ok(true) => {
+                if let Some(name) = entry.file_name().to_str() {
+                    vaults.push(name.to_owned());
+                } else {
+                    skipped += 1; // a non-UTF-8 directory name we can't display/select.
+                }
+            }
+            Ok(false) => {}
+            Err(_) => skipped += 1,
+        }
+    }
+    // Case-insensitive so the list reads naturally regardless of the OS's raw
+    // directory-entry order.
+    vaults.sort_by_key(|s| s.to_lowercase());
+    let warning = (skipped > 0)
+        .then(|| format!("{skipped} item(s) under the root were skipped (inaccessible)."));
+    VaultScan { vaults, warning }
+}
+
+/// Resolve an interactive launch from the process arguments (everything *after*
+/// the program name): the `(vault path, writable)` pair.
+///
+/// The first non-flag argument is the vault DIRECTORY (its `vault.pmv` is used);
+/// if there is none, the per-user default is used. `--write` enables mutations.
+/// This is the windowed launcher's whole command line — it has no console, so it
+/// deliberately understands only what an interactive launch needs and leaves the
+/// CLI subcommands to the console binary.
+pub fn resolve_interactive(args: &[String]) -> Result<(PathBuf, bool), String> {
+    let writable = args.iter().any(|a| a == "--write");
+    // Treat ONLY the exact known flags as flags — NOT any '-'-prefixed token. A blanket
+    // `starts_with('-')` filter silently ignored a vault directory whose name begins with
+    // '-' (falling back to the default vault) while the console binary, which strips only the
+    // exact `--write`/`--tui` tokens, treated it as the directory — so `vaultis DIR` and
+    // `vaultis-gui DIR` could open DIFFERENT vaults. Matching the exact set keeps both
+    // binaries' resolution identical (the module's stated guarantee).
+    let positionals: Vec<&String> = args.iter().filter(|a| !matches!(a.as_str(), "--write" | "--tui")).collect();
+    // At most ONE positional (the optional vault DIR). Reject extras instead of silently
+    // opening the first and ignoring the rest — matching the console binary's arity checks.
+    if positionals.len() > 1 {
+        return Err(format!(
+            "too many arguments: expected at most one vault DIR, got {}: {:?}. Usage: vaultis-gui [DIR] [--write]",
+            positionals.len(),
+            positionals
+        ));
+    }
+    let path = positionals.first().map(|d| vault_file(d)).unwrap_or_else(default_vault_path);
+    Ok((path, writable))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_vault_path_ends_with_vault_pmv() {
+        assert!(default_vault_path().ends_with("vault.pmv"));
+    }
+
+    #[test]
+    fn vault_file_appends_vault_pmv_to_the_dir() {
+        assert_eq!(vault_file("/some/dir"), PathBuf::from("/some/dir/vault.pmv"));
+    }
+
+    #[test]
+    fn resolve_interactive_reads_dir_and_write_flag() {
+        // No args → default path, read-only.
+        let (p, w) = resolve_interactive(&[]).unwrap();
+        assert!(p.ends_with("vault.pmv"));
+        assert!(!w);
+
+        // A positional dir is used; flag order doesn't matter.
+        let (p, w) = resolve_interactive(&["--write".into(), "/v".into()]).unwrap();
+        assert_eq!(p, PathBuf::from("/v/vault.pmv"));
+        assert!(w);
+
+        // The first NON-flag argument is the directory.
+        let (p, w) = resolve_interactive(&["/v".into(), "--write".into()]).unwrap();
+        assert_eq!(p, PathBuf::from("/v/vault.pmv"));
+        assert!(w);
+
+        // A directory whose NAME begins with '-' is still recognized (only the exact known
+        // flags are treated as flags), so this binary opens the same vault the console
+        // binary would — not the silent default.
+        let (p, w) = resolve_interactive(&["-weird-dir".into()]).unwrap();
+        assert_eq!(p, PathBuf::from("-weird-dir/vault.pmv"));
+        assert!(!w);
+    }
+
+    #[test]
+    fn resolve_interactive_rejects_extra_positionals() {
+        // More than one vault DIR is an error (arg-count validation), not a silent open of the
+        // first with the rest ignored. Flags don't count toward the positional total.
+        assert!(resolve_interactive(&["/a".into(), "/b".into()]).is_err());
+        assert!(resolve_interactive(&["/a".into(), "--write".into(), "/b".into()]).is_err());
+        // Exactly one positional (with any flags) is still fine.
+        assert!(resolve_interactive(&["/a".into(), "--write".into(), "--tui".into()]).is_ok());
+    }
+
+    #[test]
+    fn join_root_name_combines_or_falls_back_to_root() {
+        assert_eq!(join_root_name("/a/b", "vault1"), PathBuf::from("/a/b/vault1").display().to_string());
+        // The ROOT is trimmed, but the NAME is joined VERBATIM, so a folder name round-trips
+        // through discovery → join (trimming it would make a whitespace-named folder unopenable).
+        assert_eq!(join_root_name("  /a/b ", "vault1"), PathBuf::from("/a/b/vault1").display().to_string());
+        assert_eq!(join_root_name("/a/b", " vault1 "), PathBuf::from("/a/b/ vault1 ").display().to_string());
+        // Empty / all-whitespace name → the root itself (a vault sitting directly at the root).
+        assert_eq!(join_root_name("/a/b", ""), "/a/b");
+        assert_eq!(join_root_name("/a/b", "   "), "/a/b");
+    }
+
+    #[test]
+    fn discovered_whitespace_named_vault_round_trips_through_join() {
+        // Regression: a vault folder whose name has surrounding whitespace must be OPENABLE
+        // from the dropdown — discover_vaults returns the raw name, and join_root_name must
+        // produce the path that actually holds its vault.pmv (not a trimmed, non-existent path,
+        // which would silently flip the start page to "Create").
+        let root = std::env::temp_dir().join(format!("pmv-ws-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let weird = " spaced "; // leading + trailing space in the folder name
+        std::fs::create_dir_all(root.join(weird)).unwrap();
+        std::fs::write(root.join(weird).join(VAULT_FILE), b"x").unwrap();
+
+        let scan = discover_vaults(root.to_str().unwrap());
+        assert!(scan.vaults.contains(&weird.to_string()), "whitespace-named vault is discovered: {:?}", scan.vaults);
+        let joined = join_root_name(root.to_str().unwrap(), weird);
+        assert!(vault_file(&joined).exists(), "join must resolve to the discovered vault's vault.pmv: {joined}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn initial_root_and_name_honors_explicit_launch_and_saved_root() {
+        // An explicit launch (path != default) always wins: parent is the root, folder the name.
+        let p = PathBuf::from("/vaults/work/vault.pmv");
+        assert_eq!(initial_root_and_name(&p, None, "", ""), ("/vaults".to_string(), "work".to_string()));
+        // ...even when a (different) saved root exists — the explicit arg is not overridden.
+        assert_eq!(initial_root_and_name(&p, None, "/elsewhere", ""), ("/vaults".to_string(), "work".to_string()));
+        // ...and even when a saved last-vault exists: an explicit launch ignores it.
+        assert_eq!(initial_root_and_name(&p, None, "/elsewhere", "personal"), ("/vaults".to_string(), "work".to_string()));
+
+        // A DEFAULT launch with a saved root browses that root; the name is empty unless the
+        // default vault lives directly under it (and no last-vault is remembered).
+        let def = default_vault_path();
+        let (root, name) = initial_root_and_name(&def, None, "/my/vaults", "");
+        assert_eq!(root, "/my/vaults");
+        assert!(name.is_empty(), "default vault isn't under the saved root → no pre-selection");
+
+        // A default launch with NO saved root falls back to the default's own parent/leaf.
+        let (root2, name2) = initial_root_and_name(&def, None, "", "");
+        let def_parent = def.parent().unwrap().parent().unwrap().display().to_string();
+        let def_leaf = def.parent().unwrap().file_name().unwrap().to_str().unwrap().to_string();
+        assert_eq!(root2, def_parent);
+        assert_eq!(name2, def_leaf);
+    }
+
+    #[test]
+    fn initial_root_and_name_prefers_saved_last_vault_on_default_launch() {
+        // A default launch with a saved root AND a remembered last vault pre-selects that
+        // vault, so the start page reopens where the user left off.
+        let def = default_vault_path();
+        let (root, name) = initial_root_and_name(&def, None, "/my/vaults", "personal");
+        assert_eq!(root, "/my/vaults");
+        assert_eq!(name, "personal", "remembered last vault is pre-selected");
+
+        // The remembered name is used VERBATIM (it round-trips with `discover_vaults`, which
+        // returns raw folder names) — only the emptiness decision trims.
+        let (_, spaced) = initial_root_and_name(&def, None, "/my/vaults", " my vault ");
+        assert_eq!(spaced, " my vault ", "name kept verbatim, not trimmed");
+
+        // A whitespace-only last vault counts as unset → no pre-selection.
+        let (_, blank) = initial_root_and_name(&def, None, "/my/vaults", "   ");
+        assert!(blank.is_empty(), "whitespace-only last vault → no pre-selection");
+    }
+
+    #[test]
+    fn cwd_vault_root_outranks_the_saved_root_but_not_an_explicit_arg() {
+        let cwd = CwdRoot { root: "/here".into(), vaults: vec!["alpha".into(), "personal".into()] };
+
+        // Bare launch from a folder of vaults: that folder becomes the root, beating the
+        // saved preference (precedence: arg > cwd > saved > default).
+        let def = default_vault_path();
+        let (root, name) = initial_root_and_name(&def, Some(&cwd), "/my/vaults", "");
+        assert_eq!(root, "/here");
+        assert!(name.is_empty(), "nothing remembered → no pre-selection");
+
+        // The remembered vault is pre-selected only when it EXISTS in this root...
+        let (_, name) = initial_root_and_name(&def, Some(&cwd), "/my/vaults", "personal");
+        assert_eq!(name, "personal");
+        // ...otherwise the dropdown starts empty rather than pointing at a path with no vault.
+        let (_, name) = initial_root_and_name(&def, Some(&cwd), "/my/vaults", "work");
+        assert!(name.is_empty(), "last vault absent from the cwd root → no pre-selection");
+
+        // An explicit DIR argument still wins over the cwd.
+        let p = PathBuf::from("/vaults/work/vault.pmv");
+        assert_eq!(
+            initial_root_and_name(&p, Some(&cwd), "/my/vaults", "personal"),
+            ("/vaults".to_string(), "work".to_string())
+        );
+    }
+
+    #[test]
+    fn cwd_vault_root_detects_a_folder_of_vaults_only() {
+        let base = std::env::temp_dir().join(format!("pmv-cwd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        // A root holding one vault subdirectory...
+        let root = base.join("root");
+        std::fs::create_dir_all(root.join("alpha")).unwrap();
+        std::fs::write(root.join("alpha").join(VAULT_FILE), b"x").unwrap();
+        // ...a directory that is ITSELF a vault (deliberately NOT a root)...
+        let inside = base.join("inside");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::write(inside.join(VAULT_FILE), b"x").unwrap();
+        // ...and a plain directory with no vault anywhere.
+        let plain = base.join("plain");
+        std::fs::create_dir_all(plain.join("docs")).unwrap();
+
+        // `cwd_vault_root` reads the real process CWD, so drive it by chdir-ing. Rust runs
+        // tests threaded and the CWD is per-PROCESS, so this test must own it — hence one
+        // test covering all three shapes rather than three racing ones.
+        let restore = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&root).unwrap();
+        let found = cwd_vault_root().expect("a folder of vaults is a root");
+        assert_eq!(found.vaults, vec!["alpha".to_string()]);
+
+        std::env::set_current_dir(&inside).unwrap();
+        assert!(cwd_vault_root().is_none(), "a directory that is itself a vault is not a root");
+
+        std::env::set_current_dir(&plain).unwrap();
+        assert!(cwd_vault_root().is_none(), "no vault beneath the cwd → fall back to saved/default");
+
+        std::env::set_current_dir(restore).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn discover_vaults_unreadable_root_is_empty_with_warning() {
+        // A root that does not exist can't be read → empty list, explanatory warning.
+        let scan = discover_vaults("/nonexistent-vaultis-root-zzz-9173");
+        assert!(scan.vaults.is_empty());
+        assert!(scan.warning.is_some(), "missing root should warn");
+    }
+
+    #[test]
+    fn discover_vaults_finds_only_subdirs_with_a_vault_file() {
+        // Build a throwaway root: two vault subdirs, one empty subdir, one loose file.
+        let root = std::env::temp_dir().join(format!("pmv-scan-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("Bravo")).unwrap();
+        std::fs::create_dir_all(root.join("alpha")).unwrap();
+        std::fs::create_dir_all(root.join("not-a-vault")).unwrap();
+        std::fs::write(root.join("Bravo").join(VAULT_FILE), b"x").unwrap();
+        std::fs::write(root.join("alpha").join(VAULT_FILE), b"x").unwrap();
+        std::fs::write(root.join("loose.txt"), b"x").unwrap();
+
+        let scan = discover_vaults(root.to_str().unwrap());
+        // Only the two dirs holding a vault.pmv, sorted case-insensitively.
+        assert_eq!(scan.vaults, vec!["alpha".to_string(), "Bravo".to_string()]);
+        assert!(scan.warning.is_none(), "no inaccessible entries expected: {:?}", scan.warning);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

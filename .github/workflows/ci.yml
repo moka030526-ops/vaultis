@@ -42,12 +42,12 @@ jobs:
         # not unify, so these two run the real thing. This gap hid a test that failed
         # outright without the lock feature.
         run: |
-          cargo test -p pass-mgr-core --no-default-features
-          cargo test -p pass-mgr-ffi
+          cargo test -p vaultis-core --no-default-features
+          cargo test -p vaultis-ffi
       - name: Test (fault-injection — crash / full-disk recovery)
-        # fault-injection lives on pass-mgr-core; the desktop crate forwards it so the
+        # fault-injection lives on vaultis-core; the desktop crate forwards it so the
         # `__crashop` binary + tests/crash_recovery.rs exercise the real fault points.
-        run: cargo test -p pass-mgr-core -p pass-mgr --features pass-mgr/fault-injection
+        run: cargo test -p vaultis-core -p vaultis --features vaultis/fault-injection
       - name: Test (release — overflow-checks on, stripped)
         # The release profile flips on integer overflow-checks (root Cargo.toml) and
         # strips symbols; run the suite in release so release-only behavior can't
@@ -79,7 +79,7 @@ jobs:
         with:
           targets: x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@v2
-      # --bins checks both the console `pass-mgr` and the GUI-subsystem `pass-mgr-gui`,
+      # --bins checks both the console `vaultis` and the GUI-subsystem `vaultis-gui`,
       # so the Windows `windows_subsystem` build can't regress.
       - run: cargo check --target x86_64-pc-windows-gnu --bins
 
@@ -150,7 +150,7 @@ jobs:
           targets: aarch64-linux-android,x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
       # Gobley cross-builds the Rust cdylib for each ABI, generates the Kotlin
-      # UniFFI bindings, and assembles the APK. Reuses the audited pass-mgr-core.
+      # UniFFI bindings, and assembles the APK. Reuses the audited vaultis-core.
       - name: Build the debug APK
         run: mobile/gradlew -p mobile :composeApp:assembleDebug --no-daemon --stacktrace
       - uses: actions/upload-artifact@v4

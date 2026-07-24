@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Userspace (no-sudo) Android + Rust cross-build toolchain installer for pass-mgr mobile.
+# Userspace (no-sudo) Android + Rust cross-build toolchain installer for vaultis mobile.
 # Installs under $HOME/toolchains: Temurin JDK 17, Android cmdline-tools + SDK + NDK,
 # Rust Android/iOS targets, and cargo-ndk. Writes $HOME/toolchains/env.sh for later shells.
 # Idempotent: re-running skips already-present pieces.
@@ -75,7 +75,7 @@ log "cargo-ndk: $(cargo ndk --version 2>/dev/null || echo '?')"
 
 # --- 5. Emit env.sh -------------------------------------------------------
 cat > "$TOOLS/env.sh" <<EOF
-# source this to use the pass-mgr mobile toolchain
+# source this to use the vaultis mobile toolchain
 export JAVA_HOME="$JDK"
 export ANDROID_HOME="$SDK"
 export ANDROID_SDK_ROOT="$SDK"

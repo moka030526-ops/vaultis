@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **pass-mgr** (the offline, two-password encrypted estate
+All notable changes to **vaultis** (the offline, two-password encrypted estate
 vault) are recorded here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
@@ -92,12 +92,12 @@ date and bump the crate versions to match.
   current one: records that are **newer** (by `updated_at`) or **new** in the other vault,
   together with the **documents** they reference, are previewed and then applied. It is
   **one-way and additive** — it never deletes anything from the current vault. Surfaces:
-  - **CLI:** `pass-mgr update-from OTHER [DIR]` (prompts four passwords: the current vault's
+  - **CLI:** `vaultis update-from OTHER [DIR]` (prompts four passwords: the current vault's
     two, then the other vault's two). `--dry-run` previews the patch without writing.
   - **GUI:** Config → "Update from another vault…" (writable only) → enter the other vault's
     folder + its two passwords → preview the exact records/documents → Apply.
   - **TUI:** Config → **Ctrl+U** → same collect → preview → apply flow.
-  - Engine in `pass-mgr-core::merge` + `OpenVault::plan_merge_from`/`apply_merge_from`: blobs
+  - Engine in `vaultis-core::merge` + `OpenVault::plan_merge_from`/`apply_merge_from`: blobs
     are re-encrypted under the destination key (never byte-copied), the apply is crash-safe
     add-only (every referenced blob is durable before the `vault.pmv` that references it), the
     source vault is opened read-only with its errors collapsed (no password-correctness
@@ -156,7 +156,7 @@ date and bump the crate versions to match.
   instead of hiding them: an unreadable root or any skipped (inaccessible) entry surfaces a
   warning. GUI uses an `egui::ComboBox`; the TUI cycles the Vault row with `←/→`.
   - The chosen **root is remembered** across sessions as a local, non-secret preference
-    (`vault_root` in `prefs.json`, never inside a vault), and an explicit `pass-mgr DIR` launch
+    (`vault_root` in `prefs.json`, never inside a vault), and an explicit `vaultis DIR` launch
     still takes precedence over it.
   - The Config **backup destination** now defaults to that root (still editable).
 - **Config: delete an unused category** — asset types, account types, and account
@@ -252,8 +252,8 @@ date and bump the crate versions to match.
   - Verified by a headless `egui_kittest` test that lays out every tab (with and without a
     record selected), Config, and Help.
 
-- **Cargo workspace split** into `pass-mgr-core` (audited, `#![forbid(unsafe_code)]`),
-  `pass-mgr-desktop` (GUI/TUI/CLI), and `pass-mgr-ffi` (the only `unsafe`-permitting
+- **Cargo workspace split** into `vaultis-core` (audited, `#![forbid(unsafe_code)]`),
+  `vaultis-desktop` (GUI/TUI/CLI), and `vaultis-ffi` (the only `unsafe`-permitting
   crate, for the UniFFI scaffolding).
 - **Feature-gated** `mlock` and the single-writer file lock — on for desktop, off for
   the mobile build (which serializes access in-process).

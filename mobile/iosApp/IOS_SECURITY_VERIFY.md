@@ -35,7 +35,7 @@ see the fix notes there.
 
 ## 2. R-6 — clipboard is LOCAL-ONLY with a 15 s expiry
 
-**Code:** `composeApp/src/iosMain/kotlin/com/passmgr/MainViewController.kt`
+**Code:** `composeApp/src/iosMain/kotlin/com/vaultis/MainViewController.kt`
 (`copySecretToPasteboard`, passed into `App(copySecret = …)`).
 
 **What it should do:** copying a password uses `UIPasteboard.setItems(_:options:)` with

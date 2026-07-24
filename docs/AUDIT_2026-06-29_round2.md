@@ -62,7 +62,7 @@ findings came from the second (critic-driven) round.
 
 ### M1 (Medium) — A no-edit open consumed a redundancy generation slot
 
-**Where:** `crates/pass-mgr-core/src/vault.rs` — `open_inner` auto-save, `save_internal`,
+**Where:** `crates/vaultis-core/src/vault.rs` — `open_inner` auto-save, `save_internal`,
 `rotate_generations`.
 
 **What.** On every writable open, `open_inner` refreshes `last_opened_at` and called
@@ -91,8 +91,8 @@ unchanged).
 
 ### L1 (Low) — Partial cleartext left with no warning when a plaintext export fails
 
-**Where:** `crates/pass-mgr-core/src/vault.rs` (`export_tree`);
-`crates/pass-mgr-desktop/src/main.rs` (`cli_export_tree`, `cli_extract`).
+**Where:** `crates/vaultis-core/src/vault.rs` (`export_tree`);
+`crates/vaultis-desktop/src/main.rs` (`cli_export_tree`, `cli_extract`).
 
 **What.** `export_tree` (and the `extract` loop) write **unencrypted** files
 incrementally with no transactional wrapper. A failure after the first file — `ENOSPC`, a
@@ -113,7 +113,7 @@ files remain and must be securely deleted (`shred -u` / `srm -r`) before discard
 
 ### L2 (Low) — `export_tree` aborted on >10000 same-path documents
 
-**Where:** `crates/pass-mgr-core/src/vault.rs` — `unique_export_path`, and its
+**Where:** `crates/vaultis-core/src/vault.rs` — `unique_export_path`, and its
 `export_tree` call site.
 
 **What.** The human `documents/` tree maps every document sharing a folder+basename to the
@@ -131,7 +131,7 @@ behavior). The authoritative round-trip copy is the id-keyed `volume/` blob, wri
 
 ### L3 (Low) — TUI password buffer reallocation stranded plaintext fragments
 
-**Where:** `crates/pass-mgr-desktop/src/ui.rs` — `Field::password`, and the keystroke
+**Where:** `crates/vaultis-desktop/src/ui.rs` — `Field::password`, and the keystroke
 handlers for edit-form fields, the auth/master-password fields, and the merge source
 passwords.
 

@@ -1,5 +1,5 @@
 # Statically link the C runtime when building with the MSVC toolchain — the
-# default when compiling on Windows. The produced `pass-mgr.exe` is then a
+# default when compiling on Windows. The produced `vaultis.exe` is then a
 # self-contained, portable single file that runs on any Windows 10/11 (x64)
 # machine with no VC++ redistributable to install.
 #

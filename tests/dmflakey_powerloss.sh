@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# dm-flakey power-loss crash test for pass-mgr.
+# dm-flakey power-loss crash test for vaultis.
 # =============================================
 #
 # WHY THIS EXISTS
@@ -13,14 +13,14 @@
 # is to simulate a real power loss where **un-fsync'd writes never reach the platter**.
 #
 # This harness does exactly that, using Linux device-mapper `dm-flakey`:
-#   1. pass-mgr's vault lives on an ext4 fs on a dm-flakey device.
+#   1. vaultis's vault lives on an ext4 fs on a dm-flakey device.
 #   2. A workload runs with the device in normal pass-through mode (its `fsync`s reach
 #      the backing store; un-fsync'd writes sit in the page cache).
 #   3. "Power loss": the device is reloaded with the `drop_writes` feature and the fs is
 #      unmounted — the unmount flushes the page cache, but the device DISCARDS those
-#      writes. Result: the on-disk state contains only what pass-mgr actually fsync'd.
+#      writes. Result: the on-disk state contains only what vaultis actually fsync'd.
 #   4. The device is restored to normal, the fs remounted, and the vault is reopened.
-#      It MUST still open and the committed document MUST still be intact. If pass-mgr
+#      It MUST still open and the committed document MUST still be intact. If vaultis
 #      were missing an fsync, that data would be gone here and `verify` would fail.
 #
 # It also crashes mid-operation at each named commit point (`PMVAULT_CRASH_AT`, the
@@ -37,7 +37,7 @@
 #   sudo tests/dmflakey_powerloss.sh
 #
 # Optional env vars:
-#   PASSMGR_BIN=/path/to/pass-mgr   use a prebuilt binary (must be built with
+#   VAULTIS_BIN=/path/to/vaultis   use a prebuilt binary (must be built with
 #                                   `--features fault-injection`; default: build it)
 #   BACKING_DIR=/var/tmp            where the backing image lives (real storage is best;
 #                                   it is the simulated "disk")
@@ -82,17 +82,17 @@ done
 # NOTE: `sudo` usually strips ~/.cargo/bin from PATH, so plain `cargo` is often NOT
 # found when this script runs as root. We therefore build as the invoking user
 # (SUDO_USER) via a login shell — which puts cargo on PATH and keeps build artifacts
-# user-owned — or fall back to a prebuilt binary / an explicit PASSMGR_BIN.
+# user-owned — or fall back to a prebuilt binary / an explicit VAULTIS_BIN.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PREBUILT="$SCRIPT_DIR/target/release/pass-mgr"
-BIN="${PASSMGR_BIN:-}"
+PREBUILT="$SCRIPT_DIR/target/release/vaultis"
+BIN="${VAULTIS_BIN:-}"
 if [[ -z "$BIN" ]]; then
   if command -v cargo >/dev/null 2>&1; then
-    log "Building pass-mgr (--release --features fault-injection)"
+    log "Building vaultis (--release --features fault-injection)"
     ( cd "$SCRIPT_DIR" && cargo build --release --features fault-injection >&2 )
     BIN="$PREBUILT"
   elif [[ -n "${SUDO_USER:-}" ]] && sudo -u "$SUDO_USER" bash -lc 'command -v cargo' >/dev/null 2>&1; then
-    log "Building pass-mgr as user '$SUDO_USER' (cargo not on root's PATH)"
+    log "Building vaultis as user '$SUDO_USER' (cargo not on root's PATH)"
     sudo -u "$SUDO_USER" bash -lc "cd '$SCRIPT_DIR' && cargo build --release --features fault-injection" >&2
     BIN="$PREBUILT"
   elif [[ -x "$PREBUILT" ]]; then
@@ -104,7 +104,7 @@ ERROR: cargo not found (sudo drops ~/.cargo/bin from PATH) and no prebuilt binar
   $PREBUILT
 Build it once as your NORMAL user, then re-run the harness pointing at it:
   cargo build --release --features fault-injection
-  sudo PASSMGR_BIN="\$PWD/target/release/pass-mgr" tests/dmflakey_powerloss.sh
+  sudo VAULTIS_BIN="\$PWD/target/release/vaultis" tests/dmflakey_powerloss.sh
 MSG
     exit 2
   fi
