@@ -390,6 +390,28 @@ cargo build --release
 ./target/release/vaultis decrypt …   # command-line tools (see "advanced" below)
 ```
 
+#### Build **and** get a demo vault to click around in
+
+```bash
+scripts/build.sh              # debug build   (add --release for the optimized one)
+```
+
+Same build, plus it creates a **fully populated sample vault** — every tab filled in,
+with attached documents — and prints, as the last thing after the build output, where
+it is and the two passwords that open it:
+
+```
+  Location:    <repo>/target/sample-vault
+  Password 1:  sample1
+  Password 2:  sample2
+```
+
+Everything in that vault is fiction, and its two passwords are deliberately trivial
+because it is a throwaway demo — never put anything real in it. Re-running the script
+leaves an existing sample vault untouched (so edits you made while exploring survive);
+`--fresh` rebuilds it, `--sample-dir DIR` puts it somewhere else, and `--no-sample`
+skips it entirely.
+
 The build produces **two programs**: `vaultis-gui` (the graphical app) and
 `vaultis` (the command-line/terminal version). On Linux/Mac they behave the same
 way; the split matters on Windows (next), where the GUI build avoids popping a

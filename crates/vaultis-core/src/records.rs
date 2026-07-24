@@ -57,6 +57,128 @@ pub fn matches_search(haystack: &str, query: &str) -> bool {
     q.is_empty() || haystack.to_lowercase().contains(&q)
 }
 
+/// Consonant class of an ASCII letter (lower-cased): `Some(digit)` for a coded consonant,
+/// `None` for a vowel-like letter (a/e/i/o/u/y — and h/w, which [`soundex`] treats specially).
+/// Shared by [`soundex`] and [`soundex_key`] so both agree on what "sounds the same".
+fn soundex_class(c: char) -> Option<u8> {
+    match c {
+        'b' | 'f' | 'p' | 'v' => Some(b'1'),
+        'c' | 'g' | 'j' | 'k' | 'q' | 's' | 'x' | 'z' => Some(b'2'),
+        'd' | 't' => Some(b'3'),
+        'l' => Some(b'4'),
+        'm' | 'n' => Some(b'5'),
+        'r' => Some(b'6'),
+        _ => None,
+    }
+}
+
+/// The American **Soundex** code of one word (`"Robert" -> "R163"`), or `None` when the word
+/// holds no ASCII letter to seed a code (digits, punctuation, or non-ASCII script).
+///
+/// Soundex maps a word to its first letter plus three consonant-class digits, so spellings that
+/// SOUND alike collapse to the same code (`Smith`/`Smyth`, `Nguyen`/`Nguyan`). It is deliberately
+/// ASCII-only and deliberately crude: it is used to WIDEN a search, never to narrow one, so a
+/// word it cannot code simply falls back to the substring rule in [`matches_search_soundlike`].
+///
+/// Non-letters are skipped; h/w are transparent (they don't break a repeat) and vowels reset the
+/// "previous class", so `Tymczak`-style repeats across a vowel still yield two digits. The result
+/// is always exactly 4 chars (zero-padded). This is the TEXTBOOK code, which keeps the first
+/// letter verbatim; the search matcher compares [`soundex_key`]s so `Katherine`/`Catherine` meet.
+pub fn soundex(word: &str) -> Option<String> {
+    let mut letters = word.chars().filter(|c| c.is_ascii_alphabetic()).map(|c| c.to_ascii_lowercase());
+    let first = letters.next()?;
+    let mut code = String::with_capacity(4);
+    code.push(first.to_ascii_uppercase());
+    // `prev` is the class of the last letter that was NOT h/w — that is what a repeat is
+    // measured against, which is why h/w are skipped without touching it.
+    let mut prev = soundex_class(first);
+    for c in letters {
+        if c == 'h' || c == 'w' {
+            continue; // transparent: "Ashcraft" codes A261, not A226
+        }
+        let cur = soundex_class(c);
+        if let Some(d) = cur
+            && cur != prev
+        {
+            code.push(d as char);
+        }
+        prev = cur; // a vowel sets `prev` to None, so a repeat after it IS coded
+        if code.len() == 4 {
+            break;
+        }
+    }
+    while code.len() < 4 {
+        code.push('0');
+    }
+    Some(code)
+}
+
+/// The comparison key used by [`matches_search_soundlike`]: the word's [`soundex`] code with its
+/// INITIAL letter also folded to its consonant class (`Katherine -> "2365"`, `Catherine -> "2365"`).
+///
+/// Textbook Soundex keeps the first letter as-is, which is exactly where sound-alike spellings
+/// differ most often for names people actually search — Katherine/Catherine, Chris/Kris,
+/// Fisher/Visher. Folding it makes those meet. A vowel/h/w/y initial has no class, so it is kept
+/// verbatim (Allen and Ellen genuinely start differently).
+pub fn soundex_key(word: &str) -> Option<String> {
+    let code = soundex(word)?;
+    let mut chars = code.chars();
+    let first = chars.next()?; // `soundex` always yields 4 chars, so this is infallible
+    let folded = match soundex_class(first.to_ascii_lowercase()) {
+        Some(d) => d as char,
+        None => first,
+    };
+    Some(std::iter::once(folded).chain(chars).collect())
+}
+
+/// The fewest ASCII letters a word needs before its Soundex code is trusted as a "sounds like"
+/// signal. Below this, a code is nearly content-free — a 1-letter word codes to `<letter>000`,
+/// so `u2` and `u1` (two DIFFERENT logins) would collide, and a search for one would silently
+/// pull in the other. Short words still match as substrings, which is what a 1–2 character
+/// query means anyway ("show me things containing this").
+const SOUNDEX_MIN_LETTERS: usize = 3;
+
+/// [`soundex_key`], but only for a word long enough for the code to mean something (see
+/// [`SOUNDEX_MIN_LETTERS`]); `None` otherwise, so the caller falls back to substring matching.
+fn phonetic_key(word: &str) -> Option<String> {
+    if word.chars().filter(|c| c.is_ascii_alphabetic()).count() < SOUNDEX_MIN_LETTERS {
+        return None;
+    }
+    soundex_key(word)
+}
+
+/// The free-text search behind the UIs' **search box**: [`matches_search`]'s case-insensitive
+/// substring rule, WIDENED with a sound-alike (Soundex) match so a name typed the way it sounds
+/// still finds the record (`"jonson"` finds *Johnson*, `"catherine"` finds *Katherine*).
+///
+/// An empty/whitespace-only query matches everything. Otherwise EVERY whitespace-separated word
+/// of the query must be satisfied by the haystack — each either as a plain substring (exactly as
+/// before) or by an equal [`soundex_key`] against some word of the haystack. Requiring every word
+/// keeps a multi-word query narrowing rather than widening, and the substring arm makes this a
+/// strict SUPERSET of the old behaviour: a search that used to hit still hits.
+///
+/// A query word with fewer than [`SOUNDEX_MIN_LETTERS`] letters (`"u2"`, `"2024"`, `"@"`) has no
+/// trusted code, so it is matched by substring alone — digits never sound like anything, and a
+/// 1–2 letter code would collide with half the vault. Soundex is a coarse ASCII heuristic, so
+/// even coded words collide (`"bob"`/`"bab"`); that is the intended trade for finding a name the
+/// user cannot spell, and the exact filter dropdowns remain available to narrow the list again.
+pub fn matches_search_soundlike(haystack: &str, query: &str) -> bool {
+    let q = query.trim();
+    if q.is_empty() {
+        return true;
+    }
+    let hay_lower = haystack.to_lowercase();
+    // Code every haystack word once, not once per query word. The haystack splits on any
+    // non-alphanumeric character, not just whitespace, so an email/handle like
+    // `alice.smith@example.com` contributes the words a human hears — alice, smith, example,
+    // com — instead of one unpronounceable run.
+    let hay_codes: Vec<String> = haystack.split(|c: char| !c.is_alphanumeric()).filter_map(phonetic_key).collect();
+    q.split_whitespace().all(|word| {
+        hay_lower.contains(&word.to_lowercase())
+            || phonetic_key(word).is_some_and(|qc| hay_codes.contains(&qc))
+    })
+}
+
 /// The cross-filtered (faceted) options for the Accounts filters. For each field,
 /// the distinct values present among accounts matching **every other** active
 /// selection — so each dropdown only offers values that would actually yield
@@ -69,7 +191,9 @@ pub struct AccountFacets {
 }
 
 /// Does `a` match the given selections? An empty string for a field means "no
-/// filter on that field"; `query` is the case-insensitive username substring;
+/// filter on that field"; `query` is the free-text username search — substring OR
+/// sound-alike ([`matches_search_soundlike`]), the same rule the UIs' search box applies, so
+/// the facet dropdowns never offer fewer values than the list actually shows;
 /// `review_only` keeps only review-flagged accounts when true.
 fn acct_match(a: &Account, t: &str, st: &str, o: &str, ti: &str, query: &str, review_only: bool) -> bool {
     (t.is_empty() || a.account_type == t)
@@ -77,7 +201,7 @@ fn acct_match(a: &Account, t: &str, st: &str, o: &str, ti: &str, query: &str, re
         && (o.is_empty() || a.owner == o)
         && (ti.is_empty() || a.title == ti)
         && (!review_only || a.review)
-        && matches_search(&a.username, query)
+        && matches_search_soundlike(&a.username, query)
 }
 
 /// Distinct, sorted, non-empty values of `field` over the accounts that pass
@@ -1787,6 +1911,78 @@ mod tests {
         assert!(matches_search("john", "  JOHN  "), "query is trimmed");
         assert!(!matches_search("alice", "bob"));
         assert!(!matches_search("", "x"));
+    }
+
+    #[test]
+    fn soundex_codes_words_and_rejects_letterless_ones() {
+        // The textbook cases (Knuth): first letter + 3 consonant-class digits.
+        assert_eq!(soundex("Robert").as_deref(), Some("R163"));
+        assert_eq!(soundex("Rupert").as_deref(), Some("R163"), "sounds like Robert");
+        assert_eq!(soundex("Ashcraft").as_deref(), Some("A261"), "h is transparent");
+        assert_eq!(soundex("Ashcroft").as_deref(), Some("A261"));
+        assert_eq!(soundex("Tymczak").as_deref(), Some("T522"), "a vowel breaks a repeat");
+        assert_eq!(soundex("Pfister").as_deref(), Some("P236"));
+        // Short words are zero-padded to 4; case and punctuation don't matter.
+        assert_eq!(soundex("Lee").as_deref(), Some("L000"));
+        assert_eq!(soundex("o'brien").as_deref(), soundex("OBrien").as_deref());
+        // Nothing to code -> None (the caller then falls back to the substring rule).
+        assert_eq!(soundex("2024"), None);
+        assert_eq!(soundex("@#$"), None);
+        assert_eq!(soundex(""), None);
+    }
+
+    #[test]
+    fn soundex_key_folds_the_initial_consonant_but_not_a_vowel() {
+        // The key differs from the textbook code only in its first character: a consonant
+        // becomes its class digit, so sound-alike initials meet...
+        assert_eq!(soundex_key("Katherine"), soundex_key("Catherine"));
+        assert_eq!(soundex_key("Chris"), soundex_key("Kris"));
+        assert_eq!(soundex_key("Fisher"), soundex_key("Visher"));
+        assert_eq!(soundex_key("Robert").as_deref(), Some("6163"), "R folds to its class 6");
+        // ...while a vowel/h/w/y initial is kept verbatim (those really do sound different).
+        assert_ne!(soundex_key("Allen"), soundex_key("Ellen"));
+        assert_eq!(soundex_key("Ellen").as_deref(), Some("E450"));
+        // Unrelated initials still differ (l is class 4, r is class 6).
+        assert_ne!(soundex_key("Robert"), soundex_key("Lobert"));
+        assert_eq!(soundex_key("2024"), None);
+    }
+
+    #[test]
+    fn matches_search_soundlike_is_a_superset_of_the_substring_search() {
+        // Every substring hit still hits — the sound-alike arm only ADDS matches.
+        for (hay, q) in [("alice@example.com", "ALICE"), ("Bob", "b"), ("a.user", "USER"), ("john", "  JOHN  ")] {
+            assert!(matches_search(hay, q), "precondition: the substring rule matched");
+            assert!(matches_search_soundlike(hay, q), "{q:?} must still match {hay:?}");
+        }
+        // Empty / whitespace-only query matches everything (no filter).
+        assert!(matches_search_soundlike("anything", ""));
+        assert!(matches_search_soundlike("anything", "   "));
+    }
+
+    #[test]
+    fn matches_search_soundlike_finds_names_spelled_as_they_sound() {
+        // The point of the feature: a name the user cannot spell still finds the record.
+        assert!(matches_search_soundlike("Johnson", "jonson"));
+        assert!(matches_search_soundlike("Katherine", "catherine"));
+        assert!(matches_search_soundlike("Smyth", "smith"));
+        // Words inside an email/handle are coded individually, not as one run.
+        assert!(matches_search_soundlike("alice.smyth@example.com", "smith"));
+        // A substring hit needs no word boundary: letters may match ANYWHERE in the value.
+        assert!(matches_search_soundlike("Fidelity Brokerage", "elit"));
+        // A multi-word query narrows: EVERY word must be satisfied.
+        assert!(matches_search_soundlike("Katherine Smyth", "catherine smith"));
+        assert!(!matches_search_soundlike("Katherine Jones", "catherine smith"));
+        // Genuinely unrelated text still doesn't match.
+        assert!(!matches_search_soundlike("alice", "zebra"));
+        assert!(!matches_search_soundlike("", "x"));
+        // A letterless query word has no code, so it must appear literally.
+        assert!(matches_search_soundlike("invoice 2024", "2024"));
+        assert!(!matches_search_soundlike("invoice 2023", "2024"));
+        // A word too short to code is substring-only: two different short logins must NOT be
+        // confused (u2 would otherwise code the same as u1 and pull in the wrong account).
+        assert!(matches_search_soundlike("u2", "u2"));
+        assert!(!matches_search_soundlike("u1", "u2"));
+        assert!(!matches_search_soundlike("Wu", "Ho"), "2-letter words are not phonetically compared");
     }
 
     #[test]

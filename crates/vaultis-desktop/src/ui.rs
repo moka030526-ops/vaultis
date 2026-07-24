@@ -691,8 +691,8 @@ impl App {
                 // Free-text search: case-insensitive substring over username OR title
                 // (empty = no filter).
                 .filter(|a| {
-                    records::matches_search(&a.username, &self.acct_search)
-                        || records::matches_search(&a.title, &self.acct_search)
+                    records::matches_search_soundlike(&a.username, &self.acct_search)
+                        || records::matches_search_soundlike(&a.title, &self.acct_search)
                 })
                 .map(|a| (a.id.clone(), a.label()))
                 .collect(),
@@ -712,8 +712,8 @@ impl App {
             && self.acct_filter_owner.as_deref().is_none_or(|o| a.owner == o)
             && self.acct_filter_title.as_deref().is_none_or(|t| a.title == t)
             && (!self.acct_filter_review || a.review)
-            && (records::matches_search(&a.username, &self.acct_search)
-                || records::matches_search(&a.title, &self.acct_search))
+            && (records::matches_search_soundlike(&a.username, &self.acct_search)
+                || records::matches_search_soundlike(&a.title, &self.acct_search))
     }
 
     /// The currently VISIBLE rows of the grouped Accounts tree (collapsed nodes hide
@@ -1050,7 +1050,7 @@ impl App {
     fn auth_root_edited(&mut self) {
         self.refresh_auth_vaults();
         self.recompute_auth_path();
-        self.cfg_backup_dest = self.auth_root.clone();
+        self.cfg_backup_dest = records::unquote_path(&self.auth_root).to_string();
     }
 
     /// Re-scan `auth_root` for vaults (one level deep) and refresh the picker choices and
@@ -1178,7 +1178,7 @@ impl App {
                 // Persist the chosen root so the next startup defaults to the same place (a
                 // local prefs.json preference — never written into the vault), at the natural
                 // point the root is "confirmed" by a successful open/create.
-                crate::save_vault_root(self.auth_root.trim());
+                crate::save_vault_root(records::unquote_path(&self.auth_root));
                 // Remember which vault was opened so the next startup pre-selects it in the
                 // picker. Saved verbatim (the raw folder name) so it round-trips through
                 // `discover_vaults`/`join_root_name`.
@@ -1610,7 +1610,7 @@ impl App {
                 _ => self.status = "Enter a whole number of MiB (at least 1).".into(),
             },
             5 => {
-                let dest = self.cfg_backup_dest.trim().to_string();
+                let dest = records::unquote_path(&self.cfg_backup_dest).to_string();
                 if dest.is_empty() {
                     self.status = "Enter a backup destination directory.".into();
                 } else if let Some(ov) = self.vault.as_ref() {
@@ -1642,7 +1642,7 @@ impl App {
             // so it is settable even read-only. Documents export into this directory,
             // recreating their volume folder structure. An empty value clears it.
             _ => {
-                let dir = self.cfg_export_dir.trim().to_string();
+                let dir = records::unquote_path(&self.cfg_export_dir).to_string();
                 self.cfg_export_dir = dir.clone();
                 crate::save_export_dir(&dir);
                 self.status = if dir.is_empty() {
@@ -2523,7 +2523,7 @@ impl App {
         // Available in READ-ONLY sessions too (matching the GUI), at the vault owner's
         // explicit request. The file is plain, unencrypted text and — on Accounts and
         // Real Estate — holds every password in the clear, which the status line says.
-        let dir = self.cfg_export_dir.trim().to_string();
+        let dir = records::unquote_path(&self.cfg_export_dir).to_string();
         if dir.is_empty() {
             self.status = "Set an export directory in Config first (Config → Export directory).".into();
             return;
@@ -2548,7 +2548,7 @@ impl App {
     /// prompt; the directory is set in Config and is settable even in read-only mode
     /// (it is a local preference), so a read-only user can still extract documents.
     fn export_doc_to_config_dir(&mut self, id: &str) {
-        let dir = self.cfg_export_dir.trim().to_string();
+        let dir = records::unquote_path(&self.cfg_export_dir).to_string();
         if dir.is_empty() {
             self.status = "Set an export directory in Config first (Config → Export directory).".into();
             return;
@@ -3022,7 +3022,7 @@ impl App {
                     self.acct_filter_review = false;
                 }
                 if !self.acct_search.is_empty()
-                    && !records::matches_search(&es.fields[4].value, &self.acct_search)
+                    && !records::matches_search_soundlike(&es.fields[4].value, &self.acct_search)
                 {
                     self.acct_search.clear();
                 }
@@ -3100,8 +3100,8 @@ impl App {
         // username OR title — clear it only when NEITHER matches, so an unrelated
         // active search can't hide the jump target.
         let search_keeps_target = self.acct_search.is_empty()
-            || records::matches_search(&username, &self.acct_search)
-            || records::matches_search(&title, &self.acct_search);
+            || records::matches_search_soundlike(&username, &self.acct_search)
+            || records::matches_search_soundlike(&title, &self.acct_search);
         if !search_keeps_target {
             self.acct_search.clear();
         }
@@ -3319,7 +3319,7 @@ impl App {
     /// root as a convenient starting point.
     fn enter_merge(&mut self) {
         self.reset_merge();
-        self.merge_src_dir = self.auth_root.trim().to_string();
+        self.merge_src_dir = records::unquote_path(&self.auth_root).to_string();
         self.merge_focus = 0;
         self.screen = Screen::Merge;
     }
@@ -3346,7 +3346,7 @@ impl App {
     fn merge_preview(&mut self) {
         self.merge_error = None;
         // The just-typed source-vault passwords are secrets: wipe them on EVERY exit path.
-        let dir = self.merge_src_dir.trim();
+        let dir = records::unquote_path(&self.merge_src_dir);
         if dir.is_empty() {
             self.merge_error = Some("Enter the other vault's folder.".into());
             self.wipe_merge_pw();

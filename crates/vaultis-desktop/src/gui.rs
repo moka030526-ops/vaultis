@@ -775,6 +775,11 @@ struct GuiApp {
     doc_subfolder: String,
     doc_filename: String,
     doc_source: String,
+    /// The query typed into the "Link an account…" dropdown's search box (Assets tab). Kept
+    /// here rather than frame-local because a ComboBox's closure only runs while its popup is
+    /// open, so a local would reset on every frame and the box could never be typed into. It
+    /// is cleared whenever the popup is closed, so re-opening always starts from the full list.
+    link_search: String,
     // Prefs-backed export destination directory (replaces the old per-export "Export to"
     // path prompt). Settable even in read-only mode — it is a local-machine preference,
     // not vault content — so read-only document export (the heir use case) keeps working.
@@ -921,6 +926,7 @@ impl GuiApp {
             doc_subfolder: String::new(),
             doc_filename: String::new(),
             doc_source: String::new(),
+            link_search: String::new(),
             export_dir,
             status: String::new(),
             error: None,
@@ -1044,7 +1050,7 @@ impl GuiApp {
         // file it writes is plain, unencrypted text and — on Accounts and Real Estate —
         // contains every password in the clear, so the status line below says so rather
         // than reporting a bare success.
-        let dir = self.export_dir.trim().to_string();
+        let dir = records::unquote_path(&self.export_dir).to_string();
         if dir.is_empty() {
             self.fail("Set an export directory in Config first (Config > Export directory).");
             return;
@@ -1068,7 +1074,7 @@ impl GuiApp {
     /// per-export path prompt; the destination is the directory set in Config (which is
     /// editable even in read-only mode, so this works for a read-only heir).
     fn export_doc_to_config_dir(&mut self, id: &str) {
-        let dir = self.export_dir.trim().to_string();
+        let dir = records::unquote_path(&self.export_dir).to_string();
         if dir.is_empty() {
             self.status = "Set an export directory in Config first (Config > Export directory).".into();
             return;
@@ -1179,7 +1185,7 @@ impl GuiApp {
                 // Persist the chosen root so the next startup defaults to the same place (a
                 // local prefs.json preference — never written into the vault). Done on a
                 // successful open/create, the natural point at which the root is "confirmed".
-                crate::save_vault_root(self.vault_root.trim());
+                crate::save_vault_root(records::unquote_path(&self.vault_root));
                 // Remember which vault was opened so the next startup pre-selects it in the
                 // dropdown. Saved verbatim (the raw folder name) so it round-trips through
                 // `discover_vaults`/`join_root_name`.
@@ -1321,6 +1327,7 @@ impl GuiApp {
         self.acct_filter_review = false;
         self.acct_search_user.clear();
         self.asset_filter_review = false;
+        self.link_search.clear();
         // Any half-typed document-upload inputs from the prior vault.
         self.clear_doc_inputs();
     }
@@ -1443,7 +1450,7 @@ impl GuiApp {
                 self.recompute_vault_path();
                 // Keep the default backup destination tracking the root until the vault is
                 // unlocked (the Config backup field is freely editable afterwards).
-                self.backup_dest = self.vault_root.clone();
+                self.backup_dest = records::unquote_path(&self.vault_root).to_string();
             }
             if name_changed {
                 self.recompute_vault_path();
@@ -1632,21 +1639,24 @@ impl GuiApp {
         ui.add_space(6.0);
 
         // Row 2 — the tab strip. Each tab carries a glyph so it is recognisable by
-        // shape before the label is read, and the active one gets an accent
-        // underline. Kept in a horizontal ScrollArea so a narrow window scrolls the
-        // strip rather than clipping the tabs off the end.
-        egui::ScrollArea::horizontal().id_salt("topbar_tabs_scroll").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                tab_button(ui, &mut self.tab, Tab::Urgent, "❗ URGENT", accent);
-                tab_button(ui, &mut self.tab, Tab::Instructions, "📝 Instructions", accent);
-                tab_button(ui, &mut self.tab, Tab::TrustWill, "⚖ Trust and Will", accent);
-                tab_button(ui, &mut self.tab, Tab::Assets, "💰 Assets and Liabilities", accent);
-                tab_button(ui, &mut self.tab, Tab::Accounts, "🔑 Accounts", accent);
-                tab_button(ui, &mut self.tab, Tab::RealEstate, "🏠 Real Estate", accent);
-                tab_button(ui, &mut self.tab, Tab::Taxes, "📃 Taxes", accent);
-                tab_button(ui, &mut self.tab, Tab::GeneralDocuments, "📁 General Documents", accent);
-                tab_button(ui, &mut self.tab, Tab::Summary, "📊 Summary", accent);
-            });
+        // shape before the label is read, and the active one gets an accent underline.
+        //
+        // The strip WRAPS onto further lines when the window is too narrow to hold it on one
+        // (`horizontal_wrapped`), rather than sitting in the horizontal ScrollArea it used to.
+        // A scrolling strip hid tabs off the right edge behind a scrollbar the user had to
+        // notice and drag; wrapping keeps every tab visible and clickable at any width, which
+        // is what a navigation bar has to guarantee. The top panel sizes itself to its
+        // content, so an extra line pushes the body down instead of overlapping it.
+        ui.horizontal_wrapped(|ui| {
+            tab_button(ui, &mut self.tab, Tab::Urgent, "❗ URGENT", accent);
+            tab_button(ui, &mut self.tab, Tab::Instructions, "📝 Instructions", accent);
+            tab_button(ui, &mut self.tab, Tab::TrustWill, "⚖ Trust and Will", accent);
+            tab_button(ui, &mut self.tab, Tab::Assets, "💰 Assets and Liabilities", accent);
+            tab_button(ui, &mut self.tab, Tab::Accounts, "🔑 Accounts", accent);
+            tab_button(ui, &mut self.tab, Tab::RealEstate, "🏠 Real Estate", accent);
+            tab_button(ui, &mut self.tab, Tab::Taxes, "📃 Taxes", accent);
+            tab_button(ui, &mut self.tab, Tab::GeneralDocuments, "📁 General Documents", accent);
+            tab_button(ui, &mut self.tab, Tab::Summary, "📊 Summary", accent);
         });
         // Reset the global reveal toggles when the user switches tabs (see prev_tab above):
         // reveal is momentary, so a stale "reveal all" must not persist into a later tab
@@ -2086,8 +2096,9 @@ impl GuiApp {
         }
         if set_export {
             // Persist the export directory to the local prefs file (non-secret; no vault
-            // write, so this works in read-only mode). Trim and normalize the stored value.
-            let dir = self.export_dir.trim().to_string();
+            // write, so this works in read-only mode). Normalize the stored value: trimmed,
+            // with a pasted "Copy as path" quote pair stripped.
+            let dir = records::unquote_path(&self.export_dir).to_string();
             self.export_dir = dir.clone();
             crate::save_export_dir(&dir);
             self.status = if dir.is_empty() {
@@ -2097,7 +2108,7 @@ impl GuiApp {
             };
         }
         if do_backup {
-            let dest = self.backup_dest.trim().to_string();
+            let dest = records::unquote_path(&self.backup_dest).to_string();
             if dest.is_empty() {
                 self.status = "Enter a backup destination directory.".into();
             } else if let Some(ov) = self.vault.as_ref() {
@@ -2148,7 +2159,7 @@ impl GuiApp {
             // Enter the merge flow with fresh state. Pre-fill the source folder with the
             // vault root (the folder that holds vaults) as a convenient starting point.
             self.reset_merge();
-            self.merge_src_dir = self.vault_root.trim().to_string();
+            self.merge_src_dir = records::unquote_path(&self.vault_root).to_string();
             self.screen = Screen::Merge;
         }
         if sync_types {
@@ -2321,7 +2332,7 @@ impl GuiApp {
         // The just-typed source-vault passwords are secrets: wipe them on EVERY exit path
         // (each validation early-return below, the open failure, the plan error, and success),
         // never leaving them resident in the heap buffers after this call.
-        let dir = self.merge_src_dir.trim();
+        let dir = records::unquote_path(&self.merge_src_dir);
         if dir.is_empty() {
             self.merge_error = Some("Enter the other vault's folder.".into());
             self.wipe_merge_pw();
@@ -2861,7 +2872,13 @@ impl GuiApp {
                     ui.separator();
                     // Cross-record links to Accounts (edited on the asset side ONLY; the
                     // Accounts form shows the read-only reverse view). Deferred like docreq.
-                    linkreq = linked_accounts_section(ui, &linked_rows, &link_candidates, self.writable);
+                    linkreq = linked_accounts_section(
+                        ui,
+                        &linked_rows,
+                        &link_candidates,
+                        &mut self.link_search,
+                        self.writable,
+                    );
                     ui.separator();
                     docreq = doc_section(
                         ui,
@@ -3084,8 +3101,8 @@ impl GuiApp {
             && (self.acct_filter_title.is_empty() || a.title == self.acct_filter_title)
             && (!self.acct_filter_review || a.review)
             // Free-text search matches the username OR the title (empty query = all).
-            && (records::matches_search(&a.username, &self.acct_search_user)
-                || records::matches_search(&a.title, &self.acct_search_user))
+            && (records::matches_search_soundlike(&a.username, &self.acct_search_user)
+                || records::matches_search_soundlike(&a.title, &self.acct_search_user))
     }
 
     /// Build a fresh Account for the "New" button, pre-populated from the active
@@ -3157,7 +3174,9 @@ impl GuiApp {
         if self.acct_filter_review && !a.review {
             self.acct_filter_review = false;
         }
-        if !self.acct_search_user.is_empty() && !records::matches_search(&a.username, &self.acct_search_user) {
+        if !self.acct_search_user.is_empty()
+            && !records::matches_search_soundlike(&a.username, &self.acct_search_user)
+        {
             self.acct_search_user.clear();
         }
     }
@@ -3243,10 +3262,15 @@ impl GuiApp {
                 filter_combo(ui, "acct_fowner", &mut self.acct_filter_owner, &facets.owners);
                 ui.label(egui::RichText::new("title").weak().small());
                 filter_combo(ui, "acct_ftitle", &mut self.acct_filter_title, &facets.titles);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.acct_search_user)
-                        .hint_text("🔍 username or title…")
-                        .desired_width(fit(ui, 180.0)),
+                search_box(
+                    ui,
+                    &mut self.acct_search_user,
+                    "username or title…",
+                    "Free-text search over the username and the title. The letters may appear \
+                     ANYWHERE in the value, and spelling is forgiving: a name that SOUNDS like \
+                     the record still matches (jonson → Johnson, catherine → Katherine).",
+                    accent_c,
+                    180.0,
                 );
                 ui.checkbox(&mut self.acct_filter_review, "review only");
                 // Only offer Clear when there is something to clear, and mark it when
@@ -4762,7 +4786,16 @@ fn tab_button(ui: &mut egui::Ui, current: &mut Tab, tab: Tab, label: &str, accen
     } else {
         egui::RichText::new(label)
     };
-    let resp = ui.selectable_label(selected, text);
+    // The strip is laid out with `horizontal_wrapped`, where the ambient wrap mode would
+    // break a multi-word label ("Assets and Liabilities") across lines INSIDE the button.
+    // Extend keeps each tab on one line, so wrapping happens BETWEEN tabs — the whole button
+    // moves to the next row — which is the point of the wrapped strip.
+    let resp = ui
+        .scope(|ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            ui.selectable_label(selected, text)
+        })
+        .inner;
     if selected {
         let r = resp.rect;
         ui.painter().hline(
@@ -5244,6 +5277,59 @@ fn portal_section(
 // yielding `String`s (the caller decides the concrete type). `.dedup()` removes
 // *consecutive* duplicates, which is why it follows `.sort()`.
 /// A filter dropdown: "All" (empty value) plus each option.
+/// The free-text SEARCH field, drawn as a highlighted pill so it stands out from the filter
+/// dropdowns beside it: a magnifier glyph, an accent-outlined rounded frame, and — while a query
+/// is active — a tinted fill, a thicker outline and an inline "×" to clear it. It sits in a row
+/// of combos that all look alike; the search is the control users reach for first, so it is the
+/// one given the visual weight, and an active search is visible without reading the text (an
+/// unexplained short list is the most common "where did my records go" confusion).
+///
+/// Returns the `TextEdit`'s response (so callers can react to `.changed()`) and takes the hover
+/// text describing the match rule — the search is sound-alike ([`records::matches_search_soundlike`]),
+/// which is worth saying where the user types.
+fn search_box(
+    ui: &mut egui::Ui,
+    value: &mut String,
+    hint: &str,
+    hover: &str,
+    accent: egui::Color32,
+    width: f32,
+) -> egui::Response {
+    let active = !value.trim().is_empty();
+    // `gamma_multiply` scales the color's alpha, so both states read correctly on light AND
+    // dark themes (a fixed grey would vanish on one of them).
+    let (fill, stroke_w, stroke_a) = if active {
+        (accent.gamma_multiply(0.14), 2.0, 0.9)
+    } else {
+        (ui.visuals().extreme_bg_color, 1.0, 0.5)
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(egui::Stroke::new(stroke_w, accent.gamma_multiply(stroke_a)))
+        .corner_radius(10)
+        .inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("🔍").color(accent).strong());
+                // `Frame::NONE` drops the TextEdit's own box: the pill IS the frame, so the
+                // two outlines never double up.
+                let resp = ui.add(
+                    egui::TextEdit::singleline(value)
+                        .hint_text(hint)
+                        .frame(egui::Frame::NONE)
+                        .desired_width(fit(ui, width)),
+                );
+                if active && ui.small_button("×").on_hover_text("Clear the search").clicked() {
+                    value.clear();
+                }
+                resp
+            })
+            .inner
+        })
+        .inner
+        .on_hover_text(hover)
+}
+
 fn filter_combo(ui: &mut egui::Ui, id: &str, value: &mut String, options: &[String]) {
     let text = if value.is_empty() { "All".to_string() } else { value.clone() };
     egui::ComboBox::from_id_salt(id).selected_text(text).show_ui(ui, |ui| {
@@ -5459,10 +5545,21 @@ fn link_candidates(accounts: &[Account], linked: &[String]) -> Vec<(String, Stri
 /// an "add link" dropdown over `candidates`. `linked` comes from
 /// [`linked_account_rows`], `candidates` from [`link_candidates`]. The caller applies
 /// the returned request after rendering, keeping `self` borrows disjoint.
+/// The link dropdown's visible entries for `query`: the `(id, label)` candidates whose LABEL
+/// matches, by the same rule as the Accounts search box ([`records::matches_search_soundlike`])
+/// — the letters may appear anywhere in the label (no prefix/suffix anchoring), and a
+/// sound-alike spelling still matches. An empty query keeps every candidate, in the order the
+/// caller supplied. Split out of the popup so the filtering is unit-testable without driving
+/// egui's combo popup.
+fn filter_link_candidates<'a>(candidates: &'a [(String, String)], query: &str) -> Vec<&'a (String, String)> {
+    candidates.iter().filter(|(_, label)| records::matches_search_soundlike(label, query)).collect()
+}
+
 fn linked_accounts_section(
     ui: &mut egui::Ui,
     linked: &[(String, String)],
     candidates: &[(String, String)],
+    query: &mut String,
     writable: bool,
 ) -> LinkReq {
     let mut req = LinkReq::None;
@@ -5500,16 +5597,60 @@ fn linked_accounts_section(
         // bind a &mut String VALUE from a String list, but a link stores the account's
         // ID while showing its LABEL — so there is no bound buffer; a click on an entry
         // just emits the Add request (nothing is "currently selected").
-        egui::ComboBox::from_id_salt("asset_link_add").selected_text("➕ Link an account…").show_ui(ui, |ui| {
-            if candidates.is_empty() {
-                ui.label(egui::RichText::new("(no more accounts to link)").weak());
-            }
-            for (id, label) in candidates {
-                if ui.selectable_label(false, label).clicked() {
-                    req = LinkReq::Add(id.clone());
+        //
+        // The popup opens with a SEARCH box: a vault with dozens of accounts made this a long
+        // scroll where the user had to recognise the right login by eye. Typing narrows the
+        // list to the matching accounts (which brings the wanted one to the top, right under
+        // the cursor) using the same forgiving rule as the Accounts search — the letters may
+        // appear ANYWHERE in the label, not just at its start, and a sound-alike spelling
+        // still matches. The list scrolls inside a bounded area so a big vault's popup can
+        // never grow taller than the window.
+        let out = egui::ComboBox::from_id_salt("asset_link_add")
+            .selected_text("➕ Link an account…")
+            .show_ui(ui, |ui| {
+                let sb = search_box(
+                    ui,
+                    query,
+                    "type to find an account…",
+                    "Filters the accounts below. The letters may appear anywhere in the \
+                     account's label, and a name that SOUNDS like it still matches.",
+                    accent,
+                    220.0,
+                );
+                // Focus the box as the popup opens so the user can just start typing. Gated on
+                // an empty query so it is not re-requested on every later frame, which would
+                // fight the user for focus if they clicked into the list.
+                if query.is_empty() && !sb.has_focus() {
+                    sb.request_focus();
                 }
-            }
-        });
+                ui.separator();
+                let hits = filter_link_candidates(candidates, query);
+                if candidates.is_empty() {
+                    ui.label(egui::RichText::new("(no more accounts to link)").weak());
+                } else if hits.is_empty() {
+                    ui.label(egui::RichText::new("(no account matches that search)").weak().italics());
+                }
+                egui::ScrollArea::vertical().max_height(240.0).id_salt("asset_link_add_scroll").show(ui, |ui| {
+                    for (i, (id, label)) in hits.iter().enumerate() {
+                        let resp = ui.selectable_label(false, label.as_str());
+                        // On each keystroke, bring the best (first) remaining match into view,
+                        // so a long list follows what is being typed instead of staying
+                        // wherever it was last scrolled to.
+                        if i == 0 && sb.changed() {
+                            resp.scroll_to_me(Some(egui::Align::TOP));
+                        }
+                        if resp.clicked() {
+                            req = LinkReq::Add((*id).clone());
+                        }
+                    }
+                });
+            });
+        // The closure runs only while the popup is open (`inner` is `None` otherwise), so this
+        // is the moment the popup closed: forget the query, and the next open starts from the
+        // full list rather than a stale filter the user has to notice and clear.
+        if out.inner.is_none() {
+            query.clear();
+        }
     }
     });
     ui.add_space(4.0);
@@ -5810,6 +5951,47 @@ mod tests {
         }
     }
 
+
+    /// The tab strip WRAPS onto more lines on a narrow window instead of scrolling, so every
+    /// tab must be present (laid out, not clipped off the end behind a scrollbar) at every
+    /// width — that is the whole point of the change, and it is what a horizontal ScrollArea
+    /// could not promise.
+    #[test]
+    fn every_tab_stays_reachable_at_narrow_widths_in_real_egui() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        // Each strip label as rendered (glyph + text), so this also pins that no tab is
+        // silently dropped from the strip.
+        let labels = [
+            "❗ URGENT",
+            "📝 Instructions",
+            "⚖ Trust and Will",
+            "💰 Assets and Liabilities",
+            "🔑 Accounts",
+            "🏠 Real Estate",
+            "📃 Taxes",
+            "📁 General Documents",
+            "📊 Summary",
+        ];
+        for w in [420.0f32, 560.0, 800.0, 1200.0] {
+            let (mut app, path) = app_unlocked("tabwrap");
+            app.tab = Tab::Urgent;
+            let app = std::cell::RefCell::new(app);
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(w, 460.0))
+                .with_max_steps(64)
+                .build_ui(|ui| app.borrow_mut().render(ui));
+            h.try_run().unwrap_or_else(|e| panic!("window never settled at {w}x460: {e}"));
+            for label in labels {
+                assert_eq!(
+                    h.query_all_by_label(label).count(),
+                    1,
+                    "tab {label:?} must stay laid out (not clipped) at {w}x460"
+                );
+            }
+            cleanup(&path);
+        }
+    }
 
     /// A read-only value must occupy the width of its TEXT, not the width of the pane.
     /// It used to render as a disabled text box, so a one-word owner name took as much
@@ -6241,6 +6423,33 @@ mod tests {
         assert!(app.account_passes_filters(&other));
         assert!(!app.account_passes_filters(&by_title));
         cleanup(&path);
+    }
+
+    #[test]
+    fn link_dropdown_search_matches_anywhere_in_the_label() {
+        // The "Link an account…" popup's search box narrows the candidate list. The typed
+        // letters must be found ANYWHERE in the label — not anchored to its start or end — and
+        // a sound-alike spelling must still hit, matching the Accounts search box.
+        let candidates: Vec<(String, String)> = vec![
+            ("a1".into(), "Fidelity Brokerage — katherine".into()),
+            ("a2".into(), "Chase Checking — bob".into()),
+            ("a3".into(), "Gmail — alice".into()),
+        ];
+        let ids = |q: &str| -> Vec<String> {
+            filter_link_candidates(&candidates, q).iter().map(|(id, _)| id.clone()).collect()
+        };
+        // Empty query keeps everything, in the given order.
+        assert_eq!(ids(""), vec!["a1", "a2", "a3"]);
+        assert_eq!(ids("   "), vec!["a1", "a2", "a3"], "whitespace-only query is no filter");
+        // Mid-word letters match (the old dropdown offered no search at all).
+        assert_eq!(ids("elit"), vec!["a1"], "matches inside 'Fidelity'");
+        assert_eq!(ids("heck"), vec!["a2"], "matches inside 'Checking'");
+        assert_eq!(ids("ali"), vec!["a3"]);
+        // Case-insensitive, and a sound-alike spelling of a name still finds the account.
+        assert_eq!(ids("CHASE"), vec!["a2"]);
+        assert_eq!(ids("catherine"), vec!["a1"], "sounds like 'katherine'");
+        // A genuine non-match yields nothing (the popup then says so).
+        assert!(ids("zebra").is_empty());
     }
 
     #[test]

@@ -41,10 +41,15 @@ pub struct VaultScan {
 
 /// The vault directory for a `root` plus a selected/typed leaf `name`. An empty name
 /// resolves to the root itself (so a vault sitting directly at the root still opens);
-/// otherwise it is `<root>/<name>`. Both sides are trimmed. This is the collapsed start
-/// page's single source of truth: the open target is always `root` + `name`.
+/// otherwise it is `<root>/<name>`. This is the collapsed start page's single source of
+/// truth: the open target is always `root` + `name`.
+///
+/// The ROOT is normalized with [`records::unquote_path`](crate::records::unquote_path):
+/// trimmed, and a matched pair of surrounding double quotes removed, so a folder pasted
+/// from a file manager's "Copy as path" (`"C:\Users\me\My Vaults"`) opens the directory it
+/// names rather than a literally-quoted one that cannot exist.
 pub fn join_root_name(root: &str, name: &str) -> String {
-    let root = root.trim();
+    let root = crate::records::unquote_path(root);
     // Trim only to DECIDE empty-vs-present; when present, join the name VERBATIM so this is
     // the exact inverse of `discover_vaults`, which returns raw directory names. Trimming the
     // joined name would make a vault folder whose name has leading/trailing whitespace
@@ -159,8 +164,12 @@ pub fn initial_root_and_name(
 /// entries that can't be inspected — an unreadable directory entry, a subdirectory
 /// whose metadata or vault-marker can't be read — are skipped and tallied into a
 /// "N skipped (inaccessible)" warning rather than aborting the whole scan.
+///
+/// The root is normalized exactly as in [`join_root_name`] (trimmed, with a matched pair of
+/// surrounding double quotes stripped), so a pasted quoted folder scans the same directory the
+/// start page would open — the dropdown and the open target can never disagree.
 pub fn discover_vaults(root: &str) -> VaultScan {
-    let root = std::path::Path::new(root.trim());
+    let root = std::path::Path::new(crate::records::unquote_path(root));
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
         Err(e) => {
@@ -304,6 +313,31 @@ mod tests {
         // Empty / all-whitespace name → the root itself (a vault sitting directly at the root).
         assert_eq!(join_root_name("/a/b", ""), "/a/b");
         assert_eq!(join_root_name("/a/b", "   "), "/a/b");
+    }
+
+    #[test]
+    fn quoted_root_is_accepted_by_join_and_discovery() {
+        // A root pasted with surrounding double quotes ("Copy as path" in a file manager, or a
+        // path copied out of a shell command) must resolve to the folder it NAMES — both when
+        // deriving the open target and when scanning for vaults, or the dropdown and the
+        // unlock target would disagree.
+        let root = std::env::temp_dir().join(format!("pmv-quoted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("alpha")).unwrap();
+        std::fs::write(root.join("alpha").join(VAULT_FILE), b"x").unwrap();
+        let plain = root.to_str().unwrap().to_string();
+        let quoted = format!("\"{plain}\"");
+
+        assert_eq!(join_root_name(&quoted, "alpha"), join_root_name(&plain, "alpha"));
+        assert!(vault_file(&join_root_name(&quoted, "alpha")).exists(), "the quoted root opens the real vault");
+        assert_eq!(discover_vaults(&quoted).vaults, vec!["alpha".to_string()], "the quoted root scans the real folder");
+        // Whitespace around the quotes is trimmed too, and an empty name still yields the root.
+        assert_eq!(join_root_name(&format!("  {quoted}  "), ""), plain);
+        // A LONE quote at one end is a legitimate (if odd) path character — left alone, so a
+        // folder actually named `"weird` is still reachable.
+        assert_eq!(join_root_name("\"/a/b", "v"), PathBuf::from("\"/a/b/v").display().to_string());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

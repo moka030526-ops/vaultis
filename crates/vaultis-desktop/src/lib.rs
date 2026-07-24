@@ -183,7 +183,10 @@ pub(crate) fn write_prefs_obj(path: &Path, obj: &serde_json::Map<String, serde_j
 /// vault root is known yet (e.g. on the start page before a root is chosen). This file is
 /// a read-only fallback that lets a portable vault carry its own UI defaults.
 pub(crate) fn vault_prefs_path(vault_root: &str) -> Option<PathBuf> {
-    (!vault_root.trim().is_empty()).then(|| Path::new(vault_root).join("prefs.json"))
+    // Normalized like every other directory the UI takes: trimmed, with a pasted
+    // "Copy as path" quote pair stripped, so a quoted root still finds its prefs.json.
+    let root = records::unquote_path(vault_root);
+    (!root.is_empty()).then(|| Path::new(root).join("prefs.json"))
 }
 
 /// Overlay `config` onto `fallback`: every key present in `config` wins, while keys found
