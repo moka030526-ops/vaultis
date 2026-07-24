@@ -67,10 +67,12 @@ pub fn run(path: std::path::PathBuf, writable: bool) -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1000.0, 680.0])
-            // A low floor on purpose: every pane now scrolls on its own axis, so the
-            // window stays usable when it is squeezed. The old 720x480 floor meant a
-            // small screen could not shrink the window to fit at all.
-            .with_min_inner_size([560.0, 400.0])
+            // The floor is set so the non-scrolling lock screen (its tallest variant,
+            // Create, with the two confirm rows) always fits whole: ~560 wide for the
+            // centered card plus margins, ~600 tall for logo + vault picker + four
+            // password rows + button. In-vault tabs scroll their own panes, so they are
+            // comfortable at this size too.
+            .with_min_inner_size([620.0, 600.0])
             .with_title("vaultis"),
         ..Default::default()
     };
@@ -434,14 +436,12 @@ fn apply_style(ctx: &egui::Context, theme: Theme) {
     s.scroll.bar_width = 10.0;
     s.scroll.floating = false;
 
-    // Wrap text by default. egui's default is to WRAP inside vertical layouts but
-    // EXTEND inside horizontal ones — so labels and help text placed in a `horizontal`
-    // row grow past the available width instead of wrapping, which is what lets content
-    // spill across a two-pane divider or off the edge when the window is made narrow.
-    // Forcing Wrap globally makes every label/heading reflow to the width it is given,
-    // so the whole UI stays inside its bounds as the window shrinks. (Fields set their
-    // own width via `fit`; buttons keep their intrinsic size.)
-    style.wrap_mode = Some(egui::TextWrapMode::Wrap);
+    // Text wrapping is left at egui's defaults: WRAP inside vertical layouts (so long
+    // help text, paths, and error banners reflow) and EXTEND inside horizontal/grid
+    // rows (so short field labels and button captions stay on one line). Forcing Wrap
+    // globally was tried and reverted — it mangled form labels by wrapping them one
+    // word per line. Two-pane content is kept inside its column by `two_col`'s clip,
+    // not by wrapping, so no global override is needed.
 
     // Shape: consistently rounded controls, and a visible focus ring in the
     // accent color so keyboard focus is never guesswork.
@@ -4611,10 +4611,12 @@ impl GuiApp {
         // Rendered before the per-screen panels so it sits above all of them.
         show_error_banner(&mut self.error, ui);
         if self.screen == Screen::Auth {
+            // The lock screen is deliberately NOT scrollable: it is a fixed, compact
+            // form that must read as one simple page. The window's `min_inner_size` is
+            // set large enough for the tallest variant (Create, with the two confirm
+            // rows) to fit whole, so there is nothing to scroll to.
             egui::CentralPanel::default().show_inside(ui, |ui| {
-                egui::ScrollArea::both().auto_shrink([false, false]).id_salt("auth_scroll").show(ui, |ui| {
-                    self.ui_auth(ui)
-                });
+                self.ui_auth(ui);
             });
             return;
         }
