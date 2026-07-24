@@ -3266,9 +3266,13 @@ impl GuiApp {
                     ui,
                     &mut self.acct_search_user,
                     "username or title…",
+                    // No arrow glyphs in DRAWN text: the font-coverage test exempts them as
+                    // comment-only, so one here could ship as a tofu box (see
+                    // `every_glyph_in_the_gui_source_exists_in_the_bundled_fonts`).
                     "Free-text search over the username and the title. The letters may appear \
                      ANYWHERE in the value, and spelling is forgiving: a name that SOUNDS like \
-                     the record still matches (jonson → Johnson, catherine → Katherine).",
+                     the record still matches, so \"jonson\" finds Johnson and \"catherine\" \
+                     finds Katherine.",
                     accent_c,
                     180.0,
                 );

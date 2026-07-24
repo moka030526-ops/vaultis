@@ -114,9 +114,20 @@ create it — the folder is made for you under the root. (In the plain read-only
 you can *pick* any existing vault to view it, but you can't create one — relaunch in
 Edit mode for that.)
 
+**Pasting a folder path:** every box in the program that takes a location on your disk
+— the **Vault root** here, plus **Upload from**, the **export directory**, the **backup
+destination**, and the **other vault's folder** — accepts a path pasted straight from
+your file manager, **including the surrounding double quotes** that Windows Explorer's
+"Copy as path" adds (`"C:\Users\me\My Vaults"`). The quotes are stripped for you and the
+clean path is what gets remembered. A single stray quote at one end is *kept*, because
+that is a legal character in a file name.
+
 ## The eight sections (tabs)
 
-Across the top are eight tabs, laid out in two rows. Click a tab to switch:
+Across the top are nine tabs (URGENT first, then the eight below). Click a tab to
+switch. The strip **wraps onto another line** if the window is too narrow to fit it on
+one — it never scrolls sideways and never hides a tab, so every tab stays clickable at
+any window size.
 
 1. **Instructions** — notes and instructions for your family/executor (funeral
    wishes, who to contact, where to find things).
@@ -125,7 +136,8 @@ Across the top are eight tabs, laid out in two rows. Click a tab to switch:
    property, vehicles, loans), with values, owners, and beneficiaries.
 4. **Accounts** — logins: banks, email, utilities, subscriptions, etc., with a
    **title**, usernames, and passwords. You can filter the list by title, type,
-   subtype, or owner (and search by username). The filters **narrow each other**:
+   subtype, or owner, and **search** in the highlighted 🔍 box (see "Finding an entry
+   with the search box" below). The filters **narrow each other**:
    pick a type and the other dropdowns only show values that exist for that type
    (and so on for any combination); a choice that no longer fits is cleared
    automatically. Clicking **New** while a filter is active pre-fills the matching
@@ -157,6 +169,39 @@ Across the top are eight tabs, laid out in two rows. Click a tab to switch:
 
 To remove an entry, select it and click **Delete**.
 
+## Finding an entry with the search box
+
+On the **Accounts** tab, the filter row has a **highlighted 🔍 search box**. Type in it
+and the list narrows as you type — there is no button to press. While it is filtering,
+the box is tinted, its outline thickens, and a **×** appears inside it to clear the
+query (the **Clear** button resets the search *and* every filter).
+
+What it matches:
+
+- The account's **username or title** — a hit in either keeps the entry.
+- **Anywhere in the value**, not just the beginning: `elit` finds "Fidelity", `heck`
+  finds "Checking".
+- **Case doesn't matter**: `alice`, `Alice`, and `ALICE` are the same search.
+- **Names that sound like what you typed**: `jonson` finds *Johnson*, `catherine` finds
+  *Katherine*, `smith` finds *Smyth*. Words inside an email address are heard
+  separately, so `smith` also finds `alice.smyth@example.com`.
+- **Several words narrow** rather than widen: every word you type must match, so
+  `catherine smith` finds *Katherine Smyth* but not *Katherine Jones*.
+
+Sound-alike matching applies only to words of **three letters or more**, and never to
+numbers — so `u2` finds only `u2` (not `u1`), and `2024` must appear literally. Because
+the matching is deliberately forgiving, it can offer an entry you weren't looking for;
+add more letters, or combine it with the exact type/owner dropdowns.
+
+**Linking an account to an asset.** On **Assets and Liabilities**, the "➕ Link an
+account…" dropdown opens with **the same search box already focused** — just start
+typing and the list narrows to the matching accounts, scrolling the best match into
+view. Only accounts not already linked to that asset are offered, and the search is
+forgotten when the popup closes.
+
+The terminal version has the same account search: press <kbd>/</kbd> to type a query,
+<kbd>Enter</kbd> to keep it, <kbd>Esc</kbd> to clear it.
+
 ## Attaching a document (a will, a statement, a deed)
 
 You can store scanned documents (PDFs, images) **inside** the vault, encrypted
@@ -165,8 +210,11 @@ along with everything else.
 1. In **Edit mode**, open a **Trust and Will**, **Assets and Liabilities**, or
    **General Documents** entry (these hold one document each).
 2. Optionally type a **Subfolder** to organize the file, optionally set a **Filename**
-   to save it as, then pick the file to **Upload / Attach** from your computer.
-   *If you leave the Filename blank, the uploaded file keeps its own name.*
+   to save it as, then put the file's path in **Upload from** and click **Upload /
+   Attach**. *If you leave the Filename blank, the uploaded file keeps its own name.*
+   You can paste the path straight from your file manager — **quotes included** (see
+   "Pasting a folder path" above). It must be the path to a *file*, and `~` or
+   `%USERPROFILE%` are not expanded, so give the full path.
 3. Save. The document is now encrypted inside your vault.
 
 **Getting documents back out (Export).** First set an **Export destination** folder

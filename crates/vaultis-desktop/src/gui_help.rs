@@ -108,7 +108,8 @@ pub(crate) const TOPICS: &[Topic] = &[
                     "Vaults folder",
                     "The directory that is scanned (one level deep) for vaults. Every subfolder \
                      containing a vault.pmv is offered in the dropdown below. This is remembered \
-                     for next time.",
+                     for next time. You can paste a path straight from your file manager, quotes \
+                     and all — see “Typing file and folder paths”.",
                 ),
                 (
                     "Vault",
@@ -224,16 +225,37 @@ pub(crate) const TOPICS: &[Topic] = &[
         body: &[
             Block::Sub("The top bar"),
             Block::P(
-                "The first row is the tab strip — one tab per kind of record. The second row holds \
-                 the actions that apply everywhere:",
+                "The first row names the open vault and holds the actions that apply everywhere. \
+                 The second row is the tab strip — one tab per kind of record.",
             ),
             Block::Rows(&[
+                (
+                    "🗄 vault name",
+                    "Which vault is open. Hover it to see the full folder path — two windows onto \
+                     two vaults look identical without this.",
+                ),
+                (
+                    "WRITE / 🔒 READ-ONLY",
+                    "The session's mode. The orange read-only badge explains why the editing \
+                     controls are absent.",
+                ),
                 ("🔑 Passwords", "Change the vault's two passwords (write mode)."),
                 ("⚙ Config", "Settings: appearance, view defaults, type lists, export directory, backup, storage."),
                 ("❓ Help", "This manual."),
                 ("Quit", "Close the window. In-memory secrets are wiped and the clipboard is cleared on exit."),
-                ("🔒 READ-ONLY", "Shown when the session cannot make changes."),
             ]),
+            Block::Sub("The tab strip on a narrow window"),
+            Block::P(
+                "The strip never scrolls and never hides a tab. When the window is too narrow to \
+                 fit all nine tabs on one line, the strip wraps onto a second (or third) line and \
+                 the rest of the window moves down to make room. Every tab therefore stays visible \
+                 and clickable at any window size, however small.",
+            ),
+            Block::Note(
+                "Earlier versions put the strip in a sideways scrolling area, where the last tabs \
+                 sat off the right edge behind a scrollbar you had to notice. If you remember \
+                 hunting for the Summary tab, that is what changed.",
+            ),
             Block::Sub("Inside a tab"),
             Block::P(
                 "Every record tab is split down the middle: the list of records on the left, the \
@@ -364,9 +386,14 @@ pub(crate) const TOPICS: &[Topic] = &[
             Block::Rows(&[
                 ("type / subtype / owner / title", "Faceted dropdowns; blank means no filter."),
                 ("review only", "Show only accounts flagged for review."),
-                ("reveal all", "Unmask every password on this screen. See “Passwords”."),
+                ("reveal all", "Unmask every password on this screen. See “Passwords: reveal, generate, copy”."),
                 ("grouped", "Switch between a flat list and an owner > type > subtype > title tree."),
-                ("search", "Case-insensitive substring match on the username OR the title."),
+                (
+                    "🔍 search",
+                    "The outlined box in the filter row: free text matched against the username OR \
+                     the title, ignoring case, matching anywhere in the value, and forgiving of \
+                     spelling. It glows and gains a × while it is filtering. See “Searching”.",
+                ),
                 ("Clear", "Reset every filter, the review flag, and the search box at once."),
                 ("Trim all fields", "One-off maintenance: strip leading/trailing whitespace from every field of every record in the whole vault (write mode; recorded in history)."),
             ]),
@@ -453,6 +480,31 @@ pub(crate) const TOPICS: &[Topic] = &[
                  totals the Assets and Liabilities tab per owner, splitting assets into buckets \
                  (real estate, cash, before-tax, after-tax) against a single liability column.",
             ),
+            Block::Sub("Which bucket a record lands in"),
+            Block::P(
+                "The bucket is inferred from the record's TYPE and INSTITUTION text, so it follows \
+                 the words you already use rather than asking for another field:",
+            ),
+            Block::Rows(&[
+                ("Real estate", "Type or institution mentions real estate, property, or rental (assets only)."),
+                ("Before tax", "Mentions retirement, pension, annuity, IRA, Roth, 401/403/457, TSP, or HSA."),
+                ("Cash", "Mentions cash, savings, checking, or money market."),
+                ("After tax", "Everything else — a plain brokerage account, a vehicle, a valuable."),
+            ]),
+            Block::Note(
+                "A retirement word wins over a cash word, so a “Roth savings” is counted as \
+                 before-tax, not cash. Liabilities are never put in the real-estate bucket — a \
+                 mortgage is a debt, and the view does not tax-split debts.",
+            ),
+            Block::Sub("How the values are read"),
+            Block::Bullets(&[
+                "The value field is free text: a currency symbol, thousands separators, and a k/m/b \
+                 suffix are all understood (1.2m is 1,200,000).",
+                "Anything that is not a number at all counts as zero rather than breaking the total.",
+                "Totals are shown rounded to whole currency units, so the columns stay readable.",
+                "Records with an empty owner are totalled under their own blank-owner row, which is \
+                 usually the sign of a record left half-filled.",
+            ]),
             Block::P("Its numbers are only as good as the values on the individual records — it adds up what is there, nothing more."),
         ],
     },
@@ -471,6 +523,25 @@ pub(crate) const TOPICS: &[Topic] = &[
             Block::Warn(
                 "Edits live only in the form until you save. Selecting another record, switching \
                  tabs, or quitting discards them without a prompt.",
+            ),
+            Block::Sub("What a record must have"),
+            Block::P(
+                "Every record needs a Title, and an Account needs an Owner as well; blank or \
+                 whitespace-only does not count. A save that is missing one says which field it \
+                 wants instead of saving something unfindable.",
+            ),
+            Block::Note(
+                "Starting a new record while filters or a search are active pre-fills it from them, \
+                 and saving relaxes any filter that would have hidden the record you just saved — so \
+                 a new entry never vanishes the moment you store it.",
+            ),
+            Block::Sub("Trim all fields"),
+            Block::P(
+                "A one-off maintenance button on the Accounts tab (write mode): it strips leading \
+                 and trailing whitespace from every field of every record in the WHOLE vault, not \
+                 just this tab, and records the change in each record's history. Useful after \
+                 importing or pasting data in bulk, where stray spaces make two identical-looking \
+                 owners sort and group as two different people.",
             ),
             Block::Sub("Deleting"),
             Block::P(
@@ -527,6 +598,62 @@ pub(crate) const TOPICS: &[Topic] = &[
         ],
     },
     Topic {
+        id: "searching",
+        section: "Working with records",
+        title: "Searching",
+        blurb: "How the highlighted search box matches — anywhere in the value, and by how a name sounds.",
+        body: &[
+            Block::P(
+                "The Accounts tab's filter row carries a search box, drawn as an outlined pill with \
+                 a magnifier so it stands out from the dropdowns around it. Type into it and the \
+                 list narrows as you type; there is no button to press.",
+            ),
+            Block::Sub("How to tell it is on"),
+            Block::P(
+                "While a search is active the box is tinted, its outline thickens, and a × appears \
+                 inside it to clear the query. A “filtered” badge also shows in the filter row \
+                 whenever anything — a search or a dropdown — is hiding rows. A short list with no \
+                 visible reason is the most common “where did my records go” moment, so the state is \
+                 made obvious rather than left for you to remember.",
+            ),
+            Block::Sub("What it matches"),
+            Block::Bullets(&[
+                "The account's USERNAME or its TITLE — a hit in either keeps the record.",
+                "Case is ignored: alice, Alice, and ALICE are the same query.",
+                "The letters may appear ANYWHERE in the value, not only at its start. “elit” finds \
+                 “Fidelity”, and “heck” finds “Checking”.",
+                "Sound-alike spellings match too: “jonson” finds Johnson, “catherine” finds \
+                 Katherine, “smith” finds Smyth. The words inside an email address or handle are \
+                 heard separately, so “smith” also finds alice.smyth@example.com.",
+                "Several words narrow rather than widen: EVERY word you type must be satisfied, so \
+                 “catherine smith” finds Katherine Smyth but not Katherine Jones.",
+            ]),
+            Block::Sub("Where sound-alike stops"),
+            Block::P(
+                "Sound-alike matching is only applied to words of three letters or more, and never \
+                 to digits. A short query like “u2” or a number like “2024” must therefore appear \
+                 literally — which is what you want, since “u1” and “u2” are two different logins \
+                 and no number sounds like another.",
+            ),
+            Block::Note(
+                "The matching is deliberately generous: it is built to find a name you cannot spell, \
+                 so it will occasionally offer a record you were not looking for. The type, subtype, \
+                 owner, and title dropdowns are the exact tools — combine one with the search to \
+                 narrow hard. The dropdowns stay consistent with whatever the search shows, so they \
+                 never offer a value that would produce an empty list.",
+            ),
+            Block::Sub("Elsewhere in the app"),
+            Block::Bullets(&[
+                "The “Link an account…” dropdown on an asset has the same search box in its popup — \
+                 see “Linking assets and accounts”.",
+                "This manual's own search (top right of the Help screen) matches topic titles and \
+                 body text, and also requires every word you type.",
+                "The terminal interface has the same account search: press / to type a query, Enter \
+                 to keep it, Esc to clear it. It is shown in the header as find~\"…\".",
+            ]),
+        ],
+    },
+    Topic {
         id: "documents",
         section: "Working with records",
         title: "Documents: attaching and exporting",
@@ -534,7 +661,8 @@ pub(crate) const TOPICS: &[Topic] = &[
         body: &[
             Block::Sub("Attaching"),
             Block::Steps(&[
-                "Put the file's path in “Upload from”. A path in double quotes (as Windows Explorer's “Copy as path” produces) is accepted as-is.",
+                "Put the file's path in “Upload from”. Paste it straight from your file manager — a \
+                 path wrapped in double quotes is accepted as-is (see “Typing file and folder paths”).",
                 "Optionally add a subfolder to organise it inside the vault.",
                 "Optionally set a filename. Leave it blank to keep the source file's own name.",
                 "Click the upload button. The file is encrypted into the vault's document archive.",
@@ -586,14 +714,33 @@ pub(crate) const TOPICS: &[Topic] = &[
             ),
             Block::Steps(&[
                 "Open the asset on the Assets and Liabilities tab.",
-                "In its linked-accounts section, choose an account and add the link.",
+                "In its 🔗 Linked accounts section, open the “➕ Link an account…” dropdown.",
+                "Type a few letters in the search box at the top of the popup to find the account, \
+                 then click it.",
                 "Save the asset. Links live on the asset record, so they are stored when it is saved.",
             ]),
+            Block::Sub("Finding the right account in the dropdown"),
             Block::P(
-                "The Accounts form shows the other direction — every asset that links to the account \
-                 you are looking at — with a button to jump straight to it. Jumping switches tabs \
-                 and clears any filter that would have hidden the target, so the record you asked \
-                 for is always the one you land on.",
+                "The popup opens with its search box already focused, so you can start typing \
+                 immediately. The list below narrows to the matching accounts and scrolls the best \
+                 match into view as you type. Matching is the same as the Accounts search box: the \
+                 letters may appear anywhere in the entry, not only at its beginning, and a \
+                 sound-alike spelling still finds it (see “Searching”).",
+            ),
+            Block::Bullets(&[
+                "Only accounts that are NOT already linked to this asset are offered, so a link \
+                 cannot be added twice.",
+                "The query is forgotten when the popup closes — the next time you open it, the full \
+                 list is back rather than a stale filter you have to notice.",
+                "If nothing matches, the popup says so instead of appearing empty.",
+            ]),
+            Block::Sub("The other direction"),
+            Block::P(
+                "The Accounts form shows every asset that links to the account you are looking at, \
+                 with a button to jump straight to it. Jumping switches tabs and clears any filter \
+                 that would have hidden the target, so the record you asked for is always the one \
+                 you land on. Links are edited on the asset side only, which is why that view is \
+                 read-only.",
             ),
             Block::Note(
                 "Links are stored by record id, so renaming either side keeps the link intact. \
@@ -655,12 +802,16 @@ pub(crate) const TOPICS: &[Topic] = &[
             Block::Sub("Export directory"),
             Block::P(
                 "Where every Export button writes its decrypted copy. Stored as a local preference \
-                 rather than in the vault, so it can be set even in a read-only session.",
+                 rather than in the vault, so it can be set even in a read-only session. Paste the \
+                 folder path in and press its Set button; a path in double quotes is accepted and \
+                 stored without them (see “Typing file and folder paths”). Clearing the box and \
+                 setting it empty turns exporting off again.",
             ),
             Block::Sub("Backup"),
             Block::P(
                 "Copies the encrypted vault and its document archive into a timestamped folder \
-                 under the destination you give. Nothing is decrypted. See “Backups and recovery”.",
+                 under the destination you give — the destination folder box takes a quoted path \
+                 too. Nothing is decrypted. See “Backups and recovery”.",
             ),
             Block::Sub("Storage — volume size"),
             Block::P(
@@ -704,7 +855,7 @@ pub(crate) const TOPICS: &[Topic] = &[
             ]),
             Block::Steps(&[
                 "In Config, click “Update from another vault…” (write mode only).",
-                "Choose the other vault's folder and enter ITS two passwords.",
+                "Choose the other vault's folder — pasting a quoted path is fine — and enter ITS two passwords.",
                 "Read the preview: every record to be added or updated, plus the documents that come with them.",
                 "Apply, or go back and change nothing.",
             ]),
@@ -813,6 +964,55 @@ pub(crate) const TOPICS: &[Topic] = &[
         ],
     },
     Topic {
+        id: "paths",
+        section: "Reference",
+        title: "Typing file and folder paths",
+        blurb: "Every path box accepts a pasted, quoted path — and what a path box will not do.",
+        body: &[
+            Block::P(
+                "Several boxes in the app take a location on your disk rather than vault content. \
+                 They all behave the same way, so what you learn on one applies to the others:",
+            ),
+            Block::Rows(&[
+                ("Vaults folder", "The start page's folder of vaults."),
+                ("Upload from", "The file to attach to a record."),
+                ("Export directory", "Where Export buttons write decrypted copies (Config)."),
+                ("Backup destination", "Where a backup folder is created (Config)."),
+                ("Other vault's folder", "The source of an update from another vault (Config)."),
+            ]),
+            Block::Sub("Pasting a path with quotes"),
+            Block::P(
+                "File managers and shells hand you a path wrapped in double quotes when it contains \
+                 spaces — Windows Explorer's right-click “Copy as path” always adds them. Paste it \
+                 in as it came: a matching pair of quotes around the whole path is recognised and \
+                 removed, so \"C:\\Users\\me\\My Vaults\" opens the folder it names. Spaces inside \
+                 the path are kept exactly as they are.",
+            ),
+            Block::Bullets(&[
+                "Surrounding blank space is trimmed as well, so a stray space from a copy-paste is harmless.",
+                "The stripped, clean value is what gets remembered — a quoted path you set once does \
+                 not come back quoted next launch.",
+                "A single quote at only one end is left alone: it is a legal character in a file name \
+                 on Linux and macOS, so a folder genuinely called \"weird is still reachable.",
+                "Single quotes ('like this') are NOT stripped — they are ordinary filename characters, \
+                 not a convention any file manager produces.",
+            ]),
+            Block::Sub("What a path box will not do"),
+            Block::Bullets(&[
+                "It does not expand ~ or environment variables such as %USERPROFILE% or $HOME. Give \
+                 the full path.",
+                "A relative path is resolved against the folder the program was launched from, which \
+                 is rarely what you meant — prefer an absolute path.",
+                "“Upload from” needs the path to a FILE, including its name; a folder will not do.",
+            ]),
+            Block::Note(
+                "The command-line tools take paths as ordinary arguments, where your shell removes \
+                 the quotes before the program ever sees them — quote paths with spaces there as \
+                 usual.",
+            ),
+        ],
+    },
+    Topic {
         id: "keys",
         section: "Reference",
         title: "Keyboard and mouse",
@@ -825,7 +1025,16 @@ pub(crate) const TOPICS: &[Topic] = &[
                 ("Tab / Shift+Tab", "Move between fields."),
                 ("Enter", "Submit on the unlock screen."),
                 ("Ctrl+C", "Copy selected text — including from read-only fields."),
+                ("Ctrl+V", "Paste — how a copied file or folder path gets into a path box."),
+                (
+                    "Just start typing",
+                    "In the “Link an account…” dropdown: its search box takes focus as the popup \
+                     opens, so your first keystroke filters the list.",
+                ),
+                ("Esc", "Close an open dropdown popup without choosing anything."),
+                ("Click away from a popup", "Also closes it; a link search box forgets its query when it closes."),
                 ("Hover a button", "Show a tooltip explaining what it does."),
+                ("Hover the vault name", "Show the full path of the open vault."),
             ]),
             Block::Note(
                 "The graphical app is mouse-first by design. The terminal interface \
@@ -871,6 +1080,55 @@ pub(crate) const TOPICS: &[Topic] = &[
         ],
     },
     Topic {
+        id: "demo-vault",
+        section: "Reference",
+        title: "Trying it out on a sample vault",
+        blurb: "A throwaway vault full of fake data, built by the build script, for learning and demos.",
+        body: &[
+            Block::P(
+                "If you built the program from source, one command builds it AND leaves you a \
+                 fully populated practice vault to click around in:",
+            ),
+            Block::Rows(&[
+                ("scripts/build.sh", "Build, then create the sample vault if it is not there yet."),
+                ("scripts/build.sh --release", "The same, using the optimized build."),
+                ("scripts/build.sh --fresh", "Throw the existing sample vault away and build a new one."),
+                ("scripts/build.sh --sample-dir DIR", "Put the sample vault somewhere else."),
+                ("scripts/build.sh --no-sample", "Just build; skip the sample vault."),
+            ]),
+            Block::P(
+                "When it finishes it prints, as the last thing after all the build output, where the \
+                 sample vault is and the two passwords that open it. By default that is the \
+                 sample-vault folder under target/, with the passwords sample1 and sample2.",
+            ),
+            Block::Sub("What is in it"),
+            Block::P(
+                "Every tab is filled in — urgent notes, instructions, trust and will entries, assets \
+                 and liabilities linked to accounts, accounts with types and subtypes, a property \
+                 with its portal logins, tax filings, and general documents — including real attached \
+                 documents, so the encrypted archive, exporting, and the Summary totals all have \
+                 something to show.",
+            ),
+            Block::Bullets(&[
+                "Everything in it is fiction: invented people, invented institutions, and visibly \
+                 fake placeholder “passwords”. Nothing in it is a working credential for anything.",
+                "Its two master passwords are deliberately trivial because it is a demo, which is \
+                 exactly why it must never hold anything real.",
+                "It lives under target/, so `cargo clean` removes it along with the build.",
+                "Re-running the script leaves an existing sample vault untouched, so edits you made \
+                 while exploring survive. Use --fresh when you want a clean one.",
+            ]),
+            Block::Warn(
+                "Never put real data in the sample vault, and never reuse sample1 / sample2 for a \
+                 vault of your own. Treat the whole folder as disposable.",
+            ),
+            Block::Note(
+                "This is also the fastest way to show someone else what the program does, or to \
+                 practise a restore, without exposing any of your own records.",
+            ),
+        ],
+    },
+    Topic {
         id: "troubleshooting",
         section: "Reference",
         title: "Troubleshooting",
@@ -910,11 +1168,37 @@ pub(crate) const TOPICS: &[Topic] = &[
                 ),
                 (
                     "An upload cannot find the file",
-                    "The whole path is needed, not just the filename. Quoted paths are accepted.",
+                    "The whole path is needed, not just the filename — and it must point at a file, \
+                     not a folder. A pasted quoted path is fine; ~ and %USERPROFILE% are not \
+                     expanded. See “Typing file and folder paths”.",
+                ),
+                (
+                    "A folder box does not find the folder",
+                    "Check for a stray character from the copy: a matching PAIR of double quotes is \
+                     removed for you, but a single leftover quote is treated as part of the name. \
+                     Absolute paths are safest — a relative one is resolved against wherever the \
+                     program was started.",
                 ),
                 (
                     "The list is unexpectedly empty",
-                    "A filter or the search box is still active. Click Clear.",
+                    "A filter or the search box is still active — look for the “filtered” badge and \
+                     the tinted search box. Click Clear, or the × inside the search box.",
+                ),
+                (
+                    "The search shows a record you did not ask for",
+                    "The search also matches names that SOUND like what you typed, so a different \
+                     spelling can appear. Add more letters, or narrow with the type/owner dropdowns. \
+                     See “Searching”.",
+                ),
+                (
+                    "The search cannot find a short username",
+                    "Words shorter than three letters are matched literally, never by sound — “u2” \
+                     finds only u2. Try searching the title instead.",
+                ),
+                (
+                    "The tabs are on two lines",
+                    "The window is too narrow to fit them on one, so the strip wrapped rather than \
+                     hiding any tab. Widen the window to bring them back onto a single line.",
                 ),
                 (
                     "A link shows a raw id",
@@ -953,6 +1237,18 @@ pub(crate) const TOPICS: &[Topic] = &[
                 "Keep a copy of the program with the backup. Failing that, `export-tree` turns a \
                  vault into an ordinary folder of files and JSON that any future tool can read — the \
                  data is never trapped in this format.",
+            ),
+            Block::Sub("Why does the search find a name I did not type?"),
+            Block::P(
+                "Because it also matches names that sound like your query — that is deliberate, so \
+                 an heir who has only ever heard a name spoken can still find it. Type more letters \
+                 or use the exact dropdowns to narrow. See “Searching”.",
+            ),
+            Block::Sub("Can I practise without touching my real vault?"),
+            Block::P(
+                "Yes. If you built from source, scripts/build.sh leaves a sample vault full of \
+                 invented data, and prints its location and its two demo passwords when it finishes. \
+                 See “Trying it out on a sample vault”.",
             ),
             Block::Sub("What is the recommended routine?"),
             Block::Bullets(&[
@@ -1365,6 +1661,74 @@ mod tests {
 
         // A word in no article matches nothing.
         assert!(search("zzzznotaword").is_empty());
+    }
+
+    /// Each feature the manual is supposed to explain must be REACHABLE by the words a user
+    /// would type into the help search — a topic nobody can find is not documentation. The
+    /// query/topic pairs below are the behaviours that are not self-evident from the screen.
+    #[test]
+    fn every_documented_feature_is_findable_by_search() {
+        for (query, expect_id) in [
+            // Quoted / pasted paths, in the dedicated topic and where they are used.
+            ("quoted path", "paths"),
+            ("copy as path", "paths"),
+            // The wrapping tab strip.
+            ("tab strip narrow", "window"),
+            // The search box: how it looks and how it matches.
+            ("sound-alike", "searching"),
+            ("search box", "searching"),
+            // The searchable link dropdown.
+            ("link an account dropdown", "links"),
+            // The sample vault the build script produces.
+            ("sample vault", "demo-vault"),
+            ("sample1", "demo-vault"),
+            // Long-standing behaviour that is easy to miss.
+            ("trim all fields", "editing"),
+            ("before tax bucket", "tab-summary"),
+        ] {
+            let hits = search(query);
+            assert!(
+                hits.iter().any(|i| TOPICS[*i].id == expect_id),
+                "searching the manual for {query:?} must reach the {expect_id:?} topic; \
+                 it matched {:?}",
+                hits.iter().map(|i| TOPICS[*i].id).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Every cross-reference — the manual's `See “Article title”` / `see “Article title”` form —
+    /// must name a topic that actually exists, so following one never sends the reader hunting for
+    /// an article that was renamed or never written. Only quoted phrases introduced by "see" are
+    /// checked; other quoted text is button labels and values, which are not references.
+    #[test]
+    fn cross_references_name_real_topics() {
+        // `haystack` lower-cases (it feeds the search), so compare lower-cased titles.
+        let titles: Vec<String> = TOPICS.iter().map(|t| t.title.to_lowercase()).collect();
+        let mut checked = 0usize;
+        for t in TOPICS {
+            let text = haystack(t);
+            // Scan for the marker itself rather than pairing every quote in the article: the
+            // prose quotes UI labels too, and pairing sequentially misaligns on those.
+            for marker in ["see \u{201c}"] {
+                let mut rest = text.as_str();
+                while let Some(at) = rest.find(marker) {
+                    rest = &rest[at + marker.len()..];
+                    let Some(close) = rest.find('\u{201d}') else {
+                        panic!("topic {} has an unterminated cross-reference", t.id)
+                    };
+                    let referenced = &rest[..close];
+                    rest = &rest[close..];
+                    checked += 1;
+                    assert!(
+                        titles.iter().any(|title| title == referenced),
+                        "topic {} points at {referenced:?}, which is not an article title",
+                        t.id
+                    );
+                }
+            }
+        }
+        // Guard against the check silently becoming vacuous if the convention changes.
+        assert!(checked >= 8, "only {checked} cross-references found — has the “See …” convention changed?");
     }
 
     #[test]
