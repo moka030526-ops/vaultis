@@ -446,6 +446,12 @@ scripts/build.sh              # debug build   (add --release for the optimized o
 
 (On Windows, use `scripts\build.bat` — same flags, same output.)
 
+**No Rust installed?** The script checks first: if `cargo` is missing it offers to
+install the toolchain with the official [rustup](https://rustup.rs) installer, asking
+before it touches your machine (the default answer is *no*). `--install-rust` answers
+yes up front for an unattended run, and a too-old toolchain is reported plainly instead
+of failing with a confusing compiler error.
+
 Same build, plus it creates a **fully populated sample vault** — every tab filled in,
 with attached documents — and prints, as the last thing after the build output, where
 it is and the two passwords that open it:
@@ -541,6 +547,12 @@ yet, and prints its location and the two passwords (`sample1` / `sample2`) as th
 thing after the build output. `--fresh` rebuilds it, `--sample-dir DIR` puts it
 elsewhere, `--no-sample` skips it, and anything after a bare `--` is passed to
 `cargo build`. Run `scripts\build.bat --help` for the list.
+
+If **Rust isn't installed**, the script says so and offers to install it with the
+official [rustup](https://rustup.rs) installer — it asks first, and the default answer
+is *no*; `--install-rust` answers yes up front. It picks the x64 or ARM64 installer to
+match your machine, and adds `%USERPROFILE%\.cargo\bin` to the current console's `PATH`
+so the build can continue in the same window.
 
 Everything in that vault is fiction and its passwords are deliberately trivial — never
 put anything real in it.

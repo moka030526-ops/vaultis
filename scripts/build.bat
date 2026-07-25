@@ -3,11 +3,15 @@ rem =====================================================================
 rem  Build vaultis on Windows and hand back a DEMO vault you can open.
 rem
 rem    scripts\build.bat [--release] [--fresh] [--sample-dir DIR]
-rem                      [--no-sample] [-- <extra cargo args>]
+rem                      [--no-sample] [--install-rust] [-- <extra cargo args>]
 rem
-rem  It does two things:
-rem    1. `cargo build` - debug by default, --release for the optimized build.
-rem    2. Makes sure a FULLY POPULATED sample vault exists - every tab filled
+rem  It does three things:
+rem    1. Makes sure a usable RUST TOOLCHAIN is installed. If `cargo` is missing
+rem       it offers to install it with the official rustup installer -
+rem       https://rustup.rs - asking first; --install-rust answers yes up front,
+rem       for an unattended run.
+rem    2. `cargo build` - debug by default, --release for the optimized build.
+rem    3. Makes sure a FULLY POPULATED sample vault exists - every tab filled
 rem       in, with attached documents so the encrypted volume is real - by
 rem       running the `seed_sample_vault` example, then prints where it is and
 rem       the two passwords that open it.
@@ -60,6 +64,13 @@ set "PROFILE_ARGS="
 set "FRESH=0"
 set "SAMPLE_DIR="
 set "EXTRA_CARGO_ARGS="
+set "INSTALL_RUST=0"
+
+rem Oldest toolchain that can build this workspace: the crates are edition 2024,
+rem which needs Rust 1.85+, and the source uses stable let-chains, 1.88+. Checked
+rem rather than assumed, because an old rustc fails with an error that reads like a
+rem code problem.
+set "MIN_RUST_MINOR=88"
 
 rem --- Argument parsing ---------------------------------------------------
 rem Batch has no `case`, so this is a goto loop over the arguments.
@@ -68,6 +79,11 @@ if "%~1"=="" goto args_done
 if /i "%~1"=="--release" (
     set "PROFILE=release"
     set "PROFILE_ARGS=--release"
+    shift
+    goto parse_args
+)
+if /i "%~1"=="--install-rust" (
+    set "INSTALL_RUST=1"
     shift
     goto parse_args
 )
@@ -120,6 +136,98 @@ rem VAULTIS_SAMPLE_DIR lets the location be set from the environment too. The
 rem --sample-dir flag wins over it, and both default to target\sample-vault.
 if "%SAMPLE_DIR%"=="" set "SAMPLE_DIR=%VAULTIS_SAMPLE_DIR%"
 if "%SAMPLE_DIR%"=="" set "SAMPLE_DIR=%REPO_ROOT%\target\sample-vault"
+
+rem --- Rust toolchain -----------------------------------------------------
+rem
+rem Installing a compiler toolchain is a real change to the machine - it downloads
+rem and runs an installer from the network - so it is never done silently: the script
+rem asks, and defaults to NO. --install-rust is the explicit yes for an unattended
+rem run. `where` is the Windows equivalent of `which`; it sets a nonzero exit code
+rem when the program is not on PATH.
+where cargo >nul 2>nul
+if not errorlevel 1 goto have_cargo
+rem A rustup install this console has not picked up yet: %USERPROFILE%\.cargo\bin is
+rem on PATH only for consoles started AFTER the install.
+if exist "%USERPROFILE%\.cargo\bin\cargo.exe" (
+    set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+    goto have_cargo
+)
+echo Rust ^(cargo^) was not found on this machine.
+echo vaultis is written in Rust, so a toolchain is needed to build it.
+if "%INSTALL_RUST%"=="1" goto install_rust
+set "REPLY="
+set /p "REPLY=Install it now with rustup (from https://rustup.rs)? [y/N] "
+if /i "%REPLY%"=="y" goto install_rust
+if /i "%REPLY%"=="yes" goto install_rust
+echo Not installing. Install Rust yourself and re-run this script:
+echo   https://rustup.rs   ^(or: winget install Rustlang.Rustup^)
+popd
+exit /b 1
+
+:install_rust
+rem If rustup is already here, only the default toolchain is missing.
+where rustup >nul 2>nul
+if not errorlevel 1 (
+    echo ==^> rustup is installed but no toolchain is active; installing stable
+    rustup toolchain install stable
+    rustup default stable
+    goto after_install
+)
+echo ==^> Installing the Rust toolchain with rustup ^(https://rustup.rs^)
+rem Fetch the official installer over HTTPS into TEMP, run it with rustup's defaults
+rem - the -y flag - then delete it. PowerShell is used only as the downloader, since
+rem batch has none; -NoProfile keeps a user profile script out of the way.
+rem The installer is per-architecture, so pick the one this machine can run: an ARM64
+rem Windows box handed the x64 build would install a toolchain targeting the wrong CPU.
+set "RUSTUP_URL=https://win.rustup.rs/x86_64"
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "RUSTUP_URL=https://win.rustup.rs/aarch64"
+set "RUSTUP_INIT=%TEMP%\rustup-init-vaultis.exe"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri %RUSTUP_URL% -OutFile '%RUSTUP_INIT%'"
+if errorlevel 1 (
+    echo. 1>&2
+    echo error: could not download the rustup installer. 1>&2
+    echo        Install Rust yourself: https://rustup.rs 1>&2
+    popd
+    exit /b 1
+)
+"%RUSTUP_INIT%" -y
+set "INSTALL_RC=%ERRORLEVEL%"
+del /q "%RUSTUP_INIT%" 2>nul
+if not "%INSTALL_RC%"=="0" (
+    echo. 1>&2
+    echo error: the rustup installer failed. 1>&2
+    popd
+    exit /b 1
+)
+rem The installer puts cargo on PATH for FUTURE consoles; add it to this one.
+set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+
+:after_install
+where cargo >nul 2>nul
+if errorlevel 1 (
+    echo. 1>&2
+    echo error: cargo is still not on PATH after installing. 1>&2
+    echo        Open a NEW command prompt and run this script again. 1>&2
+    popd
+    exit /b 1
+)
+
+:have_cargo
+rem An ancient-but-present toolchain is the other failure mode, and its error message
+rem - "let chains are unstable", "edition 2024 is unsupported" - reads like broken code
+rem rather than a stale compiler. Say so plainly instead. The for/f splits
+rem "rustc 1.88.0 (...)" on spaces and dots to get the minor version.
+set "RUST_MINOR="
+for /f "tokens=2 delims= " %%V in ('rustc --version 2^>nul') do (
+    for /f "tokens=2 delims=." %%M in ("%%V") do set "RUST_MINOR=%%M"
+)
+if defined RUST_MINOR if %RUST_MINOR% LSS %MIN_RUST_MINOR% (
+    echo. 1>&2
+    echo error: Rust 1.%RUST_MINOR% is too old to build vaultis - needs 1.%MIN_RUST_MINOR% or newer. 1>&2
+    echo        Update it with:  rustup update stable 1>&2
+    popd
+    exit /b 1
+)
 
 echo ==^> Building vaultis ^(%PROFILE%^)
 cargo build --workspace %PROFILE_ARGS%%EXTRA_CARGO_ARGS%
@@ -199,13 +307,14 @@ exit /b 0
 echo Build vaultis and hand back a DEMO vault you can immediately open.
 echo.
 echo   scripts\build.bat [--release] [--fresh] [--sample-dir DIR]
-echo                     [--no-sample] [-- ^<extra cargo args^>]
+echo                     [--no-sample] [--install-rust] [-- ^<extra cargo args^>]
 echo.
 echo   --release          Build, and seed with, the optimized build.
 echo   --fresh            Delete an existing sample vault and build a new one.
 echo   --sample-dir DIR   Put the sample vault somewhere other than
 echo                      target\sample-vault.
 echo   --no-sample        Just build; skip the sample vault entirely.
+echo   --install-rust     Install the Rust toolchain without asking, if missing.
 echo   --                 Pass the remaining arguments to cargo build.
 echo.
 echo The sample vault is fiction and its two passwords are deliberately trivial

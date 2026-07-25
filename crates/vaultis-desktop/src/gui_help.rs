@@ -1097,9 +1097,16 @@ pub(crate) const TOPICS: &[Topic] = &[
                 ("--fresh", "Throw the existing sample vault away and build a new one."),
                 ("--sample-dir DIR", "Put the sample vault somewhere else."),
                 ("--no-sample", "Just build; skip the sample vault."),
+                ("--install-rust", "Install the Rust toolchain without asking, if it is missing."),
                 ("-- <cargo args>", "Everything after a bare -- is passed on to cargo build."),
                 ("--help", "Print this list."),
             ]),
+            Block::Note(
+                "No Rust on the machine? The script checks before it builds, and offers to install \
+                 the toolchain with the official rustup installer — it asks first, and the default \
+                 answer is no. A toolchain that is present but too old is reported plainly rather \
+                 than failing later with a confusing compiler error.",
+            ),
             Block::P(
                 "When it finishes it prints, as the last thing after all the build output, where the \
                  sample vault is and the two passwords that open it. By default that is the \
