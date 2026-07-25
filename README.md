@@ -444,6 +444,8 @@ cargo build --release
 scripts/build.sh              # debug build   (add --release for the optimized one)
 ```
 
+(On Windows, use `scripts\build.bat` — same flags, same output.)
+
 Same build, plus it creates a **fully populated sample vault** — every tab filled in,
 with attached documents — and prints, as the last thing after the build output, where
 it is and the two passwords that open it:
@@ -526,6 +528,22 @@ run with nothing to install.
 > (console) and `pythonw.exe` (windowed), vaultis ships a console and a windowed
 > build. (The crate forbids `unsafe` code, which rules out the alternative of one
 > executable that attaches/detaches a console at runtime.)
+
+#### Build **and** get a demo vault to click around in (Windows)
+
+```bat
+scripts\build.bat              :: debug build   (add --release for the optimized one)
+```
+
+The Windows twin of `scripts/build.sh` — same flags, same defaults, same demo
+passwords. It builds, creates a **fully populated sample vault** if one isn't there
+yet, and prints its location and the two passwords (`sample1` / `sample2`) as the last
+thing after the build output. `--fresh` rebuilds it, `--sample-dir DIR` puts it
+elsewhere, `--no-sample` skips it, and anything after a bare `--` is passed to
+`cargo build`. Run `scripts\build.bat --help` for the list.
+
+Everything in that vault is fiction and its passwords are deliberately trivial — never
+put anything real in it.
 
 ### Cross-compiling a Windows `.exe` from Linux (optional)
 

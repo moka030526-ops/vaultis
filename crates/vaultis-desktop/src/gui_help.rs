@@ -1087,14 +1087,18 @@ pub(crate) const TOPICS: &[Topic] = &[
         body: &[
             Block::P(
                 "If you built the program from source, one command builds it AND leaves you a \
-                 fully populated practice vault to click around in:",
+                 fully populated practice vault to click around in — scripts/build.sh on \
+                 Linux or macOS, scripts\\build.bat on Windows. The two are twins: same \
+                 flags, same defaults, same demo passwords.",
             ),
             Block::Rows(&[
-                ("scripts/build.sh", "Build, then create the sample vault if it is not there yet."),
-                ("scripts/build.sh --release", "The same, using the optimized build."),
-                ("scripts/build.sh --fresh", "Throw the existing sample vault away and build a new one."),
-                ("scripts/build.sh --sample-dir DIR", "Put the sample vault somewhere else."),
-                ("scripts/build.sh --no-sample", "Just build; skip the sample vault."),
+                ("(no flags)", "Build, then create the sample vault if it is not there yet."),
+                ("--release", "The same, using the optimized build."),
+                ("--fresh", "Throw the existing sample vault away and build a new one."),
+                ("--sample-dir DIR", "Put the sample vault somewhere else."),
+                ("--no-sample", "Just build; skip the sample vault."),
+                ("-- <cargo args>", "Everything after a bare -- is passed on to cargo build."),
+                ("--help", "Print this list."),
             ]),
             Block::P(
                 "When it finishes it prints, as the last thing after all the build output, where the \

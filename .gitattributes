@@ -1,0 +1,4 @@
+# Batch files must keep CRLF endings: cmd.exe mis-parses labels and ( ) blocks in
+# an LF-only .bat, so a checkout on Windows has to produce CRLF regardless of the
+# clone's core.autocrlf setting. Everything else is left to git's defaults.
+*.bat text eol=crlf
