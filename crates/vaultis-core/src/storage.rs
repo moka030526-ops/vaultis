@@ -598,8 +598,28 @@ impl VolumeStore {
         let mut f = File::open(self.volume_path(part))?;
         let file_len = f.metadata()?.len();
         let aad = volume_aad(&self.vault_id, part);
-        Ok(scan_volume(&mut f, file_len, key, &aad))
+        reject_over_cap(scan_volume(&mut f, file_len, key, &aad), MAX_MANIFEST_ENTRIES)
     }
+}
+
+/// Apply the manifest entry cap to a REBUILT manifest, the same way `load_manifest`
+/// applies it to a stored one.
+///
+/// [`scan_volume`] is deliberately infallible — it returns whatever intact prefix it found
+/// — so the rebuild path was the one way an over-cap manifest could enter memory. From
+/// there the next `put`/`remove` in that partition would COMMIT it, and every subsequent
+/// open would then hit `load_manifest`'s `TooLarge`, which [`VolumeStore::open`] does NOT
+/// treat as rebuildable: an otherwise-intact vault would be permanently unopenable.
+/// Rejecting at the rebuild fails closed with the same error and destroys nothing.
+///
+/// (`target_partition` keeps a legitimately-written partition under the cap, so this is
+/// unreachable for a vault this code produced — it exists so the read side cannot admit
+/// something the write side would refuse.)
+fn reject_over_cap(manifest: Manifest, max_entries: usize) -> Result<Manifest, StorageError> {
+    if manifest.entries.len() > max_entries {
+        return Err(StorageError::TooLarge);
+    }
+    Ok(manifest)
 }
 
 /// Scan a self-describing volume (any `Read + Seek`) from the start, decrypting
@@ -1093,6 +1113,59 @@ mod tests {
                 s2.partition_count()
             ),
             Err(e) => panic!("unexpected error variant: {e:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_rebuilt_manifest_obeys_the_same_entry_cap_as_a_stored_one() {
+        // The read side must never admit a manifest the write side would refuse. `load_manifest`
+        // fails closed on more than MAX_MANIFEST_ENTRIES entries, but `scan_volume` (the
+        // manifest-loss rebuild) is infallible by design and used to hand back any number.
+        // An over-cap rebuild would be committed by the next put/remove in that partition,
+        // and every later open would then fail `TooLarge` — which `open` does NOT rebuild
+        // from — bricking an otherwise-intact vault. Pin the boundary on both sides.
+        let entry = |i: usize| ManifestEntry {
+            id: format!("{i:x}"),
+            path: "/d".into(),
+            size: 1,
+            offset: 0,
+            length: 1,
+            uploaded_at: 0,
+        };
+        let manifest = |n: usize| Manifest { seq: 1, end_offset: 0, entries: (0..n).map(entry).collect() };
+
+        // Exactly at the cap is ACCEPTED (the guard is a strict `>`, matching load_manifest),
+        // and the manifest passes through unchanged.
+        let at_cap = reject_over_cap(manifest(8), 8).expect("exactly max is accepted");
+        assert_eq!(at_cap.entries.len(), 8, "an in-range manifest is returned untouched");
+        // One over is rejected — and with the SAME variant load_manifest uses, so `open`
+        // treats it identically (not as rebuildable corruption).
+        assert!(
+            matches!(reject_over_cap(manifest(9), 8), Err(StorageError::TooLarge)),
+            "max + 1 is rejected as TooLarge"
+        );
+        // And an empty/typical rebuild is unaffected.
+        assert!(reject_over_cap(manifest(0), MAX_MANIFEST_ENTRIES).is_ok());
+        assert!(reject_over_cap(manifest(3), MAX_MANIFEST_ENTRIES).is_ok());
+    }
+
+    #[test]
+    fn rebuild_from_a_volume_still_succeeds_under_the_cap() {
+        // Wiring check for the guard above: the real rebuild path (corrupt manifest, intact
+        // volume) must still recover normally — the cap must not have turned recovery into a
+        // refusal for an ordinary vault.
+        let dir = tmp_dir("rebuildcap");
+        let key = fast_key();
+        let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+        for i in 0..5 {
+            s.put(&format!("id{i}"), "/d", b"body", i, &key).unwrap();
+        }
+        drop(s);
+        std::fs::write(dir.join("manifest/manifest.0"), b"garbage").unwrap();
+        let rebuilt = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+        for i in 0..5 {
+            assert_eq!(&*rebuilt.read(&format!("id{i}"), &key).unwrap(), b"body");
         }
         std::fs::remove_dir_all(&dir).ok();
     }

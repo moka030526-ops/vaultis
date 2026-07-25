@@ -102,6 +102,14 @@ pub(crate) fn clipboard_tick_decision(
 /// and TUI so both render identically: `1_234_567.8 -> "$1,234,568"`, `-2500.0 -> "-$2,500"`,
 /// `0.0 -> "$0"`. The summary is an approximation, so cents are rounded away for legibility.
 pub(crate) fn fmt_money(v: f64) -> String {
+    // A non-finite total can reach here even though `parse_approx_value` rejects a non-finite
+    // FIELD: the Summary sums many finite values, and two near-`f64::MAX` entries add to +inf.
+    // `f64 as u64` saturates, so inf would render as the literal `$18,446,744,073,709,551,615`
+    // and NaN as `$0` — a made-up figure presented as a real one in a financial view. Say
+    // "out of range" instead.
+    if !v.is_finite() {
+        return "$—".to_string();
+    }
     let rounded = v.abs().round() as u64;
     // Take the sign from the ROUNDED magnitude, not the raw float, so a value that rounds to 0
     // never shows "-$0". A tiny negative residue is realistic on the Summary's Net column —
@@ -123,6 +131,129 @@ pub(crate) fn fmt_money(v: f64) -> String {
     }
 }
 
+
+// --- Cleartext-export destination guard (shared by the CLI, GUI and TUI) ------
+//
+// Writing a decrypted document — or a per-tab CSV, which carries every account and
+// portal password in the clear — INTO the encrypted vault directory strands plaintext
+// next to `vault.pmv`, where the user's next backup or folder sync sweeps it up. The CLI
+// has refused that since the `extract`/`export-tree`/`compact --backup-dest` guards; the
+// windowed and terminal front-ends export to the Config directory and so need the same
+// check. It lives here (not in the `vaultis` binary) so all three front-ends share ONE
+// definition and cannot drift.
+
+/// Validate the Config-screen export directory for a session whose vault file is
+/// `vault_path`, returning the normalized directory to write into or the message the
+/// front-end should show.
+///
+/// Two refusals, in the order the user hits them:
+/// 1. unset — the front-ends have no per-export path prompt, so there is nothing to write to;
+/// 2. inside the vault directory — a per-tab CSV holds every account and portal password in
+///    the clear, and a document export is the decrypted file, so landing either next to
+///    `vault.pmv` means the user's next backup or folder sync of the vault carries the
+///    plaintext with it. `dest_inside` resolves both sides through the filesystem, so a
+///    symlinked export directory pointing back into the vault is caught too.
+///
+/// Shared by the GUI and TUI so the rule and its wording cannot drift between them; the
+/// CLI's `extract`/`export-tree`/`compact --backup-dest` enforce the same thing directly.
+pub fn checked_export_dir(vault_path: &Path, configured: &str) -> Result<PathBuf, String> {
+    let dir = records::unquote_path(configured);
+    if dir.is_empty() {
+        return Err("Set an export directory in Config first (Config > Export directory).".to_string());
+    }
+    let dir = PathBuf::from(dir);
+    if let Some(vault_dir) = vault_path.parent().filter(|p| !p.as_os_str().is_empty())
+        && dest_inside(vault_dir, &dir)
+    {
+        return Err(format!(
+            "Export directory must be OUTSIDE the vault folder ({}) — exports are UNENCRYPTED \
+             and would be swept into your next backup of the vault. Pick another folder in Config.",
+            vault_dir.display()
+        ));
+    }
+    Ok(dir)
+}
+
+/// Whether `dest` is the vault directory itself or a path inside it (a backup
+/// there would be copied into the very tree being rewritten). Best-effort: uses
+/// canonical paths when both exist, else a lexical prefix check.
+pub fn dest_inside(vault_dir: &Path, dest: &Path) -> bool {
+    // Both sides are resolved AS FAR AS THE FILESYSTEM ALLOWS (see `resolve_existing`),
+    // never by text alone.
+    //
+    // This used to canonicalize both and fall back to a purely LEXICAL comparison when
+    // either failed. A destination almost never exists yet — it is a fresh export or
+    // backup directory — so the lexical path was the normal one, and it folds `..` and
+    // absolutizes without ever touching the filesystem. A destination reached through a
+    // SYMLINKED PARENT therefore compared as "outside" while physically resolving inside
+    // the vault directory, and `extract`/`export-tree` would write a full cleartext
+    // mirror (vault.json holds every password) right next to vault.pmv — exactly what
+    // this guard exists to prevent, since the user's next backup of the vault folder
+    // sweeps the plaintext up with it.
+    let v = resolve_existing(vault_dir);
+    let d = resolve_existing(dest);
+    d == v || d.starts_with(&v)
+}
+
+/// Resolve `path` as far as it exists: canonicalize the deepest ancestor that is really
+/// there (following symlinks, folding `..` truthfully) and re-append the components below
+/// it, folding any `.`/`..` left in that non-existent tail lexically.
+///
+/// Canonicalizing the whole path is not an option — the interesting paths here are ones
+/// that have not been created yet — and comparing them purely as text is what let a
+/// symlinked parent slip past. This gives the filesystem the final say over every
+/// component that exists, which is every component that can carry a symlink.
+pub fn resolve_existing(path: &Path) -> PathBuf {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(path)
+    };
+    let mut suffix: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = abs.clone();
+    loop {
+        if let Ok(real) = std::fs::canonicalize(&cur) {
+            let mut out = real;
+            // `suffix` was collected from the leaf upward, so replay it in reverse.
+            for part in suffix.iter().rev() {
+                out.push(part);
+            }
+            return lexical_normalize(&out);
+        }
+        // Not there (yet): peel one component and try the parent.
+        match cur.file_name() {
+            Some(name) => suffix.push(name.to_os_string()),
+            // No file name (root, or a trailing `..`): nothing left to peel.
+            None => return lexical_normalize(&abs),
+        }
+        if !cur.pop() {
+            return lexical_normalize(&abs);
+        }
+    }
+}
+
+/// Absolutize `path` against the current directory and fold away `.` and `..`
+/// components purely lexically (no filesystem access, so it works for paths that do
+/// not exist yet). Used by [`dest_inside`] when the destination cannot be canonicalized.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = if path.is_absolute() {
+        PathBuf::new()
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    };
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}                       // drop "."
+            Component::ParentDir => { out.pop(); }        // resolve ".." lexically
+            Component::RootDir | Component::Prefix(_) => out.push(comp.as_os_str()),
+            Component::Normal(c) => out.push(c),
+        }
+    }
+    out
+}
+
+
 // --- Local, non-secret preferences (shared by the GUI and TUI) ---------------
 //
 // A tiny `prefs.json` in the OS config dir holds UI preferences that are NOT vault
@@ -138,16 +269,41 @@ pub(crate) fn fmt_money(v: f64) -> String {
 // self-contained / portable vault (see `docs/SELF_CONTAINED_BACKUP.md`) carry its own UI
 // defaults so they travel with the vault to a new machine. The fallback is READ-only:
 // the config-dir file always wins when it sets a key, and every `save_*` keeps writing
-// to the config dir, so a local choice is never silently overridden by the vault. The
-// `vault_root` key itself is the one exception — it bootstraps which vault is open, so it
-// is read from the config dir alone (a vault can't tell us where to find itself).
+// to the config dir, so a local choice is never silently overridden by the vault.
+//
+// The fallback file is UNTRUSTED INPUT — it arrives with the vault media (a USB stick, a
+// restored archive, a vault handed to an heir), so whoever produced the vault chooses its
+// contents. It is therefore restricted to an ALLOWLIST of purely cosmetic keys
+// ([`VAULT_FALLBACK_KEYS`]); every security-relevant key is read from the config dir
+// alone. See that constant for which keys are excluded and why.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Hard cap on the prefs file size. It holds one short JSON object, so a larger file
 /// is corrupt or hostile; bounding the read before allocating means a huge or
 /// symlinked `prefs.json` can never stall or OOM the UI at startup.
 pub(crate) const MAX_PREFS_SIZE: u64 = 64 * 1024;
+
+/// The ONLY keys a vault-root `prefs.json` may contribute (deny by default).
+///
+/// That file travels with the vault media, so its author is whoever produced the vault —
+/// not necessarily the person opening it. Two of the keys it used to be able to set are
+/// security decisions, and are deliberately absent here:
+///
+/// * `export_dir` — the destination the front-ends write **cleartext** exports to: the
+///   per-tab CSV (which carries every account and portal password in the clear) and every
+///   decrypted document. A foreign vault that set it could silently redirect those secrets
+///   to a world-readable folder, a cloud-synced folder, a Windows UNC share, or back into
+///   the vault directory itself (where the user's next backup sweeps them up). The user
+///   picks this in Config; a vault must not pick it for them.
+/// * `reveal_all_default` — opens every password tab UNMASKED. A foreign vault flipping it
+///   on turns off the app's shoulder-surf/screen-share protection without the user asking.
+///
+/// The remaining view defaults only choose grouped-vs-flat list rendering, which carries no
+/// security meaning, so a portable vault may still carry them. (`theme` is not listed
+/// because it is read from the config dir directly, never through this fallback.)
+pub(crate) const VAULT_FALLBACK_KEYS: &[&str] = &["group_assets_default", "group_accounts_default"];
 
 /// Standard preferences path (`<config dir>/vaultis/prefs.json`), or `None` if the
 /// platform has no config dir.
@@ -156,26 +312,71 @@ pub(crate) fn prefs_path() -> Option<PathBuf> {
 }
 
 /// Bounded, symlink-safe read of the prefs JSON object (empty map on any failure), so
-/// a setter can read-modify-write without clobbering other keys. `symlink_metadata`
-/// doesn't follow links — a symlinked prefs file fails `is_file()` — and the size
-/// check rejects an oversized file before reading.
+/// a setter can read-modify-write without clobbering other keys.
+///
+/// The `symlink_metadata` pre-check is a cheap early reject (it inspects the link itself,
+/// so a symlinked prefs file fails `is_file()`), but it is NOT the security boundary: it is
+/// a separate syscall from the read, and `std::fs::read` both FOLLOWS a symlink and
+/// allocates without bound. The read below therefore opens with `O_NOFOLLOW` and takes at
+/// most `MAX_PREFS_SIZE + 1` bytes, so a file swapped for a symlink to `/dev/zero` after the
+/// stat — or one that simply grows between the two calls — can neither be followed nor drive
+/// an unbounded allocation at UI startup. This mirrors `vaultis_core::vault::read_bounded`
+/// and `storage::read_file_bounded_nofollow`; it matters here because the vault-root
+/// fallback reads this file from the (untrusted) vault media.
 pub(crate) fn read_prefs_obj(path: &Path) -> serde_json::Map<String, serde_json::Value> {
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.is_file() && m.len() <= MAX_PREFS_SIZE => {}
         _ => return serde_json::Map::new(),
     }
-    let Ok(bytes) = std::fs::read(path) else { return serde_json::Map::new() };
+    let Ok(bytes) = read_bounded_nofollow(path, MAX_PREFS_SIZE) else { return serde_json::Map::new() };
     serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&bytes).unwrap_or_default()
+}
+
+/// Read at most `max + 1` bytes from `path` without following a final-component symlink,
+/// erroring once the file is known to exceed `max`. The `+ 1` detects an over-size file
+/// without ever allocating past the ceiling. (On non-unix the caller's `symlink_metadata`
+/// pre-check remains the only symlink guard, exactly as in the core crate.)
+fn read_bounded_nofollow(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    #[cfg(unix)]
+    let f = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(path)?
+    };
+    #[cfg(not(unix))]
+    let f = std::fs::File::open(path)?;
+    let mut buf = Vec::new();
+    f.take(max.saturating_add(1)).read_to_end(&mut buf)?;
+    if buf.len() as u64 > max {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "prefs file exceeds the size cap"));
+    }
+    Ok(buf)
 }
 
 /// Best-effort write of the prefs object (a write failure is ignored — prefs are
 /// non-critical and trivially re-picked).
+///
+/// Written atomically through a fresh `O_EXCL` 0600 temp sibling, then renamed over the
+/// target. `std::fs::write` (the previous implementation) opens the path directly, so it
+/// FOLLOWS a symlink planted at `prefs.json` and truncates-then-writes in place — leaving a
+/// window where a concurrent front-end reads a half-written file, and a crash leaves it
+/// truncated. A rename REPLACES a symlink rather than writing through it, and matches the
+/// temp→rename discipline every other writer in this project uses.
 pub(crate) fn write_prefs_obj(path: &Path, obj: &serde_json::Map<String, serde_json::Value>) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(bytes) = serde_json::to_vec_pretty(obj) {
-        let _ = std::fs::write(path, bytes);
+    let Ok(bytes) = serde_json::to_vec_pretty(obj) else { return };
+    // A unique hidden temp beside the target, so two front-ends saving at once never
+    // collide on the same temp name.
+    let Ok(suffix) = crypto::random_bytes::<8>() else { return };
+    let suffix: String = suffix.iter().map(|b| format!("{b:02x}")).collect();
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("prefs.json");
+    let tmp = match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(d) => d.join(format!(".{name}.{suffix}.tmp")),
+        None => PathBuf::from(format!(".{name}.{suffix}.tmp")),
+    };
+    if vault::write_new_bytes(&tmp, &bytes).is_err() || std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
 }
 
@@ -211,16 +412,26 @@ pub(crate) fn effective_prefs_obj(vault_root: &str) -> serde_json::Map<String, s
     effective_prefs_obj_from(prefs_path().as_deref(), vault_root)
 }
 /// Path-parametrized core of `effective_prefs_obj` (testable without the real config dir).
+///
+/// The vault-root side is filtered down to [`VAULT_FALLBACK_KEYS`] BEFORE the merge, so a
+/// `prefs.json` carried by untrusted vault media can only influence cosmetic rendering — it
+/// can never choose where cleartext exports are written, nor unmask passwords by default.
 pub(crate) fn effective_prefs_obj_from(
     config_path: Option<&Path>,
     vault_root: &str,
 ) -> serde_json::Map<String, serde_json::Value> {
     let config = config_path.map(read_prefs_obj).unwrap_or_default();
-    let fallback = vault_prefs_path(vault_root).map(|p| read_prefs_obj(&p)).unwrap_or_default();
+    let mut fallback = vault_prefs_path(vault_root).map(|p| read_prefs_obj(&p)).unwrap_or_default();
+    fallback.retain(|k, _| VAULT_FALLBACK_KEYS.contains(&k.as_str()));
     merge_prefs(config, fallback)
 }
 
-/// The saved export-destination directory ("" if unset), with the vault-root fallback.
+/// The saved export-destination directory ("" if unset).
+///
+/// Read from the config dir ONLY — `export_dir` is excluded from [`VAULT_FALLBACK_KEYS`],
+/// so a `prefs.json` shipped with a foreign vault cannot choose where this machine writes
+/// cleartext CSVs (every password) and decrypted documents. Unset simply means the user is
+/// asked to set it in Config before the first export.
 pub(crate) fn load_export_dir(vault_root: &str) -> String {
     effective_prefs_obj(vault_root).get("export_dir").and_then(|v| v.as_str()).unwrap_or("").to_string()
 }
@@ -312,6 +523,9 @@ pub(crate) fn save_last_vault_to(path: &Path, name: &str) {
 
 /// "Reveal all passwords by default" — when set, every tab that has passwords opens
 /// with its reveal-all toggle ON instead of masked.
+///
+/// Read from the config dir ONLY (excluded from [`VAULT_FALLBACK_KEYS`]): unmasking every
+/// password on screen is the user's decision, not one a vault handed to them may make.
 pub(crate) fn load_reveal_all_default(vault_root: &str) -> bool {
     if cfg!(test) {
         return false;
@@ -568,9 +782,9 @@ mod tests {
     }
 
     #[test]
-    fn vault_root_prefs_json_is_a_read_fallback() {
-        // A `prefs.json` in the vault root seeds keys the config-dir file leaves unset, but
-        // never overrides a key the config-dir file does set.
+    fn vault_root_prefs_json_is_a_read_fallback_for_cosmetic_keys_only() {
+        // A `prefs.json` in the vault root seeds COSMETIC keys the config-dir file leaves
+        // unset, and never overrides a key the config-dir file does set.
         let dir = tmp_prefs_dir();
         let config = dir.join("config-prefs.json");
         let vault_root = dir.join("vault");
@@ -579,24 +793,210 @@ mod tests {
         let vroot = vault_root.to_str().unwrap();
 
         // Vault carries its own defaults; config dir is absent entirely.
-        std::fs::write(&vault_prefs, br#"{"export_dir":"/from/vault","reveal_all_default":true}"#).unwrap();
+        std::fs::write(&vault_prefs, br#"{"group_assets_default":true}"#).unwrap();
         let eff = effective_prefs_obj_from(Some(&config), vroot);
-        assert_eq!(eff.get("export_dir").and_then(|v| v.as_str()), Some("/from/vault"), "vault seeds export_dir");
-        assert_eq!(eff.get("reveal_all_default").and_then(|v| v.as_bool()), Some(true), "vault seeds a bool flag");
+        assert_eq!(
+            eff.get("group_assets_default").and_then(|v| v.as_bool()),
+            Some(true),
+            "vault seeds a cosmetic view flag"
+        );
 
-        // Now the config dir sets export_dir: it wins; the vault still seeds the unset bool.
-        std::fs::write(&config, br#"{"export_dir":"/from/config"}"#).unwrap();
+        // Now the config dir sets the same key: it wins.
+        std::fs::write(&config, br#"{"group_assets_default":false}"#).unwrap();
         let eff = effective_prefs_obj_from(Some(&config), vroot);
-        assert_eq!(eff.get("export_dir").and_then(|v| v.as_str()), Some("/from/config"), "config-dir export_dir wins");
-        assert_eq!(eff.get("reveal_all_default").and_then(|v| v.as_bool()), Some(true), "vault flag still seeds when config unset");
+        assert_eq!(
+            eff.get("group_assets_default").and_then(|v| v.as_bool()),
+            Some(false),
+            "config-dir value wins over the vault's"
+        );
 
         // An empty vault root disables the fallback (start page, before a root is chosen).
         assert!(vault_prefs_path("").is_none(), "no vault-root path without a root");
         assert!(vault_prefs_path("   ").is_none(), "whitespace-only root is treated as unset");
-        let eff = effective_prefs_obj_from(Some(&config), "");
-        assert_eq!(eff.get("reveal_all_default"), None, "no fallback contribution without a vault root");
+        let eff = effective_prefs_obj_from(None, "");
+        assert!(eff.is_empty(), "no fallback contribution without a vault root");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_foreign_vaults_prefs_cannot_choose_where_cleartext_exports_go() {
+        // THE security property behind `VAULT_FALLBACK_KEYS`. The vault-root `prefs.json`
+        // ships with the vault media (a USB stick, a restored archive, a vault handed to an
+        // heir), so its author is whoever produced the vault. It must not be able to set:
+        //   * `export_dir`        — where the front-ends write the per-tab CSV (every
+        //                           account and portal password in the CLEAR) and every
+        //                           decrypted document. A foreign value could redirect
+        //                           those secrets to a world-readable folder, a synced
+        //                           folder, a Windows UNC share, or the vault dir itself.
+        //   * `reveal_all_default` — opens every password tab UNMASKED.
+        // Both must stay unset here even though the config dir says nothing about them.
+        let dir = tmp_prefs_dir();
+        let config = dir.join("config-prefs.json"); // deliberately absent: nothing to override
+        let vault_root = dir.join("vault");
+        std::fs::create_dir_all(&vault_root).unwrap();
+        std::fs::write(
+            vault_root.join("prefs.json"),
+            br#"{"export_dir":"/tmp/attacker-drop","reveal_all_default":true,
+                 "vault_root":"/tmp/elsewhere","last_vault":"decoy","theme":"solarized",
+                 "group_accounts_default":true}"#,
+        )
+        .unwrap();
+        let vroot = vault_root.to_str().unwrap();
+        let eff = effective_prefs_obj_from(Some(&config), vroot);
+
+        assert_eq!(eff.get("export_dir"), None, "a vault must NOT choose the cleartext export destination");
+        assert_eq!(eff.get("reveal_all_default"), None, "a vault must NOT unmask passwords by default");
+        // The bootstrap keys were never read through the fallback; confirm they still aren't.
+        assert_eq!(eff.get("vault_root"), None, "a vault cannot relocate the vault root");
+        assert_eq!(eff.get("last_vault"), None, "a vault cannot choose the remembered vault");
+        assert_eq!(eff.get("theme"), None, "theme is read from the config dir directly, not the fallback");
+        // The purely cosmetic view key still travels with a portable vault.
+        assert_eq!(
+            eff.get("group_accounts_default").and_then(|v| v.as_bool()),
+            Some(true),
+            "cosmetic grouping default still travels with the vault"
+        );
+        // And the loader that actually feeds the export path reports "unset", so the UI asks
+        // the user to pick a folder instead of silently using the vault's.
+        assert_eq!(load_export_dir(vroot), "", "load_export_dir ignores the vault-supplied value");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn checked_export_dir_refuses_unset_and_anything_inside_the_vault_folder() {
+        // A per-tab CSV holds every account and portal password in the CLEAR, and a document
+        // export is the decrypted file. Either one written INSIDE the vault folder is swept
+        // into the user's next backup or folder sync of that vault. The CLI has refused this
+        // since the extract/export-tree guards; this is the shared check the GUI and TUI use.
+        let dir = tmp_prefs_dir();
+        let vault_dir = dir.join("myvault");
+        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_path = vault_dir.join("vault.pmv");
+
+        // Unset -> the "pick a folder" prompt, not a write.
+        assert!(checked_export_dir(&vault_path, "").is_err(), "unset is refused");
+        assert!(checked_export_dir(&vault_path, "   ").is_err(), "whitespace-only is refused");
+
+        // The vault folder itself, and anything beneath it, are refused.
+        for inside in [vault_dir.clone(), vault_dir.join("exports"), vault_dir.join("volume").join("deep")] {
+            let err = checked_export_dir(&vault_path, &inside.to_string_lossy())
+                .expect_err("a destination inside the vault folder must be refused");
+            assert!(err.contains("OUTSIDE the vault folder"), "actionable message: {err}");
+        }
+
+        // A sibling directory outside the vault is accepted, and comes back normalized
+        // (trimmed, with a pasted "Copy as path" quote pair stripped).
+        let outside = dir.join("exports");
+        assert_eq!(checked_export_dir(&vault_path, &outside.to_string_lossy()).unwrap(), outside);
+        let quoted = format!("  \"{}\"  ", outside.display());
+        assert_eq!(checked_export_dir(&vault_path, &quoted).unwrap(), outside, "quotes/space normalized");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn checked_export_dir_sees_through_a_symlink_pointing_back_into_the_vault() {
+        // The realistic evasion: the export directory is named through a symlink that
+        // resolves into the vault folder. A purely textual comparison would call it
+        // "outside"; `dest_inside` resolves both sides through the filesystem.
+        let dir = tmp_prefs_dir();
+        let vault_dir = dir.join("myvault");
+        std::fs::create_dir_all(&vault_dir).unwrap();
+        let vault_path = vault_dir.join("vault.pmv");
+
+        let link = dir.join("looks-external");
+        std::os::unix::fs::symlink(&vault_dir, &link).unwrap();
+        // The destination itself does not exist yet — the normal case for a fresh export dir.
+        let dest = link.join("csvs");
+        assert!(!dest.exists());
+        assert!(
+            checked_export_dir(&vault_path, &dest.to_string_lossy()).is_err(),
+            "a symlinked export dir resolving into the vault folder must be refused"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_bounded_nofollow_enforces_the_exact_cap() {
+        // Pins the `> max` boundary of the bounded read that replaced `fs::read` in
+        // `read_prefs_obj`: exactly `max` bytes is accepted, one over is refused — without
+        // ever allocating past the ceiling, however large the file is.
+        let dir = tmp_prefs_dir();
+        let p = dir.join("blob");
+        std::fs::write(&p, vec![b'x'; 100]).unwrap();
+        assert_eq!(read_bounded_nofollow(&p, 100).unwrap().len(), 100, "exactly max is accepted");
+        assert!(read_bounded_nofollow(&p, 99).is_err(), "max + 1 is refused");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn prefs_read_does_not_follow_a_symlink_even_past_the_stat() {
+        // `read_prefs_obj`'s `symlink_metadata` pre-check is an early reject, not the
+        // boundary — it is a separate syscall from the read, and the old `fs::read` both
+        // FOLLOWED a symlink and allocated without bound. The read itself is now
+        // O_NOFOLLOW-capped, which is what makes the check race-proof; assert the read
+        // primitive refuses a symlink on its own, with no stat in front of it.
+        let dir = tmp_prefs_dir();
+        let real = dir.join("real.json");
+        std::fs::write(&real, br#"{"export_dir":"/x"}"#).unwrap();
+        let link = dir.join("link.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(
+            read_bounded_nofollow(&link, MAX_PREFS_SIZE).is_err(),
+            "the read itself refuses a symlink, so winning the stat/read race gains nothing"
+        );
+        // Reading the real file still works (the guard is about the link, not the content).
+        assert!(read_bounded_nofollow(&real, MAX_PREFS_SIZE).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_prefs_obj_replaces_a_symlink_instead_of_writing_through_it() {
+        // Atomic temp -> rename: a rename REPLACES a planted symlink at the prefs path
+        // rather than writing to whatever it points at, and never leaves a truncated file
+        // for a concurrent front-end to read.
+        let dir = tmp_prefs_dir();
+        let target = dir.join("victim.txt");
+        std::fs::write(&target, b"do not touch").unwrap();
+        let p = dir.join("prefs.json");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &p).unwrap();
+
+        save_export_dir_to(&p, "/exports");
+        assert_eq!(load_export_dir_from(&p), "/exports", "the prefs write landed");
+        #[cfg(unix)]
+        {
+            assert_eq!(std::fs::read(&target).unwrap(), b"do not touch", "the symlink target is untouched");
+            assert!(!std::fs::symlink_metadata(&p).unwrap().file_type().is_symlink(), "symlink replaced by a real file");
+        }
+        // No temp files are left behind on the success path.
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "no .tmp leftovers: {leftovers:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fmt_money_reports_a_non_finite_total_as_out_of_range() {
+        // `parse_approx_value` rejects a non-finite FIELD, but the Summary SUMS many finite
+        // values, so two near-f64::MAX entries add to +inf. `f64 as u64` saturates, so inf
+        // used to render as the literal "$18,446,744,073,709,551,615" and NaN as "$0" — a
+        // fabricated figure shown as a real one in a financial view.
+        assert_eq!(fmt_money(f64::INFINITY), "$—");
+        assert_eq!(fmt_money(f64::NEG_INFINITY), "$—");
+        assert_eq!(fmt_money(f64::NAN), "$—");
+        assert_eq!(fmt_money(f64::MAX + f64::MAX), "$—", "an overflowing sum is not a number we invent");
+        // Ordinary values are untouched by the guard.
+        assert_eq!(fmt_money(1500.0), "$1,500");
+        assert_eq!(fmt_money(f64::MAX), "$18,446,744,073,709,551,615", "finite-but-huge still saturates, as before");
     }
 
     #[test]

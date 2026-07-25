@@ -18,6 +18,64 @@ date and bump the crate versions to match.
 
 ### Fixed
 
+- **Deep audit 2026-07-25, round 2** — a second, deeper pass targeting the surfaces round 1 did
+  not name: the single-instance guard, launch/path resolution, the merge apply path, the central
+  sanitizers, and the numeric-cast and file-I/O primitives (full write-up in
+  [`docs/AUDIT_2026-07-25_round2.md`](docs/AUDIT_2026-07-25_round2.md)). No Critical, High or
+  Medium findings. Confirmed and fixed:
+  - **A bidi control and every invisible character slipped the spoof filter (Low).** The
+    hand-enumerated set behind `display_safe` — which guards the merge preview the user
+    authorizes, CSV cells and real on-disk export filenames — let **154 Unicode format
+    characters** through, because the other half of the test (`char::is_control`) is `Cc`-only.
+    Among them: U+061C ARABIC LETTER MARK, a bidi control that reorders adjacent digits and
+    punctuation and is the direct counterpart of the LRM/RLM marks *already* covered; and every
+    glyphless form — soft hyphen, the invisible math operators, interlinear annotation, the blank
+    Hangul fillers and the whole U+E0000 TAGS block — so two labels or filenames could be made
+    indistinguishable on screen. Both families are now neutralized. Format characters with a
+    genuine visible rendering (Arabic/Kaithi number signs, hieroglyph joiners, musical marks) and
+    the variation selectors a colour emoji needs are deliberately left intact.
+  - **Two copies of the Windows reserved-name rule had drifted (Low).** A reserved device name
+    must not become a real path component (`con.pdf` opens the console, so the write fails — an
+    heir extracting on Windows gets an I/O error instead of the document). The rule existed twice
+    and disagreed: the core *renames* the component `_CON`, while the `extract` CLI's own copy
+    **dropped** it — so one vault extracted to two different trees depending on which front-end
+    wrote it, and dropping a directory level collapsed documents that differ only by it into one
+    folder. Both now share one definition, widened to the `CONIN$`/`CONOUT$` console handles and
+    the superscript `COM¹`/`COM²`/`COM³` spellings Windows folds onto `COM1`–`COM3`. A test now
+    asserts the two sanitizers agree, since the drift itself was the bug.
+- **Deep audit 2026-07-25** — a workspace-wide bug hunt and security review across the core,
+  the desktop front-ends, the FFI and the dependency tree (full write-up in
+  [`docs/AUDIT_2026-07-25.md`](docs/AUDIT_2026-07-25.md)). Confirmed and fixed:
+  - **A vault could choose where this machine writes cleartext (High, security).** The
+    vault-root `prefs.json` fallback — the feature that lets a portable vault carry its own UI
+    defaults — could supply `export_dir`, the destination for the per-tab CSV (**every account
+    and portal password in the clear**) and every decrypted document, plus
+    `reveal_all_default`, which opens every password tab unmasked. Since that file ships with
+    the vault media, a vault received from someone else could silently redirect exported
+    secrets or disable masking. The fallback is now restricted to a deny-by-default allowlist
+    of purely cosmetic view keys; both security-relevant keys are read from the local config
+    directory alone.
+  - **GUI/TUI exports could land inside the vault folder (Medium, security).** The CLI has
+    long refused to write cleartext into the live vault directory (the user's next backup or
+    folder sync sweeps it up); the windowed and terminal front-ends had no such check. The
+    `dest_inside` guard moved into the library and both front-ends now apply it — at every
+    export site and when the directory is set in Config — including through a symlinked export
+    directory that resolves back into the vault.
+  - **Unbounded, symlink-following prefs read (Medium).** `read_prefs_obj` pre-checked with
+    `symlink_metadata` and then read with `fs::read`, which follows symlinks and allocates
+    without bound — the stat-then-read gap the core closes everywhere else, and reachable
+    because the fallback reads that file from untrusted vault media. It is now an
+    `O_NOFOLLOW`, size-capped read.
+  - **Prefs written through a planted symlink (Low).** `write_prefs_obj` used `fs::write`
+    (follows a symlink, truncates in place); it is now an atomic `O_EXCL` 0600 temp → rename.
+  - **Rebuilt manifests bypassed the entry cap (Low, availability).** `MAX_MANIFEST_ENTRIES`
+    was enforced on the stored-manifest, write and import paths but not on the manifest-loss
+    rebuild, which could produce an over-cap manifest that the next write commits and every
+    later open then refuses — bricking an intact vault. The rebuild now fails closed with the
+    same error.
+  - **Non-finite Summary totals (Low).** A total that overflowed to infinity rendered as the
+    literal `$18,446,744,073,709,551,615` (saturating float→int cast) and `NaN` as `$0`; both
+    now render `$—`.
 - **Deep audit 2026-07-03** — a workspace-wide, adversarially-verified bug hunt and security
   review (full write-up in [`docs/AUDIT_2026-07-03.md`](docs/AUDIT_2026-07-03.md)). Confirmed
   and fixed:

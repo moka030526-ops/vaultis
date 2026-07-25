@@ -1050,17 +1050,23 @@ impl GuiApp {
         // file it writes is plain, unencrypted text and — on Accounts and Real Estate —
         // contains every password in the clear, so the status line below says so rather
         // than reporting a bare success.
-        let dir = records::unquote_path(&self.export_dir).to_string();
-        if dir.is_empty() {
-            self.fail("Set an export directory in Config first (Config > Export directory).");
-            return;
-        }
+        // Refuses an unset directory AND one inside the vault folder: this CSV is
+        // unencrypted and carries every password, so it must never land where the user's
+        // next backup of the vault picks it up (the same rule the CLI's extract/export-tree
+        // enforce).
+        let dir = match crate::checked_export_dir(&self.path, &self.export_dir) {
+            Ok(d) => d,
+            Err(msg) => {
+                self.fail(msg);
+                return;
+            }
+        };
         let Some((base, text, n)) = self.build_tab_csv() else {
             self.status = "Nothing to export on this tab.".into();
             return;
         };
         let filename = format!("{base}-{}.csv", records::compact_utc(records::unix_now()));
-        match vault::write_export_bytes(Path::new(&dir), &filename, text.as_bytes()) {
+        match vault::write_export_bytes(&dir, &filename, text.as_bytes()) {
             Ok(p) => {
                 self.status =
                     format!("Exported {n} record(s) to {} — UNENCRYPTED, incl. any passwords.", p.display());
@@ -1074,13 +1080,17 @@ impl GuiApp {
     /// per-export path prompt; the destination is the directory set in Config (which is
     /// editable even in read-only mode, so this works for a read-only heir).
     fn export_doc_to_config_dir(&mut self, id: &str) {
-        let dir = records::unquote_path(&self.export_dir).to_string();
-        if dir.is_empty() {
-            self.status = "Set an export directory in Config first (Config > Export directory).".into();
-            return;
-        }
+        // Same guard as the CSV path: unset, or inside the vault folder, is refused —
+        // the file written here is the DECRYPTED document.
+        let dir = match crate::checked_export_dir(&self.path, &self.export_dir) {
+            Ok(d) => d,
+            Err(msg) => {
+                self.status = msg;
+                return;
+            }
+        };
         if let Some(ov) = self.vault.as_ref() {
-            match ov.export_document_into(id, Path::new(&dir)) {
+            match ov.export_document_into(id, &dir) {
                 Ok(p) => self.status = format!("Exported to {}", p.display()),
                 Err(e) => self.fail(format!("Export failed: {e}")),
             }
@@ -2107,10 +2117,12 @@ impl GuiApp {
             let dir = records::unquote_path(&self.export_dir).to_string();
             self.export_dir = dir.clone();
             crate::save_export_dir(&dir);
-            self.status = if dir.is_empty() {
-                "Export directory cleared.".into()
-            } else {
-                format!("Export directory set to {dir} (used by every Export button).")
+            // Tell the user NOW if the folder they just picked is one every Export button
+            // will refuse, instead of letting them discover it at the first export.
+            self.status = match crate::checked_export_dir(&self.path, &dir) {
+                _ if dir.is_empty() => "Export directory cleared.".into(),
+                Ok(_) => format!("Export directory set to {dir} (used by every Export button)."),
+                Err(msg) => msg,
             };
         }
         if do_backup {
@@ -5881,7 +5893,31 @@ mod tests {
     fn cleanup(path: &Path) {
         if let Some(dir) = path.parent() {
             let _ = std::fs::remove_dir_all(dir);
+            // Also drop any sibling export directory the test used (see `export_out`).
+            // The vault dir name is nanosecond-tagged and unique, so this only ever
+            // matches directories this test created.
+            if let (Some(parent), Some(name)) = (dir.parent(), dir.file_name().and_then(|n| n.to_str()))
+                && let Ok(rd) = std::fs::read_dir(parent)
+            {
+                let prefix = format!("{name}-");
+                for e in rd.flatten() {
+                    if e.file_name().to_string_lossy().starts_with(&prefix) {
+                        let _ = std::fs::remove_dir_all(e.path());
+                    }
+                }
+            }
         }
+    }
+
+    /// An export destination OUTSIDE the vault directory — a sibling named
+    /// `<vault-dir>-<tag>`. The front-ends refuse an export directory inside the vault
+    /// folder ([`crate::checked_export_dir`]): a CSV holds every password in the clear and a
+    /// document export is the decrypted file, so either one landing next to `vault.pmv`
+    /// would be swept up by the user's next backup of the vault. Export tests therefore
+    /// write where a real user has to. `cleanup` removes these siblings too.
+    fn export_out(vault_path: &Path, tag: &str) -> std::path::PathBuf {
+        let dir = vault_path.parent().expect("vault path has a parent");
+        std::path::PathBuf::from(format!("{}-{tag}", dir.display()))
     }
 
     /// A GuiApp with a freshly-created, unlocked vault on the Main screen.
@@ -6577,7 +6613,7 @@ mod tests {
     #[test]
     fn export_current_tab_csv_writes_accounts_file_in_gui() {
         let (mut app, path) = app_unlocked("guicsv");
-        let outdir = path.parent().unwrap().join("guicsv-out");
+        let outdir = export_out(&path, "csv");
         {
             let ov = app.vault.as_mut().unwrap();
             let mut a = Account::new().unwrap();
@@ -6600,12 +6636,56 @@ mod tests {
     }
 
     #[test]
+    fn exports_into_the_vault_folder_are_refused_in_gui() {
+        // A CSV export carries every account password in the CLEAR and a document export is
+        // the decrypted file, so neither may land inside the vault folder — the user's next
+        // backup or folder sync of that vault would carry the plaintext with it. The CLI has
+        // refused this since the extract/export-tree guards; the GUI must too.
+        let (mut app, path) = app_unlocked("guioutguard");
+        let vault_dir = path.parent().unwrap().to_path_buf();
+        {
+            let ov = app.vault.as_mut().unwrap();
+            let mut a = Account::new().unwrap();
+            a.title = "Bank".into();
+            a.owner = "Jane".into();
+            a.password = "hunter2".into();
+            records::upsert(&mut ov.vault.accounts, a);
+        }
+        app.tab = Tab::Accounts;
+
+        // Both the vault folder itself and a subdirectory of it are refused, and NOTHING is
+        // written — in particular no partial CSV holding the password.
+        for inside in [vault_dir.clone(), vault_dir.join("exports")] {
+            app.export_dir = inside.to_string_lossy().into();
+            app.status.clear();
+            app.error = None;
+            app.export_current_tab_csv();
+            let shown = format!("{} {}", app.status, app.error.clone().unwrap_or_default());
+            assert!(shown.contains("OUTSIDE the vault folder"), "refused with an actionable message: {shown}");
+            assert!(!inside.join("exports").exists(), "no export directory was created under the vault");
+            let stray: Vec<_> = std::fs::read_dir(&vault_dir)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".csv"))
+                .collect();
+            assert!(stray.is_empty(), "no cleartext CSV written into the vault folder: {stray:?}");
+        }
+
+        // The same session exports fine once the directory is outside the vault.
+        let outside = export_out(&path, "csv");
+        app.export_dir = outside.to_string_lossy().into();
+        app.export_current_tab_csv();
+        assert!(app.status.starts_with("Exported"), "an outside directory still works: {}", app.status);
+        cleanup(&path);
+    }
+
+    #[test]
     fn export_current_tab_csv_works_in_read_only_mode_in_gui() {
         // CSV export is deliberately available to a READ-ONLY session (the vault owner
         // asked for it). The file is unencrypted and may hold plaintext passwords, so the
         // status line has to say so rather than report a bare success.
         let (mut app, path) = app_unlocked("guicsvro");
-        let outdir = path.parent().unwrap().join("guicsvro-out");
+        let outdir = export_out(&path, "csv");
         {
             let ov = app.vault.as_mut().unwrap();
             let mut a = Account::new().unwrap();
@@ -6812,7 +6892,7 @@ mod tests {
         assert!(vpath.ends_with("_p.pdf"), "ts-prefixed filename, got {vpath}");
 
         // Export goes to the configured export dir, recreating the volume folder structure.
-        let export_root = dir.join("exports");
+        let export_root = export_out(&path, "exports");
         app.export_dir = export_root.to_string_lossy().into();
         app.handle_doc(DocReq::Export, DocTarget::General);
         let exported = export_root.join(vpath.trim_start_matches('/'));
@@ -6847,7 +6927,7 @@ mod tests {
         assert_eq!(app.vault.as_ref().unwrap().vault.real_estate[0].documents.len(), 1, "persisted");
 
         // --- export (into the configured export dir, structure preserved) ---
-        let export_root = dir.join("exports");
+        let export_root = export_out(&path, "exports");
         app.export_dir = export_root.to_string_lossy().into();
         let re_id = app.edit_realestate.as_ref().unwrap().documents[0].clone();
         let vpath = app.vault.as_ref().unwrap().doc_path(&re_id).unwrap();
@@ -6878,7 +6958,7 @@ mod tests {
         assert_eq!(app.edit_taxfiling.as_ref().unwrap().documents.len(), 1, "uploaded one doc");
         assert_eq!(app.vault.as_ref().unwrap().vault.tax_filings[0].documents.len(), 1, "persisted");
 
-        let export_root = dir.join("exports");
+        let export_root = export_out(&path, "exports");
         app.export_dir = export_root.to_string_lossy().into();
         let tax_id = app.edit_taxfiling.as_ref().unwrap().documents[0].clone();
         let vpath = app.vault.as_ref().unwrap().doc_path(&tax_id).unwrap();

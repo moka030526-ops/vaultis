@@ -57,6 +57,9 @@ use zeroize::{Zeroize, Zeroizing};
 // below unqualified.
 use vaultis::launch::{default_vault_path, vault_file};
 use vaultis::vault::OpenVault;
+// `dest_inside` used to live here; it moved into the library so the GUI and TUI export
+// paths enforce the same "never write cleartext inside the vault directory" rule.
+use vaultis::dest_inside;
 use vaultis::{ui, vault};
 // The GUI is behind the `gui` feature; a `--no-default-features` build is terminal-only.
 #[cfg(feature = "gui")]
@@ -707,85 +710,6 @@ fn default_backup_dir(vault_dir: &Path) -> PathBuf {
     }
 }
 
-/// Whether `dest` is the vault directory itself or a path inside it (a backup
-/// there would be copied into the very tree being rewritten). Best-effort: uses
-/// canonical paths when both exist, else a lexical prefix check.
-fn dest_inside(vault_dir: &Path, dest: &Path) -> bool {
-    // Both sides are resolved AS FAR AS THE FILESYSTEM ALLOWS (see `resolve_existing`),
-    // never by text alone.
-    //
-    // This used to canonicalize both and fall back to a purely LEXICAL comparison when
-    // either failed. A destination almost never exists yet — it is a fresh export or
-    // backup directory — so the lexical path was the normal one, and it folds `..` and
-    // absolutizes without ever touching the filesystem. A destination reached through a
-    // SYMLINKED PARENT therefore compared as "outside" while physically resolving inside
-    // the vault directory, and `extract`/`export-tree` would write a full cleartext
-    // mirror (vault.json holds every password) right next to vault.pmv — exactly what
-    // this guard exists to prevent, since the user's next backup of the vault folder
-    // sweeps the plaintext up with it.
-    let v = resolve_existing(vault_dir);
-    let d = resolve_existing(dest);
-    d == v || d.starts_with(&v)
-}
-
-/// Resolve `path` as far as it exists: canonicalize the deepest ancestor that is really
-/// there (following symlinks, folding `..` truthfully) and re-append the components below
-/// it, folding any `.`/`..` left in that non-existent tail lexically.
-///
-/// Canonicalizing the whole path is not an option — the interesting paths here are ones
-/// that have not been created yet — and comparing them purely as text is what let a
-/// symlinked parent slip past. This gives the filesystem the final say over every
-/// component that exists, which is every component that can carry a symlink.
-fn resolve_existing(path: &Path) -> PathBuf {
-    let abs = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(path)
-    };
-    let mut suffix: Vec<std::ffi::OsString> = Vec::new();
-    let mut cur = abs.clone();
-    loop {
-        if let Ok(real) = std::fs::canonicalize(&cur) {
-            let mut out = real;
-            // `suffix` was collected from the leaf upward, so replay it in reverse.
-            for part in suffix.iter().rev() {
-                out.push(part);
-            }
-            return lexical_normalize(&out);
-        }
-        // Not there (yet): peel one component and try the parent.
-        match cur.file_name() {
-            Some(name) => suffix.push(name.to_os_string()),
-            // No file name (root, or a trailing `..`): nothing left to peel.
-            None => return lexical_normalize(&abs),
-        }
-        if !cur.pop() {
-            return lexical_normalize(&abs);
-        }
-    }
-}
-
-/// Absolutize `path` against the current directory and fold away `.` and `..`
-/// components purely lexically (no filesystem access, so it works for paths that do
-/// not exist yet). Used by [`dest_inside`] when the destination cannot be canonicalized.
-fn lexical_normalize(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut out = if path.is_absolute() {
-        PathBuf::new()
-    } else {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    };
-    for comp in path.components() {
-        match comp {
-            Component::CurDir => {}                       // drop "."
-            Component::ParentDir => { out.pop(); }        // resolve ".." lexically
-            Component::RootDir | Component::Prefix(_) => out.push(comp.as_os_str()),
-            Component::Normal(c) => out.push(c),
-        }
-    }
-    out
-}
-
 /// Decrypt stored documents and write them into `out_dir`, reconstructing the
 /// virtual directory tree. With `part = Some(n)` only partition `n`'s volume is
 /// decrypted; with `None`, every partition. Prompts for both passwords.
@@ -1130,35 +1054,29 @@ fn safe_relative_path(location: &str, filename: &str, id: &str) -> PathBuf {
             return None;
         }
         // Windows: strip trailing dots/spaces (they're silently dropped by the OS,
-        // which can alias names) and refuse reserved DOS device names (CON, PRN,
-        // AUX, NUL, COM1-9, LPT1-9), with or without an extension.
+        // which can alias names).
         let trimmed = p.trim_end_matches(['.', ' ']);
         if trimmed.is_empty() {
-            return None;
-        }
-        // Take the part before the first `.` as the name "stem". `.next()` on the
-        // split iterator yields the first piece; `.unwrap_or(trimmed)` is a safe
-        // fallback (it never actually triggers here, since split yields >=1 item).
-        let stem = trimmed.split('.').next().unwrap_or(trimmed);
-        // `[&str; 4]` is a fixed-size array of 4 string slices, known at compile time.
-        const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
-        let upper = stem.to_ascii_uppercase();
-        // A boolean built from chained `&&` conditions (all must hold). `b'0'` is a
-        // byte literal; `as_bytes()[3]` indexes the 4th raw byte of the name.
-        let is_com_lpt = (upper.starts_with("COM") || upper.starts_with("LPT"))
-            && upper.len() == 4
-            && upper.as_bytes()[3].is_ascii_digit()
-            && upper.as_bytes()[3] != b'0';
-        if RESERVED.contains(&upper.as_str()) || is_com_lpt {
             return None;
         }
         // Neutralize control + bidi/zero-width spoof chars (e.g. U+202E RLO) in the final
         // name, matching `export_document_into`: a crafted manifest path must not write a
         // SPOOFED on-disk filename (report<RLO>txt.exe) or inject terminal escapes into the
-        // extract list this CLI prints. The checks above already rejected empty/separator/
-        // reserved on the un-mapped form, and `display_safe` only turns control/spoof chars
-        // into '_', so it cannot reintroduce any of those.
-        Some(vaultis::records::display_safe(trimmed))
+        // extract list this CLI prints. The checks above already rejected empty/separator on
+        // the un-mapped form, and `display_safe` only turns control/spoof chars into '_', so
+        // it cannot reintroduce any of those.
+        let safe = vaultis::records::display_safe(trimmed);
+        // Reserved DOS device names must not become real path components (`con.pdf` opens the
+        // console). Use the CORE predicate and the core's `_`-prefix REPAIR rather than the
+        // local copy this function used to carry: that copy knew a shorter list (no CONIN$ /
+        // CONOUT$ / superscript `COM¹`) and DROPPED the component instead of renaming it, so
+        // `extract` and the GUI's `export_document_into` built different trees for one vault —
+        // and dropping a directory level collapses documents that differ only by it into one
+        // folder. One definition, one repair, identical output (audit 2026-07-25 round 2).
+        if vaultis::records::is_windows_reserved_name(&safe) {
+            return Some(format!("_{safe}"));
+        }
+        Some(safe)
     }
     let mut path = PathBuf::new();
     // Split the directory portion on either separator and append each safe piece.
@@ -1649,18 +1567,58 @@ mod tests {
     }
 
     #[test]
-    fn safe_path_rejects_windows_reserved_and_trailing() {
-        // Reserved DOS device names are dropped (filename falls back to the id).
-        assert_eq!(safe_relative_path("", "CON", "id1"), PathBuf::from("id1.bin"));
-        assert_eq!(safe_relative_path("", "nul.txt", "id2"), PathBuf::from("id2.bin"));
-        assert_eq!(safe_relative_path("", "COM1", "id3"), PathBuf::from("id3.bin"));
-        assert_eq!(safe_relative_path("", "LPT9", "id4"), PathBuf::from("id4.bin"));
-        // A reserved *directory* component is dropped, not used as a folder.
-        assert_eq!(safe_relative_path("CON/sub", "f.txt", "id5"), PathBuf::from("sub/f.txt"));
-        // Trailing dots/spaces are stripped (Windows aliases them away).
-        assert_eq!(safe_relative_path("", "report.pdf. .", "id6"), PathBuf::from("report.pdf"));
-        // COM0/LPT0 are NOT reserved.
-        assert_eq!(safe_relative_path("", "LPT0.log", "id7"), PathBuf::from("LPT0.log"));
+    fn safe_path_repairs_windows_reserved_names_exactly_like_the_core_exporter() {
+        // Audit 2026-07-25 round 2. This function used to carry its OWN copy of the
+        // reserved-name rule, and the copy had drifted from the core's `doc_tree_relpath`
+        // in two ways: it knew a shorter list, and it DROPPED the offending component where
+        // the core RENAMES it with a `_` prefix. So one vault extracted to two different
+        // trees depending on which front-end wrote it, and dropping a directory level
+        // collapsed documents that differ only by that level into a single folder.
+        //
+        // Both now call `records::is_windows_reserved_name` and both prefix `_`.
+        assert_eq!(safe_relative_path("", "CON", "id1"), PathBuf::from("_CON"));
+        assert_eq!(safe_relative_path("", "nul.txt", "id2"), PathBuf::from("_nul.txt"));
+        assert_eq!(safe_relative_path("", "COM1", "id3"), PathBuf::from("_COM1"));
+        // A reserved DIRECTORY component is renamed, so the level survives and two documents
+        // that differ only by it stay in separate folders.
+        assert_eq!(safe_relative_path("CON/sub", "f.txt", "id5"), PathBuf::from("_CON/sub/f.txt"));
+        assert_ne!(
+            safe_relative_path("CON/sub", "f.txt", "id"),
+            safe_relative_path("sub", "f.txt", "id"),
+            "a reserved level must not collapse onto the path that never had it"
+        );
+        // The widened list reaches this front-end too (console handles + superscript COM).
+        assert_eq!(safe_relative_path("", "CONIN$.txt", "id6"), PathBuf::from("_CONIN$.txt"));
+        assert_eq!(safe_relative_path("", "com\u{00B9}.log", "id7"), PathBuf::from("_com\u{00B9}.log"));
+        // Trailing dots/spaces are still stripped (Windows aliases them away), and COM0/LPT0
+        // are still ordinary names.
+        assert_eq!(safe_relative_path("", "report.pdf. .", "id8"), PathBuf::from("report.pdf"));
+        assert_eq!(safe_relative_path("", "LPT0.log", "id9"), PathBuf::from("LPT0.log"));
+    }
+
+    /// The two path sanitizers — the core's `doc_tree_relpath` (used by the GUI/TUI
+    /// `export_document_into` and by `export_tree`'s `documents/` view) and this CLI's
+    /// `safe_relative_path` — must lay out the same stored path identically, or `vaultis
+    /// extract` and the windowed app produce different trees for one vault. Silent drift
+    /// between these duplicated rules is exactly what audit 2026-07-25 round 2 found, so
+    /// pin the agreement rather than trusting the two to be edited in step.
+    #[test]
+    fn safe_path_agrees_with_the_core_exporter_on_reserved_and_spoofy_paths() {
+        for vpath in [
+            "CON/sub/f.txt",
+            "docs/CONIN$/deed.pdf",
+            "com\u{00B9}/x.log",
+            "trust-will/con/nul.pdf",
+            "docs/invoice\u{202e}fdp.exe",
+            "a\u{061C}b/deed\u{E0041}.pdf",
+            "MK/real-estate/main-st/20260725-120000_deed.pdf",
+            "plain/ordinary.pdf",
+        ] {
+            let (location, filename) = vpath.rsplit_once('/').unwrap_or(("", vpath));
+            let mine = safe_relative_path(location, filename, "theid");
+            let core = vaultis::vault::doc_tree_relpath(vpath, "theid");
+            assert_eq!(mine, core, "sanitizers disagree on {vpath:?}");
+        }
     }
 
     #[test]

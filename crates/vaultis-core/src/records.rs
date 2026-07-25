@@ -678,15 +678,45 @@ pub fn doc_upload_dir(prefix: &str, subfolder: &str) -> String {
 /// NOT catch but which can still spoof how a name/path DISPLAYS — most dangerously
 /// the right-to-left override U+202E, which renders `report\u{202e}txt.exe` as
 /// `report exe.txt`. Rejected/neutralized in document names and untrusted paths.
+///
+/// The set covers two families, and deliberately stops there (audit 2026-07-25 round 2):
+///
+/// * **Bidi controls** — every character that can reorder the run around it. The obvious
+///   overrides/embeddings/isolates, *plus* U+061C ARABIC LETTER MARK: it is the ALM
+///   counterpart of LRM/RLM (U+200E/U+200F) and reorders adjacent neutrals (digits,
+///   punctuation) with no override needed, so omitting it left a hole in the exact family
+///   this function exists to close.
+/// * **Characters that render as nothing** — zero-width, invisible operators, blank
+///   fillers, and the U+E0000 TAGS block (an entire shadow ASCII alphabet that draws no
+///   glyph, the modern "invisible text" smuggling vector). Two labels or filenames that
+///   differ only by these are indistinguishable on screen.
+///
+/// It is NOT "every Unicode `Cf`". Format characters that have a legitimate *visible*
+/// rendering in a living script — the Arabic/Syriac/Kaithi number and honorific signs
+/// (U+0600–U+0605, U+06DD, U+070F, U+0890, U+08E2, U+110BD, U+110CD), the Egyptian
+/// hieroglyph joiners, the musical beam/tie/slur marks and the shorthand overlaps — are
+/// left alone, as are the variation selectors (U+FE00–U+FE0F), which a legitimate emoji
+/// needs to render in colour. Neutralizing those would mangle honest labels to no
+/// security end: they are not invisible and they do not reorder.
 pub(crate) fn is_spoofy_format_char(c: char) -> bool {
     matches!(c,
-        '\u{200B}'..='\u{200F}'   // zero-width space/joiners + LRM/RLM
+        '\u{00AD}'                  // SOFT HYPHEN — invisible in virtually every renderer
+        | '\u{061C}'                // ARABIC LETTER MARK — bidi control (the ALM twin of LRM/RLM)
+        | '\u{115F}' | '\u{1160}'   // HANGUL CHOSEONG/JUNGSEONG FILLER — draw nothing
+        | '\u{180E}'               // MONGOLIAN VOWEL SEPARATOR — zero-width (Cf since Unicode 6.3)
+        | '\u{200B}'..='\u{200F}'   // zero-width space/joiners + LRM/RLM
         | '\u{2028}'              // LINE SEPARATOR — a real line break that char::is_control misses
         | '\u{2029}'              // PARAGRAPH SEPARATOR — likewise (keeps CSV cells one physical line)
         | '\u{202A}'..='\u{202E}' // bidi embeddings + LRO/RLO override
-        | '\u{2060}'              // word joiner
+        | '\u{2060}'..='\u{2064}'   // word joiner + FUNCTION APPLICATION / INVISIBLE TIMES/SEPARATOR/PLUS
         | '\u{2066}'..='\u{2069}' // bidi isolates
+        | '\u{206A}'..='\u{206F}'   // deprecated bidi/shaping controls (symmetric swapping, digit shapes)
+        | '\u{3164}'                // HANGUL FILLER — draws nothing
         | '\u{FEFF}'              // zero-width no-break space / BOM
+        | '\u{FFA0}'                // HALFWIDTH HANGUL FILLER — draws nothing
+        | '\u{FFF9}'..='\u{FFFB}'   // interlinear annotation — hides the annotated run
+        | '\u{E0001}'               // LANGUAGE TAG (deprecated)
+        | '\u{E0020}'..='\u{E007F}' // TAGS block — an invisible shadow ASCII alphabet
     )
 }
 
@@ -703,13 +733,36 @@ pub fn display_safe(s: &str) -> String {
 }
 
 /// True if `name`'s stem (the part before the first '.') is a Windows reserved DEVICE name
-/// (case-insensitive): CON, PRN, AUX, NUL, COM1–9, LPT1–9. On Windows such a name maps to a
-/// device, not a file, regardless of extension (`con.pdf` opens the console), so it must be
-/// neutralized before becoming a real filesystem path component on export.
-pub(crate) fn is_windows_reserved_name(name: &str) -> bool {
+/// (case-insensitive): CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM1–9, LPT1–9. On Windows such
+/// a name maps to a device, not a file, regardless of extension (`con.pdf` opens the
+/// console), so it must be neutralized before becoming a real filesystem path component on
+/// export — otherwise an heir extracting on Windows gets an I/O error instead of the document.
+///
+/// `pub` so the desktop `extract` CLI shares this one definition rather than keeping its own
+/// copy (which had drifted: it recognized a shorter list and *dropped* the offending
+/// component instead of renaming it, so the same vault extracted to a different tree
+/// depending on which front-end wrote it — audit 2026-07-25 round 2).
+///
+/// Two forms beyond the classic list are covered because Windows folds them onto a device:
+/// the console handles `CONIN$`/`CONOUT$`, and the SUPERSCRIPT digit spellings `COM¹`/`COM²`/
+/// `COM³` (U+00B9/U+00B2/U+00B3), which its path canonicalization maps to `COM1`/`COM2`/`COM3`.
+pub fn is_windows_reserved_name(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or(name);
-    let s = stem.to_ascii_uppercase();
-    matches!(s.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+    // Uppercase, and fold the superscript digits onto their ASCII twins, so `com¹` is
+    // recognized as `COM1`. Both source chars are 2 bytes and both replacements are 1, so
+    // the byte-length test below still sees a 4-byte `COM1`-shaped stem.
+    let s: String = stem
+        .chars()
+        .map(|c| match c {
+            '\u{00B9}' => '1',
+            '\u{00B2}' => '2',
+            '\u{00B3}' => '3',
+            _ => c.to_ascii_uppercase(),
+        })
+        .collect();
+    matches!(s.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        // `len() == 4` is in BYTES, but `starts_with("COM")` pins the first three to ASCII,
+        // so a 4-byte match always has a single-byte 4th character to index.
         || (s.len() == 4
             && (s.starts_with("COM") || s.starts_with("LPT"))
             && matches!(s.as_bytes()[3], b'1'..=b'9'))
@@ -3338,6 +3391,62 @@ mod tests {
         assert_eq!(display_safe("line\u{2028}sep\u{2029}end"), "line_sep_end");
         assert_eq!(display_safe("José café 北京"), "José café 北京"); // ordinary unicode preserved
         assert_eq!(display_safe("plain.txt"), "plain.txt");
+    }
+
+    #[test]
+    fn display_safe_neutralizes_the_alm_bidi_control_and_every_invisible_form() {
+        // Audit 2026-07-25 round 2. The set used to be an enumerated handful of ranges, which
+        // left 154 Unicode `Cf` characters — including a BIDI CONTROL — flowing verbatim into
+        // the merge preview the user authorizes, CSV cells, and real on-disk export filenames.
+
+        // U+061C ARABIC LETTER MARK is the clearest hole: it is the ALM counterpart of LRM/RLM
+        // (U+200E/U+200F, both already covered) and reorders the neutral characters around it —
+        // digits and punctuation — with no override character needed. So a stored filename could
+        // still be made to DISPLAY with its digits transposed.
+        assert_eq!(display_safe("invoice\u{061C}2024.pdf"), "invoice_2024.pdf");
+        assert_eq!(display_safe("\u{200E}a\u{200F}b\u{061C}c"), "_a_b_c", "all three marks alike");
+
+        // Characters that draw NOTHING: two labels differing only by these are identical on
+        // screen, so a crafted merge source could present a decoy that reads as a known record.
+        assert_eq!(display_safe("Chase\u{00AD}Checking"), "Chase_Checking"); // SOFT HYPHEN
+        assert_eq!(display_safe("a\u{2062}b\u{2064}c"), "a_b_c"); // INVISIBLE TIMES / PLUS
+        assert_eq!(display_safe("a\u{180E}b"), "a_b"); // MONGOLIAN VOWEL SEPARATOR
+        assert_eq!(display_safe("a\u{206A}b\u{206F}c"), "a_b_c"); // deprecated shaping controls
+        assert_eq!(display_safe("a\u{FFF9}b\u{FFFB}c"), "a_b_c"); // interlinear annotation
+        assert_eq!(display_safe("a\u{3164}b\u{FFA0}c\u{115F}d"), "a_b_c_d"); // blank fillers
+
+        // The U+E0000 TAGS block is an entire invisible ASCII alphabet — the modern
+        // "invisible text" smuggling vector. It draws no glyph at all.
+        assert_eq!(display_safe("bank\u{E0041}\u{E0042}.pdf"), "bank__.pdf");
+        assert_eq!(display_safe("x\u{E0001}y\u{E007F}z"), "x_y_z");
+
+        // Deliberately NOT neutralized: format characters with a real visible rendering in a
+        // living script, and the variation selectors a colour emoji needs. Mangling these would
+        // corrupt honest labels for no security gain — they neither hide nor reorder.
+        assert_eq!(display_safe("\u{0600}\u{06DD}"), "\u{0600}\u{06DD}", "Arabic number signs kept");
+        assert_eq!(display_safe("note \u{1F600}\u{FE0F}"), "note \u{1F600}\u{FE0F}", "emoji VS kept");
+        assert_eq!(display_safe("\u{1D173}"), "\u{1D173}", "musical beam mark kept");
+
+        // The same set backs the real on-disk filename, so the repair reaches doc_filename too.
+        assert_eq!(doc_filename("deed\u{061C}2024.pdf"), "deed_2024.pdf");
+        assert_eq!(doc_filename("a\u{E0041}b"), "a_b");
+    }
+
+    #[test]
+    fn windows_reserved_names_cover_the_console_handles_and_superscript_com_forms() {
+        // Audit 2026-07-25 round 2. `CONIN$`/`CONOUT$` are console device handles, and Windows'
+        // path canonicalization folds the SUPERSCRIPT digit spellings onto COM1/2/3 — so all of
+        // these resolve to a device, not a file, and must be repaired before they become a real
+        // path component. Left unrepaired, an heir extracting on Windows gets an I/O error where
+        // the document should be.
+        assert!(is_windows_reserved_name("CONIN$") && is_windows_reserved_name("conout$.txt"));
+        assert!(is_windows_reserved_name("COM\u{00B9}"), "COM¹ folds to COM1");
+        assert!(is_windows_reserved_name("lpt\u{00B3}.pdf"), "lpt³ folds to LPT3");
+        assert_eq!(doc_filename("CONIN$.txt"), "_CONIN$.txt");
+        assert_eq!(doc_filename("com\u{00B2}.log"), "_com\u{00B2}.log", "renamed, digit kept as typed");
+        // Still not reserved: a longer name that merely starts with the prefix, or `$` elsewhere.
+        assert!(!is_windows_reserved_name("continue") && !is_windows_reserved_name("con$"));
+        assert!(!is_windows_reserved_name("com\u{00B9}0"), "COM10 is a real name, not a device");
     }
 
     #[test]

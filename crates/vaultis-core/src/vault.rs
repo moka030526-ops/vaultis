@@ -2170,7 +2170,10 @@ pub fn reject_symlink_dir(path: &Path) -> Result<(), VaultError> {
 /// root. A degenerate path (no usable component) falls back to `<id>.bin`. Shared by
 /// `export_document_into` and `export_tree`'s `documents/` view. (The desktop `extract` CLI has
 /// its own equivalent `safe_relative_path`.)
-fn doc_tree_relpath(virtual_path: &str, id: &str) -> PathBuf {
+/// `pub` so the desktop `extract` CLI's own component sanitizer can be asserted to AGREE with
+/// this one (audit 2026-07-25 round 2 found the two had silently drifted). Not part of the
+/// storage contract — callers outside the exporters should not need it.
+pub fn doc_tree_relpath(virtual_path: &str, id: &str) -> PathBuf {
     let mut rel = PathBuf::new();
     for part in virtual_path.split('/') {
         let p = part.trim();

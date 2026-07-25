@@ -804,6 +804,23 @@ include URGENT.) The four screens are:
    A separate **Help** screen renders a sectioned in-app guide plus the on-disk vault
    and `prefs.json` paths.
 
+   A vault root may carry its own `prefs.json`, so a portable vault brings its UI defaults
+   to a new machine — but that file arrives with the vault media, so its author is whoever
+   produced the vault, not necessarily the person opening it. It is therefore restricted to
+   a deny-by-default allowlist of purely **cosmetic** keys (`VAULT_FALLBACK_KEYS` in
+   `crates/vaultis-desktop/src/lib.rs`, currently the two grouped-vs-flat list defaults).
+   The **export directory** is deliberately excluded: it decides where the front-ends write
+   the per-tab CSV (every password in the clear) and every decrypted document, so a vault
+   must not be able to choose it. `reveal_all_default` is excluded for the same reason —
+   unmasking every password on screen is the user's decision. Both, like `vault_root` and
+   `last_vault`, are read from the local config directory alone (audit 2026-07-25, H-1).
+
+   The export directory is additionally required to be **outside the vault folder**
+   (`checked_export_dir`, shared by both front-ends): cleartext written next to `vault.pmv`
+   is swept up by the user's next backup or folder sync of that vault. This is the same rule
+   the CLI's `extract` / `export-tree` / `compact --backup-dest` enforce, and it resolves
+   symlinks, so an export directory that merely *looks* external is still caught.
+
 Read-only is the default and is enforced in the core (§4.4), with the UIs hiding
 write controls and showing a read-only badge.
 
@@ -1789,6 +1806,34 @@ mirror (§6.3). Each fix carries a regression test (see `HARDENING.md`).
   to a stale version). The capped reads open with `O_NOFOLLOW` (`read_bounded`) so a
   symlink swapped in after the stat-check cannot redirect the read to an arbitrary
   file (a TOCTOU that previously could launder e.g. `/etc/shadow` into the vault).
+- **What counts as a "spoofy" character, and why it is not simply all of `Cf`.**
+  `records::is_spoofy_format_char` is the single definition behind `display_safe`,
+  `doc_filename` and `is_safe_doc_path`, so it decides what an untrusted string may
+  claim to be — in the merge preview the user *authorizes*, in a CSV cell, and in a
+  real on-disk filename. It neutralizes exactly two families: every **bidi control**
+  (the overrides, embeddings and isolates, plus `U+061C` ARABIC LETTER MARK — the ALM
+  counterpart of LRM/RLM, which reorders adjacent digits and punctuation with no
+  override needed), and everything that **renders as nothing** (zero-width, soft hyphen,
+  the invisible math operators, interlinear annotation, the blank fillers, and the
+  `U+E0000` TAGS block — an invisible shadow ASCII alphabet). It is deliberately *not*
+  "reject all Unicode `Cf`": the Arabic/Syriac/Kaithi number and honorific signs, the
+  Egyptian hieroglyph joiners, the musical beam/tie marks and the variation selectors a
+  colour emoji needs all have a genuine visible rendering, so neutralizing them would
+  mangle honest labels while preventing nothing — they neither hide text nor reorder it.
+  Both the covered and the deliberately-uncovered sets are pinned by test (audit
+  2026-07-25 round 2, R2-1).
+- **Reserved device names are one rule, shared, and asserted to be shared.** A Windows
+  reserved name (`CON`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, the `CONIN$`/`CONOUT$`
+  console handles, and the superscript `COM¹`–`COM³` spellings Windows folds onto
+  `COM1`–`COM3`) resolves to a *device*, not a file, so it must never become a real path
+  component — otherwise an heir extracting on Windows gets an I/O error where the
+  document should be. `records::is_windows_reserved_name` is that rule, and both
+  exporters — the core's `doc_tree_relpath` (GUI/TUI + `export_tree`) and the CLI's
+  `safe_relative_path` (`extract`) — call it and apply the same `_`-prefix **repair**, so
+  one vault always lays out identically whichever front-end writes it. The repair renames
+  rather than drops the component: dropping a directory level collapses documents that
+  differ only by it into one folder. A test asserts the two agree, because them having
+  silently drifted apart is the bug this closes (audit 2026-07-25 round 2, R2-2).
 - **KDF parameter bounds are shared and enforced both ways.** `KdfParams::validate()`
   (m_cost ≤ 512 MiB, t_cost ≤ 16, p_cost ≤ 16) runs on the read path (`Header::parse`,
   a pre-derivation DoS guard, §9.13) **and** the write paths (`create`/`import_tree`),
