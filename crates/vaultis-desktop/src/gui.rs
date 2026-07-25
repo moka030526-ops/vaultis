@@ -1648,6 +1648,12 @@ impl GuiApp {
         // is what a navigation bar has to guarantee. The top panel sizes itself to its
         // content, so an extra line pushes the body down instead of overlapping it.
         ui.horizontal_wrapped(|ui| {
+            // Each tab keeps its label on ONE line, so the wrapping happens BETWEEN tabs (a whole
+            // button moves down) rather than inside a multi-word label like "Assets and
+            // Liabilities". Set on the strip's own Ui so every tab is a direct child of the
+            // wrapped layout — which is what lets that layout see each button's full width and
+            // decide to start a new row.
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             tab_button(ui, &mut self.tab, Tab::Urgent, "❗ URGENT", accent);
             tab_button(ui, &mut self.tab, Tab::Instructions, "📝 Instructions", accent);
             tab_button(ui, &mut self.tab, Tab::TrustWill, "⚖ Trust and Will", accent);
@@ -4790,16 +4796,13 @@ fn tab_button(ui: &mut egui::Ui, current: &mut Tab, tab: Tab, label: &str, accen
     } else {
         egui::RichText::new(label)
     };
-    // The strip is laid out with `horizontal_wrapped`, where the ambient wrap mode would
-    // break a multi-word label ("Assets and Liabilities") across lines INSIDE the button.
-    // Extend keeps each tab on one line, so wrapping happens BETWEEN tabs — the whole button
-    // moves to the next row — which is the point of the wrapped strip.
-    let resp = ui
-        .scope(|ui| {
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-            ui.selectable_label(selected, text)
-        })
-        .inner;
+    // Added DIRECTLY to `ui` (no `ui.scope`): the caller lays the strip out with
+    // `horizontal_wrapped`, and that layout only breaks a row inside `allocate_space`, which
+    // needs the item's full width up front. A nested region does not declare a width before
+    // its content runs, so wrapping a scope-wrapped button silently never happened — the
+    // strip stayed one row and the last tabs ran off the right edge of the window. The
+    // one-line-per-tab wrap mode is set once on the strip's Ui by the caller instead.
+    let resp = ui.selectable_label(selected, text);
     if selected {
         let r = resp.rect;
         ui.painter().hline(
@@ -5960,25 +5963,85 @@ mod tests {
     /// tab must be present (laid out, not clipped off the end behind a scrollbar) at every
     /// width — that is the whole point of the change, and it is what a horizontal ScrollArea
     /// could not promise.
-    #[test]
-    fn every_tab_stays_reachable_at_narrow_widths_in_real_egui() {
-        use egui_kittest::{kittest::Queryable, Harness};
+    /// Each strip label as rendered (glyph + text). Shared by the wrap tests, which also pins
+    /// that no tab is silently dropped from the strip.
+    #[cfg(test)]
+    const TAB_STRIP_LABELS: [&str; 9] = [
+        "❗ URGENT",
+        "📝 Instructions",
+        "⚖ Trust and Will",
+        "💰 Assets and Liabilities",
+        "🔑 Accounts",
+        "🏠 Real Estate",
+        "📃 Taxes",
+        "📁 General Documents",
+        "📊 Summary",
+    ];
 
-        // Each strip label as rendered (glyph + text), so this also pins that no tab is
-        // silently dropped from the strip.
-        let labels = [
-            "❗ URGENT",
-            "📝 Instructions",
-            "⚖ Trust and Will",
-            "💰 Assets and Liabilities",
-            "🔑 Accounts",
-            "🏠 Real Estate",
-            "📃 Taxes",
-            "📁 General Documents",
-            "📊 Summary",
-        ];
+    /// The on-screen rectangles of the nine tab-strip labels, in strip order, with the app
+    /// rendered at `w` x 460. `None` for a label that laid out nowhere.
+    #[cfg(test)]
+    fn tab_strip_boxes(w: f32) -> Vec<Option<egui::Rect>> {
+        use egui_kittest::{kittest::NodeT as _, Harness};
+
+        let (mut app, path) = app_unlocked("tabwrap");
+        app.tab = Tab::Urgent;
+        let app = std::cell::RefCell::new(app);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(w, 460.0))
+            .with_max_steps(64)
+            .build_ui(|ui| app.borrow_mut().render(ui));
+        h.try_run().unwrap_or_else(|e| panic!("window never settled at {w}x460: {e}"));
+        let boxes = TAB_STRIP_LABELS
+            .iter()
+            .map(|label| {
+                h.root()
+                    .children_recursive()
+                    .filter(|n| n.accesskit_node().label().as_deref() == Some(*label))
+                    .filter_map(|n| n.accesskit_node().bounding_box())
+                    .map(|b| {
+                        egui::Rect::from_min_max(
+                            egui::pos2(b.x0 as f32, b.y0 as f32),
+                            egui::pos2(b.x1 as f32, b.y1 as f32),
+                        )
+                    })
+                    .next()
+            })
+            .collect();
+        cleanup(&path);
+        boxes
+    }
+
+    /// The tab strip WRAPS onto more lines on a narrow window instead of scrolling or running
+    /// off the right edge, so every tab must be laid out INSIDE the window at every width —
+    /// that is the whole point of the change, and neither a horizontal ScrollArea nor a
+    /// clipped single row can promise it.
+    ///
+    /// Geometry, not mere presence: a clipped tab still appears in the accessibility tree, so
+    /// only its rectangle can tell a wrapped strip from a strip that runs off the window.
+    #[test]
+    fn every_tab_is_laid_out_inside_the_window_at_narrow_widths_in_real_egui() {
         for w in [420.0f32, 560.0, 800.0, 1200.0] {
-            let (mut app, path) = app_unlocked("tabwrap");
+            for (label, r) in TAB_STRIP_LABELS.iter().zip(tab_strip_boxes(w)) {
+                let r = r.unwrap_or_else(|| panic!("tab {label:?} did not lay out at all at {w}x460"));
+                assert!(
+                    r.right() <= w + 1.0,
+                    "tab {label:?} runs off the right edge at width {w} (its right edge is {})",
+                    r.right()
+                );
+            }
+        }
+    }
+
+    /// The top bar's OTHER row — the global actions — must stay inside the window too. They are
+    /// laid out right-to-left against the vault name, which gives up space first, so a narrow
+    /// window must never push a button off either edge.
+    #[test]
+    fn the_top_bar_actions_stay_inside_the_window_at_narrow_widths() {
+        use egui_kittest::{kittest::NodeT as _, Harness};
+
+        for w in [420.0f32, 560.0, 900.0] {
+            let (mut app, path) = app_unlocked("topbarfit");
             app.tab = Tab::Urgent;
             let app = std::cell::RefCell::new(app);
             let mut h = Harness::builder()
@@ -5986,15 +6049,49 @@ mod tests {
                 .with_max_steps(64)
                 .build_ui(|ui| app.borrow_mut().render(ui));
             h.try_run().unwrap_or_else(|e| panic!("window never settled at {w}x460: {e}"));
-            for label in labels {
-                assert_eq!(
-                    h.query_all_by_label(label).count(),
-                    1,
-                    "tab {label:?} must stay laid out (not clipped) at {w}x460"
+            for label in ["🔑 Passwords", "⚙ Config", "❓ Help", "Quit"] {
+                let b = h
+                    .root()
+                    .children_recursive()
+                    .filter(|n| n.accesskit_node().label().as_deref() == Some(label))
+                    .filter_map(|n| n.accesskit_node().bounding_box())
+                    .next()
+                    .unwrap_or_else(|| panic!("action {label:?} did not lay out at {w}x460"));
+                assert!(b.x0 >= -1.0, "action {label:?} runs off the LEFT edge at width {w} (x0 {})", b.x0);
+                assert!(
+                    b.x1 <= w as f64 + 1.0,
+                    "action {label:?} runs off the RIGHT edge at width {w} (x1 {})",
+                    b.x1
                 );
             }
             cleanup(&path);
         }
+    }
+
+    /// The complement of the width check: at a width that cannot fit all nine tabs on one
+    /// line, the strip must actually USE a second line (the last tab sits BELOW the first),
+    /// while a wide window keeps them all on one.
+    #[test]
+    fn the_tab_strip_uses_a_second_line_only_when_it_must() {
+        let boxes = tab_strip_boxes(420.0);
+        let first = boxes[0].expect("URGENT lays out");
+        let last = boxes[8].expect("Summary lays out");
+        assert!(
+            last.top() > first.bottom() - 1.0,
+            "at 420pt wide the strip must wrap: Summary (top {}) should sit below URGENT (bottom {})",
+            last.top(),
+            first.bottom()
+        );
+
+        let boxes = tab_strip_boxes(1400.0);
+        let first = boxes[0].expect("URGENT lays out");
+        let last = boxes[8].expect("Summary lays out");
+        assert!(
+            (last.top() - first.top()).abs() <= 1.0,
+            "at 1400pt wide every tab fits on ONE line: Summary top {} vs URGENT top {}",
+            last.top(),
+            first.top()
+        );
     }
 
     /// A read-only value must occupy the width of its TEXT, not the width of the pane.
