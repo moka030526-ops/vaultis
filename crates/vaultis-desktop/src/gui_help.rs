@@ -1535,7 +1535,7 @@ fn render_block(ui: &mut egui::Ui, block: &Block, accent: egui::Color32) {
 fn callout(ui: &mut egui::Ui, glyph: &str, text: &str, color: egui::Color32) {
     egui::Frame::new()
         .fill(ui.visuals().faint_bg_color)
-        .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.55)))
+        .stroke(egui::Stroke::new(1.0_f32, color.gamma_multiply(0.55)))
         .corner_radius(6)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {

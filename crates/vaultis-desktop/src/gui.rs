@@ -199,7 +199,7 @@ fn visuals_for(theme: Theme) -> egui::Visuals {
         Theme::Dark => {
             let mut v = egui::Visuals::dark();
             v.selection.bg_fill = rgb(40, 80, 140);
-            v.selection.stroke = egui::Stroke::new(1.0, rgb(120, 170, 240));
+            v.selection.stroke = egui::Stroke::new(1.0_f32, rgb(120, 170, 240));
             v.hyperlink_color = rgb(110, 170, 240);
             v
         }
@@ -211,13 +211,13 @@ fn visuals_for(theme: Theme) -> egui::Visuals {
             v.faint_bg_color = rgb(18, 18, 18);
             v.override_text_color = Some(Color32::WHITE);
             v.widgets.noninteractive.bg_fill = rgb(14, 14, 14);
-            v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.4, Color32::WHITE);
+            v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.4_f32, Color32::WHITE);
             v.widgets.inactive.bg_fill = rgb(32, 32, 32);
             v.widgets.inactive.weak_bg_fill = rgb(24, 24, 24);
             v.widgets.hovered.bg_fill = rgb(64, 64, 64);
             v.widgets.active.bg_fill = rgb(0, 120, 215);
             v.selection.bg_fill = rgb(0, 90, 180);
-            v.selection.stroke = egui::Stroke::new(1.2, rgb(140, 200, 255));
+            v.selection.stroke = egui::Stroke::new(1.2_f32, rgb(140, 200, 255));
             v.hyperlink_color = rgb(120, 200, 255);
             v
         }
@@ -240,7 +240,7 @@ fn visuals_for(theme: Theme) -> egui::Visuals {
             v.widgets.hovered.bg_fill = base01;
             v.widgets.active.bg_fill = blue;
             v.selection.bg_fill = base01;
-            v.selection.stroke = egui::Stroke::new(1.0, blue);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, blue);
             v.hyperlink_color = blue;
             v
         }
@@ -258,7 +258,7 @@ fn visuals_for(theme: Theme) -> egui::Visuals {
             v.widgets.inactive.weak_bg_fill = rgb(243, 234, 213);
             v.widgets.hovered.bg_fill = rgb(226, 212, 182);
             v.selection.bg_fill = rgb(214, 196, 158);
-            v.selection.stroke = egui::Stroke::new(1.0, rgb(120, 90, 50));
+            v.selection.stroke = egui::Stroke::new(1.0_f32, rgb(120, 90, 50));
             v
         }
         Theme::Nord => {
@@ -277,7 +277,7 @@ fn visuals_for(theme: Theme) -> egui::Visuals {
             v.widgets.hovered.bg_fill = bg3;
             v.widgets.active.bg_fill = blue;
             v.selection.bg_fill = bg3;
-            v.selection.stroke = egui::Stroke::new(1.0, frost);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, frost);
             v.hyperlink_color = frost;
             v
         }
@@ -297,7 +297,7 @@ fn visuals_for(theme: Theme) -> egui::Visuals {
             v.widgets.hovered.bg_fill = sel;
             v.widgets.active.bg_fill = purple;
             v.selection.bg_fill = sel;
-            v.selection.stroke = egui::Stroke::new(1.0, purple);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, purple);
             v.hyperlink_color = cyan;
             v
         }
@@ -317,7 +317,7 @@ fn visuals_for(theme: Theme) -> egui::Visuals {
             v.widgets.hovered.bg_fill = bg2;
             v.widgets.active.bg_fill = orange;
             v.selection.bg_fill = bg2;
-            v.selection.stroke = egui::Stroke::new(1.0, aqua);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, aqua);
             v.hyperlink_color = aqua;
             v
         }
@@ -337,7 +337,7 @@ fn visuals_for(theme: Theme) -> egui::Visuals {
             v.widgets.hovered.bg_fill = bg2;
             v.widgets.active.bg_fill = orange;
             v.selection.bg_fill = bg2;
-            v.selection.stroke = egui::Stroke::new(1.0, rgb(175, 58, 3));
+            v.selection.stroke = egui::Stroke::new(1.0_f32, rgb(175, 58, 3));
             v
         }
         Theme::RosePine => {
@@ -356,7 +356,7 @@ fn visuals_for(theme: Theme) -> egui::Visuals {
             v.widgets.hovered.bg_fill = overlay;
             v.widgets.active.bg_fill = iris;
             v.selection.bg_fill = overlay;
-            v.selection.stroke = egui::Stroke::new(1.0, foam);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, foam);
             v.hyperlink_color = foam;
             v
         }
@@ -458,7 +458,7 @@ fn apply_style(ctx: &egui::Context, theme: Theme) {
     }
     v.window_corner_radius = egui::CornerRadius::same(8);
     v.menu_corner_radius = egui::CornerRadius::same(8);
-    v.selection.stroke = egui::Stroke::new(1.0, accent(theme));
+    v.selection.stroke = egui::Stroke::new(1.0_f32, accent(theme));
     v.widgets.hovered.expansion = 1.0;
     v.widgets.active.expansion = 1.0;
 
@@ -473,7 +473,7 @@ fn apply_style(ctx: &egui::Context, theme: Theme) {
 fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
         .fill(ui.visuals().faint_bg_color)
-        .stroke(egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color))
+        .stroke(egui::Stroke::new(1.0_f32, ui.visuals().widgets.noninteractive.bg_stroke.color))
         .corner_radius(8)
         .inner_margin(egui::Margin::same(12))
         .show(ui, add)
@@ -508,7 +508,7 @@ fn vaultis_logo(ui: &mut egui::Ui, accent: egui::Color32) {
         ui.horizontal(|ui| {
             let sz = 34.0_f32;
             let (rect, _) = ui.allocate_exact_size(egui::vec2(sz, sz), egui::Sense::hover());
-            let stroke = egui::Stroke::new(2.2, accent);
+            let stroke = egui::Stroke::new(2.2_f32, accent);
             let c = rect.center();
             {
                 let p = ui.painter();
@@ -539,7 +539,7 @@ fn vaultis_logo(ui: &mut egui::Ui, accent: egui::Color32) {
 fn badge(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     egui::Frame::new()
         .fill(color.gamma_multiply(0.18))
-        .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.5)))
+        .stroke(egui::Stroke::new(1.0_f32, color.gamma_multiply(0.5)))
         .corner_radius(9)
         .inner_margin(egui::Margin::symmetric(8, 2))
         .show(ui, |ui| {
@@ -4820,7 +4820,7 @@ fn tab_button(ui: &mut egui::Ui, current: &mut Tab, tab: Tab, label: &str, accen
         ui.painter().hline(
             r.min.x + 2.0..=r.max.x - 2.0,
             r.max.y + 1.0,
-            egui::Stroke::new(2.0, accent),
+            egui::Stroke::new(2.0_f32, accent),
         );
     }
     if resp.clicked() {
@@ -5047,7 +5047,7 @@ const STAT_BAD: egui::Color32 = egui::Color32::from_rgb(185, 70, 70);
 fn stat_tile(ui: &mut egui::Ui, label: &str, value: &str, color: egui::Color32) {
     egui::Frame::new()
         .fill(ui.visuals().faint_bg_color)
-        .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.35)))
+        .stroke(egui::Stroke::new(1.0_f32, color.gamma_multiply(0.35)))
         .corner_radius(8)
         .inner_margin(egui::Margin::symmetric(14, 10))
         .show(ui, |ui| {
@@ -5317,7 +5317,11 @@ fn search_box(
     let active = !value.trim().is_empty();
     // `gamma_multiply` scales the color's alpha, so both states read correctly on light AND
     // dark themes (a fixed grey would vanish on one of them).
-    let (fill, stroke_w, stroke_a) = if active {
+    // Annotated rather than inferred: `stroke_w` reaches `Stroke::new`, whose width is an
+    // `impl Into<f32>`, so a bare literal here has no concrete type to latch onto and rustc
+    // falls back to `f32` with a future-incompatibility warning (`float_literal_f32_fallback`).
+    // Naming the tuple's types fixes both arms at once and says what these actually are.
+    let (fill, stroke_w, stroke_a): (egui::Color32, f32, f32) = if active {
         (accent.gamma_multiply(0.14), 2.0, 0.9)
     } else {
         (ui.visuals().extreme_bg_color, 1.0, 0.5)
