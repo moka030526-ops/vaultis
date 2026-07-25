@@ -6,9 +6,11 @@
 #                    [--install-rust] [--no-shortcuts] [-- <extra cargo args>]
 #
 # It does four things:
-#   1. Makes sure a usable RUST TOOLCHAIN is installed. If `cargo` is missing it offers
-#      to install it with the official rustup installer (https://rustup.rs), asking
-#      first; `--install-rust` answers yes up front, for an unattended run.
+#   1. Makes sure a usable RUST TOOLCHAIN is installed AND new enough. If `cargo` is
+#      missing it offers to install it with the official rustup installer
+#      (https://rustup.rs); if the toolchain is older than the minimum below it offers
+#      to run `rustup update stable` instead. Either way it asks first and defaults to
+#      NO; `--install-rust` answers yes up front, for an unattended run.
 #   2. `cargo build` (debug by default, `--release` for the optimized build).
 #   3. Makes sure a FULLY POPULATED sample vault exists — every tab filled in, with
 #      attached documents so the encrypted volume is real — by running the
@@ -177,17 +179,68 @@ fi
 
 # An ancient-but-present toolchain is the other failure mode, and its error message
 # ("let chains are unstable", "edition 2024 is unsupported") reads like broken code
-# rather than a stale compiler. Say so plainly instead. `cut -d. -f2` takes the minor
-# version out of e.g. "rustc 1.88.0 (…)".
-rust_minor="$(rustc --version 2>/dev/null | awk '{print $2}' | cut -d. -f2)"
-if [[ "$rust_minor" =~ ^[0-9]+$ ]] && ((rust_minor < MIN_RUST_MINOR)); then
-    echo "error: Rust 1.$rust_minor is too old to build vaultis (needs 1.$MIN_RUST_MINOR or newer)." >&2
-    if command -v rustup >/dev/null 2>&1; then
-        echo "       Update it with:  rustup update stable" >&2
-    else
-        echo "       Update your Rust installation (see https://rustup.rs)." >&2
+# rather than a stale compiler. So the version is checked, and an old one is offered the
+# same deal a missing one gets: ask, default to NO, `--install-rust` says yes up front.
+
+# The minor version out of e.g. "rustc 1.88.0 (…)"; empty if rustc cannot be run. Read
+# twice — once to check, once after an update to confirm it actually took — hence a
+# function. `|| true` keeps a failing rustc from tripping `set -e` through pipefail.
+rust_minor() {
+    rustc --version 2>/dev/null | awk '{print $2}' | cut -d. -f2 || true
+}
+
+update_rust_toolchain() {
+    echo "==> Updating the Rust toolchain (rustup update stable)"
+    # Failures are reported rather than left to `set -e`, which would kill the script
+    # with nothing but rustup's own output on screen.
+    if ! rustup update stable || ! rustup default stable; then
+        # Updating stable is not enough on its own when the DEFAULT toolchain is an old
+        # pinned one (`rustup default 1.85.0`) — rustc would still be that old compiler
+        # afterwards — hence the second command, and hence pointing at both here.
+        echo "error: rustup could not update the toolchain." >&2
+        echo "       Update it yourself and re-run this script:  rustup update stable" >&2
+        exit 1
     fi
-    exit 1
+}
+
+minor="$(rust_minor)"
+if [[ "$minor" =~ ^[0-9]+$ ]] && ((minor < MIN_RUST_MINOR)); then
+    echo "Rust 1.$minor is too old to build vaultis (needs 1.$MIN_RUST_MINOR or newer)."
+    # Only rustup can update the toolchain for us. A Rust installed some other way (a
+    # distro package, a tarball) has to be updated the way it was installed.
+    if ! command -v rustup >/dev/null 2>&1; then
+        echo "error: rustup is not installed, so this script cannot update it for you." >&2
+        echo "       Update your Rust installation (see https://rustup.rs)." >&2
+        exit 1
+    fi
+    if [[ "$install_rust" -eq 1 ]]; then
+        update_rust_toolchain
+    elif [[ -t 0 ]]; then
+        read -r -p "Update it now with rustup, and make stable the default? [y/N] " reply
+        case "$reply" in
+            [yY] | [yY][eE][sS]) update_rust_toolchain ;;
+            *)
+                echo "Not updating. Update it yourself and re-run this script:"
+                echo "  rustup update stable"
+                echo "Or re-run with --install-rust to update without being asked."
+                exit 1
+                ;;
+        esac
+    else
+        echo "Re-run with --install-rust to update it automatically, or update it yourself:" >&2
+        echo "  rustup update stable" >&2
+        exit 1
+    fi
+
+    # Re-read rather than assuming the update did the job: a pinned toolchain file or
+    # another rustc on PATH can leave the old compiler in charge.
+    minor="$(rust_minor)"
+    if [[ "$minor" =~ ^[0-9]+$ ]] && ((minor < MIN_RUST_MINOR)); then
+        echo "error: rustc is still 1.$minor after updating (needs 1.$MIN_RUST_MINOR or newer)." >&2
+        echo "       Something else is choosing the compiler: a rust-toolchain.toml in this" >&2
+        echo "       or a parent directory, a rustup override, or another rustc on PATH." >&2
+        exit 1
+    fi
 fi
 
 echo "==> Building vaultis ($profile)"

@@ -7,10 +7,12 @@ rem                      [--no-sample] [--install-rust] [--no-shortcuts]
 rem                      [-- <extra cargo args>]
 rem
 rem  It does four things:
-rem    1. Makes sure a usable RUST TOOLCHAIN is installed. If `cargo` is missing
-rem       it offers to install it with the official rustup installer -
-rem       https://rustup.rs - asking first; --install-rust answers yes up front,
-rem       for an unattended run.
+rem    1. Makes sure a usable RUST TOOLCHAIN is installed AND new enough. If
+rem       `cargo` is missing it offers to install it with the official rustup
+rem       installer - https://rustup.rs; if the toolchain is older than the
+rem       minimum below it offers to run `rustup update stable` instead. Either
+rem       way it asks first and defaults to NO; --install-rust answers yes up
+rem       front, for an unattended run.
 rem    2. `cargo build` - debug by default, --release for the optimized build.
 rem    3. Makes sure a FULLY POPULATED sample vault exists - every tab filled
 rem       in, with attached documents so the encrypted volume is real - by
@@ -229,19 +231,65 @@ if errorlevel 1 (
 :have_cargo
 rem An ancient-but-present toolchain is the other failure mode, and its error message
 rem - "let chains are unstable", "edition 2024 is unsupported" - reads like broken code
-rem rather than a stale compiler. Say so plainly instead. The for/f splits
-rem "rustc 1.88.0 (...)" on spaces and dots to get the minor version.
-set "RUST_MINOR="
-for /f "tokens=2 delims= " %%V in ('rustc --version 2^>nul') do (
-    for /f "tokens=2 delims=." %%M in ("%%V") do set "RUST_MINOR=%%M"
-)
-if defined RUST_MINOR if %RUST_MINOR% LSS %MIN_RUST_MINOR% (
-    echo. 1>&2
-    echo error: Rust 1.%RUST_MINOR% is too old to build vaultis - needs 1.%MIN_RUST_MINOR% or newer. 1>&2
-    echo        Update it with:  rustup update stable 1>&2
-    popd
-    exit /b 1
-)
+rem rather than a stale compiler. So the version is checked, and an old one is offered
+rem the same deal a missing one gets: the script asks, defaults to NO, and
+rem --install-rust answers yes up front for an unattended run.
+call :read_rust_minor
+if not defined RUST_MINOR goto rust_ok
+if %RUST_MINOR% GEQ %MIN_RUST_MINOR% goto rust_ok
+
+rem Only rustup can update the toolchain for us. A Rust installed some other way - an
+rem MSI, winget, a distro package - has to be updated the way it was installed.
+where rustup >nul 2>nul
+if errorlevel 1 goto rust_too_old_manual
+echo Rust 1.%RUST_MINOR% is too old to build vaultis - it needs 1.%MIN_RUST_MINOR% or newer.
+if "%INSTALL_RUST%"=="1" goto update_rust
+set "REPLY="
+set /p "REPLY=Update it now with rustup, and make stable the default? [y/N] "
+if /i "%REPLY%"=="y" goto update_rust
+if /i "%REPLY%"=="yes" goto update_rust
+echo Not updating. Update it yourself and re-run this script:
+echo   rustup update stable
+echo Or re-run with --install-rust to update without being asked.
+popd
+exit /b 1
+
+:update_rust
+echo ==^> Updating the Rust toolchain ^(rustup update stable^)
+rustup update stable
+if errorlevel 1 goto rust_update_failed
+rem Updating stable is not enough on its own when the DEFAULT toolchain is an old
+rem pinned one - `rustup default 1.85.0` - because rustc would still be that old
+rem compiler afterwards. Point the default at stable too, then re-read the version
+rem rather than assuming the update did the job.
+rustup default stable
+if errorlevel 1 goto rust_update_failed
+call :read_rust_minor
+if not defined RUST_MINOR goto rust_ok
+if %RUST_MINOR% GEQ %MIN_RUST_MINOR% goto rust_ok
+echo. 1>&2
+echo error: rustc is still 1.%RUST_MINOR% after updating - needs 1.%MIN_RUST_MINOR% or newer. 1>&2
+echo        Something else is choosing the compiler: a rust-toolchain.toml in this or a 1>&2
+echo        parent directory, a `rustup override`, or another rustc earlier on PATH. 1>&2
+popd
+exit /b 1
+
+:rust_update_failed
+echo. 1>&2
+echo error: rustup could not update the toolchain. 1>&2
+echo        Update it yourself and re-run this script:  rustup update stable 1>&2
+popd
+exit /b 1
+
+:rust_too_old_manual
+echo. 1>&2
+echo error: Rust 1.%RUST_MINOR% is too old to build vaultis - needs 1.%MIN_RUST_MINOR% or newer. 1>&2
+echo        rustup is not installed, so this script cannot update it for you. 1>&2
+echo        Update your Rust installation - see https://rustup.rs 1>&2
+popd
+exit /b 1
+
+:rust_ok
 
 echo ==^> Building vaultis ^(%PROFILE%^)
 cargo build --workspace %PROFILE_ARGS%%EXTRA_CARGO_ARGS%
@@ -359,7 +407,8 @@ echo   --fresh            Delete an existing sample vault and build a new one.
 echo   --sample-dir DIR   Put the sample vault somewhere other than
 echo                      target\sample-vault.
 echo   --no-sample        Just build; skip the sample vault AND the shortcuts.
-echo   --install-rust     Install the Rust toolchain without asking, if missing.
+echo   --install-rust     Install the Rust toolchain if it is missing, or update it
+echo                      if it is too old, without asking.
 echo   --no-shortcuts     Skip installing the two Desktop shortcuts.
 echo   --                 Pass the remaining arguments to cargo build.
 echo.
@@ -367,4 +416,15 @@ echo The sample vault is fiction and its two passwords are deliberately trivial
 echo - %SAMPLE_PW1% / %SAMPLE_PW2% - so never put anything real in it.
 echo Re-running leaves an existing sample vault untouched.
 popd
+exit /b 0
+
+rem Read the MINOR version out of "rustc 1.88.0 (...)" into RUST_MINOR, leaving it
+rem undefined when rustc cannot be run at all. The for/f splits on spaces to get
+rem "1.88.0", then on dots to get "88". A subroutine because the version is read twice:
+rem once to check it, once after an update to confirm the update actually took.
+:read_rust_minor
+set "RUST_MINOR="
+for /f "tokens=2 delims= " %%V in ('rustc --version 2^>nul') do (
+    for /f "tokens=2 delims=." %%M in ("%%V") do set "RUST_MINOR=%%M"
+)
 exit /b 0
