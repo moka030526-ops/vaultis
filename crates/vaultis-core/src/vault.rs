@@ -80,6 +80,12 @@ pub mod migrate;
 fn lock_for_read_only_copy(dir: &Path) -> Result<Option<WriteLock>, VaultError> {
     match WriteLock::acquire(dir) {
         Ok(l) => Ok(Some(l)),
+        // Gated with `LOCK_FILE` itself: without the `single-writer-lock` feature there is no
+        // lock file (and `acquire` is an infallible no-op), so this arm is both unreachable and
+        // un-compilable. Leaving it ungated broke every build that turns the feature off — i.e.
+        // the mobile-only `cargo build -p vaultis-ffi`, which is not covered by the workspace
+        // build because feature unification switches the feature back on there.
+        #[cfg(feature = "single-writer-lock")]
         Err(VaultError::Io(e))
             if matches!(e.kind(), std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem)
                 // `symlink_metadata` so a link planted at the lock path counts as PRESENT

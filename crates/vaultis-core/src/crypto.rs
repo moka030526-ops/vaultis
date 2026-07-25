@@ -134,6 +134,127 @@ impl KdfParams {
     }
 }
 
+/// Refcounted, per-PAGE memory locking, used by [`Key`] to pin its bytes out of swap.
+///
+/// A 32-byte key is far smaller than a page, so two live keys routinely land in the SAME
+/// page — and the OS lock is per page, not per byte. Holding one `region::LockGuard` per key
+/// therefore unlocks a page that another key still lives in, and the second guard's unlock
+/// then fails: on Windows `VirtualUnlock` releases the whole range regardless of how many
+/// times it was locked, so the later call returns `ERROR_NOT_LOCKED` (158) and
+/// `LockGuard::drop`'s `debug_assert!` panics — "unlocking region: … The segment is already
+/// unlocked." That is a debug-build crash at exit in any process that derives more than one
+/// key, which the chained two-password derivation always does.
+///
+/// So the count of live secrets per page is tracked here instead, and the OS is asked to
+/// lock a page on the FIRST secret in it and to unlock it only when the LAST one goes away.
+/// Per-page (rather than per-range) counting is what makes overlapping ranges correct too,
+/// for the case of a key that straddles a page boundary.
+#[cfg(feature = "mlock")]
+mod page_lock {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    /// How many live [`PageLock`]s cover each locked page, keyed by the page's start address.
+    /// A page is present iff the OS currently holds a lock on it for us.
+    ///
+    /// `BTreeMap::new()` and `Mutex::new()` are both `const`, which is what lets this be a
+    /// plain `static` with no lazy-initialization machinery. (`HashMap::new` is not const.)
+    static LOCKED: Mutex<BTreeMap<usize, usize>> = Mutex::new(BTreeMap::new());
+
+    /// A live claim on the OS lock for every page covering one secret. Dropping it releases
+    /// the claim, and unlocks each page whose last claim just went away.
+    pub(super) struct PageLock {
+        /// Start addresses of the pages this lock counts for.
+        pages: Vec<usize>,
+    }
+
+    /// Give up `pages`' claims inside an already-held map guard, unlocking each page that no
+    /// live secret needs any more. Shared by `Drop` and by `acquire`'s rollback path so the
+    /// "who unlocks" rule exists once.
+    fn release(map: &mut BTreeMap<usize, usize>, pages: &mut Vec<usize>, page_size: usize) {
+        for start in pages.drain(..) {
+            match map.get_mut(&start) {
+                // Another secret still lives in this page: keep it locked.
+                Some(holders) if *holders > 1 => *holders -= 1,
+                // We were the last holder — this is the one and only unlock for this page.
+                Some(_) => {
+                    map.remove(&start);
+                    let _ = region::unlock(start as *const u8, page_size);
+                }
+                // Not tracked (only reachable if a lock failed after being counted).
+                None => {}
+            }
+        }
+    }
+
+    impl PageLock {
+        /// Lock the page(s) covering `[address, address + len)`, or `None` when the OS refuses
+        /// (e.g. a tight `RLIMIT_MEMLOCK`) — the caller then keeps a usable but unpinned
+        /// secret, exactly as before this type existed.
+        pub(super) fn acquire(address: *const u8, len: usize) -> Option<PageLock> {
+            if len == 0 {
+                return None;
+            }
+            let page_size = region::page::size();
+            // `floor`/`ceil` round to page boundaries; `ceil` of an already-aligned address
+            // returns it unchanged, so `[start, end)` is exactly the covered pages.
+            let start = region::page::floor(address) as usize;
+            let end = region::page::ceil(address.wrapping_add(len)) as usize;
+            if end <= start {
+                return None; // address + len wrapped: nothing sane to lock
+            }
+            // A poisoned mutex means a panic happened inside this module. Rather than
+            // propagate it into a key derivation, give up on locking (best-effort, as ever).
+            let mut map = LOCKED.lock().ok()?;
+            let mut held: Vec<usize> = Vec::new();
+            let mut page = start;
+            while page < end {
+                match map.get_mut(&page) {
+                    // Already locked for another live secret: just count ourselves in.
+                    Some(holders) => *holders += 1,
+                    None => {
+                        // First secret in this page, so take the OS lock. `mem::forget` on the
+                        // guard hands its job to us: this module unlocks the page exactly once,
+                        // when the last holder is dropped. (Letting the guard drop here is what
+                        // caused the double-unlock in the first place.)
+                        if region::lock(page as *const u8, page_size).map(std::mem::forget).is_err() {
+                            // Partial failure: give back what we took, then report no lock.
+                            release(&mut map, &mut held, page_size);
+                            return None;
+                        }
+                        map.insert(page, 1);
+                    }
+                }
+                held.push(page);
+                page += page_size;
+            }
+            Some(PageLock { pages: held })
+        }
+    }
+
+    impl Drop for PageLock {
+        fn drop(&mut self) {
+            let page_size = region::page::size();
+            // A poisoned mutex leaves the pages locked for the rest of the process. Leaking a
+            // lock is harmless (the OS releases it at exit); double-unlocking is not.
+            if let Ok(mut map) = LOCKED.lock() {
+                release(&mut map, &mut self.pages, page_size);
+            }
+        }
+    }
+
+    /// How many live secrets are counted in the page containing `address` (0 when the page
+    /// holds no locked secret). Test-only window onto the refcount, so the "unlock exactly
+    /// once, and only when the last holder goes" rule is assertable on every platform — on
+    /// Linux a double `munlock` succeeds, so a regression here would ONLY show up as a crash
+    /// on Windows, which is precisely the bug this module exists to fix.
+    #[cfg(test)]
+    pub(super) fn holders_of(address: *const u8) -> usize {
+        let start = region::page::floor(address) as usize;
+        LOCKED.lock().ok().and_then(|map| map.get(&start).copied()).unwrap_or(0)
+    }
+}
+
 /// A derived symmetric key. The key bytes live on the heap and their page(s)
 /// are **memory-locked** (`mlock` on Unix, `VirtualLock` on Windows) so the OS
 /// will not page them to swap, where a plaintext copy could survive on disk
@@ -143,14 +264,15 @@ pub struct Key {
     // fixed-size array of 32 bytes (`[u8; KEY_LEN]`). Heap allocation gives the
     // key a stable address we can memory-lock.
     bytes: Box<[u8; KEY_LEN]>,
-    /// Held for its lifetime; unlocks the page(s) when dropped. `None` if the OS
-    /// refused the lock (then the key is still usable, just not swap-protected).
+    /// Held for its lifetime; releases this key's claim on the page(s) when dropped, which
+    /// unlocks them only if no other key still lives there (see [`page_lock`]). `None` if the
+    /// OS refused the lock (then the key is still usable, just not swap-protected).
     // `Option<T>` is either `Some(value)` or `None` (Rust's null-free "maybe").
     // The leading `_` in `_lock` tells the compiler we never read this field; we
     // keep it only so its cleanup (unlocking the page) runs when `Key` is dropped.
     // Gated behind the `mlock` feature; absent in the mobile build (no swap budget).
     #[cfg(feature = "mlock")]
-    _lock: Option<region::LockGuard>,
+    _lock: Option<page_lock::PageLock>,
 }
 
 // Methods of `Key`. `fn` with no `pub` keyword is private to this module.
@@ -160,13 +282,14 @@ impl Key {
         // Move the array onto the heap behind a `Box`.
         let boxed = Box::new(bytes);
         // Pin the page(s) holding the key. Best-effort: a failure (e.g. a tight
-        // RLIMIT_MEMLOCK) leaves the key working but unprotected from swap.
-        // `region::lock(...)` returns a `Result`; `.ok()` converts it to an
-        // `Option` (discarding the error), so a failed lock just yields `None`.
+        // RLIMIT_MEMLOCK) yields `None`, leaving the key working but unprotected from swap.
+        // Goes through `page_lock` rather than `region::lock` directly because several keys
+        // share a page and the OS lock is per page — see that module for what went wrong when
+        // each key held its own guard.
         // Gated behind `mlock`: in the mobile build there is no lock to take (the
         // OS grants apps no mlock budget), so the field and this call disappear.
         #[cfg(feature = "mlock")]
-        let _lock = region::lock(boxed.as_ref().as_ptr(), KEY_LEN).ok();
+        let _lock = page_lock::PageLock::acquire(boxed.as_ref().as_ptr(), KEY_LEN);
         // Construct and return the struct (last expression with no `;` is the
         // return value in Rust).
         Key {
@@ -373,6 +496,65 @@ mod tests {
     // Cheap params so the test suite stays fast; production uses the defaults.
     fn fast() -> KdfParams {
         KdfParams { m_cost: 256, t_cost: 1, p_cost: 1 }
+    }
+
+    /// Two secrets in the SAME page must be locked once and unlocked once — when the LAST of
+    /// them goes away, never when the first does.
+    ///
+    /// This is the shape of the Windows crash this module was written for: with one
+    /// `region::LockGuard` per key, dropping key A unlocked the shared page, and dropping key B
+    /// then called `VirtualUnlock` on an unlocked page, which fails with ERROR_NOT_LOCKED and
+    /// trips `LockGuard::drop`'s `debug_assert!` — a debug-build panic at exit. On Linux a
+    /// second `munlock` simply succeeds, so only the refcount itself is observable everywhere;
+    /// that is what this asserts.
+    #[cfg(feature = "mlock")]
+    #[test]
+    fn page_locks_are_refcounted_so_a_shared_page_is_unlocked_exactly_once() {
+        // One buffer, so both claims are guaranteed to cover the same page.
+        let buf = Box::new([0u8; KEY_LEN]);
+        let p = buf.as_ref().as_ptr();
+        assert_eq!(page_lock::holders_of(p), 0, "nothing locked yet");
+
+        let first = page_lock::PageLock::acquire(p, KEY_LEN).expect("locking one page must work");
+        assert_eq!(page_lock::holders_of(p), 1, "first claim locks the page");
+        let second = page_lock::PageLock::acquire(p, KEY_LEN).expect("a second claim is counted, not re-locked");
+        assert_eq!(page_lock::holders_of(p), 2, "both secrets are counted");
+
+        drop(first);
+        assert_eq!(
+            page_lock::holders_of(p),
+            1,
+            "the page must STAY locked while another secret lives in it (this is the bug)"
+        );
+        drop(second);
+        assert_eq!(page_lock::holders_of(p), 0, "the last claim unlocks the page");
+
+        // Re-locking the same page after full release works — i.e. the unlock really happened
+        // and left no stale count behind.
+        let again = page_lock::PageLock::acquire(p, KEY_LEN).expect("relocking after release works");
+        assert_eq!(page_lock::holders_of(p), 1);
+        drop(again);
+        assert_eq!(page_lock::holders_of(p), 0);
+    }
+
+    /// The end-to-end version of the above, through the type that actually holds keys: the
+    /// chained two-password derivation builds an intermediate key, drops it, and keeps the
+    /// second — the exact sequence that panicked at process exit on Windows. Dropping keys in
+    /// that order must leave no page counted, and (on Windows, in a debug build) must not
+    /// panic.
+    #[cfg(feature = "mlock")]
+    #[test]
+    fn dropping_chained_keys_leaves_no_page_locked() {
+        let salt = [7u8; SALT_LEN];
+        let k = derive_key_chained(b"pw1", b"pw2", &salt, &fast()).expect("derivation works");
+        let page_of_key = k.as_bytes().as_ptr();
+        assert!(page_lock::holders_of(page_of_key) >= 1, "the surviving key's page stays locked");
+        drop(k);
+        assert_eq!(
+            page_lock::holders_of(page_of_key),
+            0,
+            "once every key is dropped, no claim (and so no OS lock) is left on its page"
+        );
     }
 
     #[test]

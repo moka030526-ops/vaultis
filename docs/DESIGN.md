@@ -953,7 +953,21 @@ buffers in the TUI, GUI, and CLI.
 it decrypts the whole vault — is held in heap pages that are **memory-locked**
 (`mlock` on Unix, `VirtualLock` on Windows, via the `region` crate), so the OS
 will not page it out to swap where a plaintext copy could persist on disk across
-reboots. The lock is released and the bytes wiped on drop.
+reboots. The bytes are wiped on drop, and the page is unlocked once no key needs it.
+
+The locks are **refcounted per page** (`crypto.rs`, `mod page_lock`), because a
+32-byte key is far smaller than a page and the OS lock is per page: two live keys
+routinely share one, which the chained two-password derivation guarantees (an
+intermediate key plus the final one). Holding one `region::LockGuard` per key
+unlocked the shared page when the first key dropped, and the second key's unlock then
+hit an already-unlocked page. On Windows `VirtualUnlock` releases the whole range
+regardless of how many locks were taken over it, so that call fails with
+`ERROR_NOT_LOCKED` (158) and `LockGuard::drop`'s `debug_assert!` **panicked at process
+exit in debug builds** (release builds compile the assert out and silently ignored it).
+The page-lock module therefore counts live secrets per page, asks the OS to lock a page
+for the first secret in it, and unlocks only when the last one goes away — which also
+makes overlapping ranges correct for a key that straddles a page boundary. A refused
+lock (a tight `RLIMIT_MEMLOCK`) still degrades quietly to an unpinned key.
 
 Residual risk remains and is *not* fully mitigated: the decrypted records, the
 document archive, and password-input buffers are **not** page-locked (a blanket
