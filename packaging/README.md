@@ -29,6 +29,13 @@ python3 packaging/icons/make_icons.py
 The generated files are committed, so you only need to re-run the script if you
 want to tweak the artwork.
 
+> **You may not need to run any of this by hand.** `scripts/build.sh` (Linux) and
+> `scripts\build.bat` (Windows) install the shortcuts themselves as their last step,
+> pointed at the binary they just built. Pass `--no-shortcuts` to skip it; `--no-sample`
+> skips it too, since that flag means "just build". The rest of this file is for
+> installing them separately — most usefully against a *permanent* copy of the binary,
+> as described below.
+
 ## Linux
 
 One command installs both shortcuts for the current user (onto the Desktop and into

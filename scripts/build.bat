@@ -3,9 +3,10 @@ rem =====================================================================
 rem  Build vaultis on Windows and hand back a DEMO vault you can open.
 rem
 rem    scripts\build.bat [--release] [--fresh] [--sample-dir DIR]
-rem                      [--no-sample] [--install-rust] [-- <extra cargo args>]
+rem                      [--no-sample] [--install-rust] [--no-shortcuts]
+rem                      [-- <extra cargo args>]
 rem
-rem  It does three things:
+rem  It does four things:
 rem    1. Makes sure a usable RUST TOOLCHAIN is installed. If `cargo` is missing
 rem       it offers to install it with the official rustup installer -
 rem       https://rustup.rs - asking first; --install-rust answers yes up front,
@@ -15,6 +16,11 @@ rem    3. Makes sure a FULLY POPULATED sample vault exists - every tab filled
 rem       in, with attached documents so the encrypted volume is real - by
 rem       running the `seed_sample_vault` example, then prints where it is and
 rem       the two passwords that open it.
+rem    4. Installs the two DESKTOP SHORTCUTS - "vaultis (View)" and
+rem       "vaultis (Edit)" - by running packaging\windows\make-shortcuts.ps1
+rem       against the exe just built. --no-shortcuts skips it, and so does
+rem       --no-sample, which means "just build". A failure there is a warning,
+rem       not a build failure: the exe itself is still good.
 rem
 rem  The sample vault is fiction - see examples\seed_sample_vault.rs: fake
 rem  people, fake institutions, visibly fake "passwords". Its two master
@@ -65,6 +71,7 @@ set "FRESH=0"
 set "SAMPLE_DIR="
 set "EXTRA_CARGO_ARGS="
 set "INSTALL_RUST=0"
+set "SHORTCUTS=1"
 
 rem Oldest toolchain that can build this workspace: the crates are edition 2024,
 rem which needs Rust 1.85+, and the source uses stable let-chains, 1.88+. Checked
@@ -99,9 +106,16 @@ if /i "%~1"=="--sample-dir" (
     shift
     goto parse_args
 )
-rem --no-sample builds only - useful in CI, where nobody opens a demo vault.
+rem --no-sample builds only - useful in CI, where nobody opens a demo vault or
+rem wants launchers dropped on a throwaway runner's Desktop.
 if /i "%~1"=="--no-sample" (
     set "SAMPLE_DIR=-"
+    set "SHORTCUTS=0"
+    shift
+    goto parse_args
+)
+if /i "%~1"=="--no-shortcuts" (
+    set "SHORTCUTS=0"
     shift
     goto parse_args
 )
@@ -268,18 +282,46 @@ if errorlevel 1 (
     popd
     exit /b 1
 )
-goto summary
+goto shortcuts
 
 :already_there
 echo ==^> Sample vault already present - left untouched; use --fresh to rebuild it
+goto shortcuts
+
+rem The installer is pointed at the exe THIS run built - the %PROFILE% one - rather
+rem than left to auto-detect: a debug build must not silently install shortcuts for a
+rem stale release exe still sitting in target\release. The shortcuts therefore store a
+rem path inside the build tree, so a later `cargo clean` breaks them; packaging\README.md
+rem has the copy-it-somewhere-permanent recipe.
+rem
+rem It is best effort - a missing script, no icons, a locked Desktop - because none of
+rem that means the build failed. Warn, then print the summary anyway.
+:shortcuts
+set "GUI_BIN=%REPO_ROOT%\target\%PROFILE%\vaultis-gui.exe"
+set "CLI_BIN=%REPO_ROOT%\target\%PROFILE%\vaultis.exe"
+set "SHORTCUT_PS1=%REPO_ROOT%\packaging\windows\make-shortcuts.ps1"
+set "SHORTCUT_NOTE=  Desktop shortcuts: not installed - packaging\windows\make-shortcuts.ps1"
+if "%SHORTCUTS%"=="0" goto summary
+if not exist "%SHORTCUT_PS1%" goto shortcuts_missing
+echo ==^> Installing the desktop shortcuts
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SHORTCUT_PS1%" -Exe "%GUI_BIN%"
+if errorlevel 1 goto shortcuts_failed
+set "SHORTCUT_NOTE=  Desktop shortcuts installed: vaultis (View) and vaultis (Edit)."
+goto summary
+
+:shortcuts_missing
+echo warning: cannot find %SHORTCUT_PS1% - skipping the desktop shortcuts. 1>&2
+goto summary
+
+:shortcuts_failed
+echo warning: installing the desktop shortcuts failed; the build itself is fine. 1>&2
+echo          Retry with: powershell -ExecutionPolicy Bypass -File "%SHORTCUT_PS1%" -Exe "%GUI_BIN%" 1>&2
 goto summary
 
 rem The summary this script exists for: the LAST thing printed, after all the
 rem cargo noise, so the location and the two passwords are on screen when the
 rem build ends.
 :summary
-set "GUI_BIN=%REPO_ROOT%\target\%PROFILE%\vaultis-gui.exe"
-set "CLI_BIN=%REPO_ROOT%\target\%PROFILE%\vaultis.exe"
 echo.
 echo ------------------------------------------------------------------------
 echo  Sample vault ready - fully populated demo data, safe to experiment in
@@ -292,6 +334,8 @@ echo   Open it - graphical, editable:
 echo     "%GUI_BIN%" "%SAMPLE_DIR%" --write
 echo   Open it - terminal:
 echo     "%CLI_BIN%" --tui "%SAMPLE_DIR%" --write
+echo.
+echo %SHORTCUT_NOTE%
 echo.
 echo   Everything in it is fiction - never put real secrets in this vault.
 echo ------------------------------------------------------------------------
@@ -307,14 +351,16 @@ exit /b 0
 echo Build vaultis and hand back a DEMO vault you can immediately open.
 echo.
 echo   scripts\build.bat [--release] [--fresh] [--sample-dir DIR]
-echo                     [--no-sample] [--install-rust] [-- ^<extra cargo args^>]
+echo                     [--no-sample] [--install-rust] [--no-shortcuts]
+echo                     [-- ^<extra cargo args^>]
 echo.
 echo   --release          Build, and seed with, the optimized build.
 echo   --fresh            Delete an existing sample vault and build a new one.
 echo   --sample-dir DIR   Put the sample vault somewhere other than
 echo                      target\sample-vault.
-echo   --no-sample        Just build; skip the sample vault entirely.
+echo   --no-sample        Just build; skip the sample vault AND the shortcuts.
 echo   --install-rust     Install the Rust toolchain without asking, if missing.
+echo   --no-shortcuts     Skip installing the two Desktop shortcuts.
 echo   --                 Pass the remaining arguments to cargo build.
 echo.
 echo The sample vault is fiction and its two passwords are deliberately trivial

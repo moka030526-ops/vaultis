@@ -3,9 +3,9 @@
 # Build vaultis and hand back a DEMO vault you can immediately open.
 #
 #   scripts/build.sh [--release] [--fresh] [--sample-dir DIR] [--no-sample]
-#                    [--install-rust] [-- <extra cargo args>]
+#                    [--install-rust] [--no-shortcuts] [-- <extra cargo args>]
 #
-# It does three things:
+# It does four things:
 #   1. Makes sure a usable RUST TOOLCHAIN is installed. If `cargo` is missing it offers
 #      to install it with the official rustup installer (https://rustup.rs), asking
 #      first; `--install-rust` answers yes up front, for an unattended run.
@@ -14,6 +14,10 @@
 #      attached documents so the encrypted volume is real — by running the
 #      `seed_sample_vault` example, then prints where it is and the two passwords
 #      that open it.
+#   4. Installs the two DESKTOP SHORTCUTS — "vaultis (View)" and "vaultis (Edit)" —
+#      by running packaging/linux/install-shortcuts.sh against the binary just built.
+#      `--no-shortcuts` skips it; so does `--no-sample`, which means "just build".
+#      A failure there is a warning, not a build failure: the binary is still good.
 #
 # The sample vault is fiction (see examples/seed_sample_vault.rs): fake people, fake
 # institutions, visibly fake "passwords". Its two master passwords are deliberately
@@ -37,6 +41,7 @@ fresh=0
 sample_dir=""
 extra_cargo_args=()
 install_rust=0
+shortcuts=1
 
 # Oldest toolchain that can build this workspace: the crates are edition 2024 (Rust
 # 1.85+) and the source uses stable let-chains (1.88+). Checked rather than assumed,
@@ -64,8 +69,14 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --no-sample)
-            # Build only — useful in CI, where nobody clicks around a demo vault.
+            # Build only — useful in CI, where nobody clicks around a demo vault or
+            # wants launchers dropped on a throwaway runner's Desktop.
             sample_dir="-"
+            shortcuts=0
+            shift
+            ;;
+        --no-shortcuts)
+            shortcuts=0
             shift
             ;;
         --)
@@ -209,6 +220,35 @@ fi
 gui_bin="$repo_root/target/$profile/vaultis-gui"
 cli_bin="$repo_root/target/$profile/vaultis"
 
+# --- Desktop shortcuts ---------------------------------------------------------
+#
+# The installer is pointed at the binary THIS run built ($profile), rather than left to
+# auto-detect: a debug build must not silently install launchers for a stale release
+# binary sitting in target/release. Note the shortcuts therefore store a path inside the
+# build tree — a later `cargo clean` breaks them (see packaging/README.md for the
+# install-it-somewhere-permanent recipe).
+shortcuts_installed=0
+if [[ "$shortcuts" -eq 1 ]]; then
+    installer="$repo_root/packaging/linux/install-shortcuts.sh"
+    echo "==> Installing the desktop shortcuts"
+    # Best effort: a missing installer, no Desktop, no icons — none of that means the
+    # build failed, so warn and carry on rather than dying under `set -e`.
+    if [[ ! -x "$installer" ]]; then
+        echo "warning: $installer is missing or not executable; skipping shortcuts" >&2
+    elif bash "$installer" "$gui_bin"; then
+        shortcuts_installed=1
+    else
+        echo "warning: installing the desktop shortcuts failed; the build itself is fine." >&2
+        echo "         Retry with: packaging/linux/install-shortcuts.sh \"$gui_bin\"" >&2
+    fi
+fi
+
+if [[ "$shortcuts_installed" -eq 1 ]]; then
+    shortcut_note="  Desktop shortcuts installed: \"vaultis (View)\" and \"vaultis (Edit)\"."
+else
+    shortcut_note="  Desktop shortcuts: not installed (packaging/linux/install-shortcuts.sh)."
+fi
+
 # The summary the whole script exists for: it is the LAST thing printed, after all the
 # cargo noise, so the two passwords and the location are on screen when the build ends.
 cat <<EOF
@@ -224,6 +264,8 @@ cat <<EOF
     "$gui_bin" "$sample_dir" --write
   Open it (terminal):
     "$cli_bin" --tui "$sample_dir" --write
+
+$shortcut_note
 
   Everything in it is fiction — never put real secrets in this vault.
 ────────────────────────────────────────────────────────────────────────
