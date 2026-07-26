@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 # ==========================================
 
 $RepoUrl = "https://github.com/moka030526-ops/vaultis.git"
-$RepoFolder = "vault"
+$RepoFolder = "vaultis"
 
 $ScriptPath = ".\scripts\build.bat"
 $ScriptArgs = @("--release", "--install-rust")
