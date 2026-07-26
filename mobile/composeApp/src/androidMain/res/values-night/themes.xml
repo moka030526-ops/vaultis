@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark-mode window theme; see values/themes.xml for why this exists. -->
+<resources>
+    <style name="Theme.Vaultis" parent="@android:style/Theme.Material.NoActionBar" />
+</resources>

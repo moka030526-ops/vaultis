@@ -373,6 +373,19 @@ impl Vault {
         self.lock().previous_access()
     }
 
+    /// [`Vault::previous_access`] rendered exactly like the desktop's `format_time`:
+    /// `YYYY-MM-DD HH:MM:SS UTC`, or `"never"` for a zero/negative stamp.
+    ///
+    /// The host shows this on unlock so an access the user does not recognise is
+    /// visible — the same unauthorised-open signal both desktop front-ends print
+    /// ("Unlocked. Last opened: … (generation N)"). Formatting lives here, not in
+    /// Kotlin/Swift, so the (fiddly) calendar math stays in the one audited
+    /// implementation (`vaultis_core::records::civil_from_unix`) and cannot drift
+    /// between the desktop and the two mobile front-ends.
+    pub fn previous_access_label(&self) -> String {
+        format_time(self.lock().previous_access())
+    }
+
     /// The master list for one tab: `{id, label}` per record, in stored order.
     pub fn list_records(&self, kind: RecordKind) -> Vec<RecordSummary> {
         let ov = self.lock();
@@ -486,6 +499,18 @@ impl Vault {
 
 fn summary<R: Record>(r: &R) -> RecordSummary {
     RecordSummary { id: r.id().to_string(), label: r.label() }
+}
+
+/// Format a unix-seconds timestamp as `YYYY-MM-DD HH:MM:SS UTC`, or `"never"` for a
+/// zero/negative stamp. Byte-for-byte the desktop's `format_time` (vaultis-desktop
+/// `ui.rs`), including the shared `civil_from_unix` calendar math, so the "last
+/// opened" line the mobile host shows is identical to the desktop's.
+fn format_time(ts: i64) -> String {
+    if ts <= 0 {
+        return "never".to_string();
+    }
+    let (year, mo, d, h, m, s) = records::civil_from_unix(ts);
+    format!("{year:04}-{mo:02}-{d:02} {h:02}:{m:02}:{s:02} UTC")
 }
 
 // ---------------------------------------------------------------------------
@@ -1063,6 +1088,37 @@ mod tests {
         assert!(v.generation() >= 1, "opened generation is the saved counter");
         assert!(v.previous_access() > 0, "previous access is a real timestamp");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The host renders the "last opened" line from this label, so it must be the
+    /// desktop's exact `YYYY-MM-DD HH:MM:SS UTC` shape (not a locale/timezone-dependent
+    /// one) and must agree with the raw timestamp it formats.
+    #[test]
+    fn previous_access_label_matches_the_desktop_format() {
+        let dir = tmp();
+        make_full_vault(&dir, b"one", b"two");
+        let v = open_full(&dir);
+        let label = v.previous_access_label();
+        assert_eq!(label, format_time(v.previous_access()), "label formats the real stamp");
+        assert!(label.ends_with(" UTC"), "explicit UTC, never local time: {label}");
+        // "YYYY-MM-DD HH:MM:SS UTC" — fixed width, so a shape regression is caught.
+        assert_eq!(label.len(), 23, "unexpected shape: {label}");
+        let (date, rest) = label.split_once(' ').expect("date and time are space-separated");
+        assert_eq!(date.len(), 10, "YYYY-MM-DD");
+        assert_eq!(date.matches('-').count(), 2, "YYYY-MM-DD");
+        assert_eq!(rest.matches(':').count(), 2, "HH:MM:SS");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A never-opened vault must read "never", not a 1970 epoch date, which would
+    /// look like a real (and alarming) prior access to the user.
+    #[test]
+    fn format_time_renders_never_for_a_zero_or_negative_stamp() {
+        assert_eq!(format_time(0), "never");
+        assert_eq!(format_time(-1), "never");
+        assert_eq!(format_time(i64::MIN), "never");
+        // A known instant: 2021-01-01T00:00:00Z.
+        assert_eq!(format_time(1_609_459_200), "2021-01-01 00:00:00 UTC");
     }
 
     #[test]

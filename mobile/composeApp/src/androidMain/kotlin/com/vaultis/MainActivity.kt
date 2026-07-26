@@ -7,9 +7,11 @@ import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import android.os.PersistableBundle
+import android.view.View
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 
 /**
  * The single Android entry point. The vault lives in app-private storage
@@ -24,8 +26,20 @@ class MainActivity : ComponentActivity() {
         // and the recent-apps thumbnail, so a revealed password or vault contents can't
         // leak through those OS surfaces.
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        // Draw behind the status/navigation bars. Android 15 (targetSdk 35) enforces this
+        // for every app anyway; opting in explicitly makes 14-and-below render identically,
+        // so the inset handling in the shared UI (safeDrawingPadding) is exercised on every
+        // version instead of only the newest.
+        enableEdgeToEdge()
         val vaultDir = filesDir.resolve("vault").apply { mkdirs() }.absolutePath
         setContent { App(vaultDir = vaultDir, copySecret = ::copySensitive) }
+        // Anti-tapjacking: drop any touch delivered while another app's window is drawn on
+        // top of ours. A malicious overlay ("draw over other apps") can otherwise cover the
+        // screen with its own UI and let the taps through to us — so what the user believes
+        // is a tap on the overlay is really a tap on "Reveal" or "Copy" underneath, turning
+        // a password the attacker cannot see into one on the clipboard. Set on the content
+        // root, so it filters for the whole view hierarchy including all Compose input.
+        findViewById<View>(android.R.id.content).filterTouchesWhenObscured = true
     }
 
     /**

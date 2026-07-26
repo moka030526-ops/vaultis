@@ -13,7 +13,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="vaultis"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@style/Theme.Vaultis">
         <!-- Handle config changes in-process instead of recreating the Activity.
              Compose redraws on these without losing state; recreation would
              otherwise discard the in-flight clipboard auto-clear timer (App.kt). -->

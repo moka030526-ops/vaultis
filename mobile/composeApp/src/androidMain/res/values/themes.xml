@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The WINDOW theme — the background the system paints before (and behind) Compose.
+
+  Compose picks its own light/dark colour scheme at runtime from `isSystemInDarkTheme()`,
+  but the window itself is styled here, so a light-only window theme makes a dark-mode
+  phone flash WHITE on every launch. `values-night/themes.xml` supplies the dark variant
+  and the system swaps them automatically.
+
+  System-bar icon contrast is NOT set here on purpose: `enableEdgeToEdge()` in MainActivity
+  manages it, flipping the status/navigation-bar icons to match the current mode. Setting it
+  in both places would just risk the two disagreeing.
+-->
+<resources>
+    <style name="Theme.Vaultis" parent="@android:style/Theme.Material.Light.NoActionBar" />
+</resources>
