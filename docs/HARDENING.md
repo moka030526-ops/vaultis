@@ -283,6 +283,34 @@ non-gaps on closer inspection):
   vault dir) pre-creates the parent directory, so `write_vault_file`'s own
   `create_dir_all` is redundant defense-in-depth and the guard can't change behaviour.
 
+### 3.1h Eighth round — desktop → mobile hardening-parity sweep
+
+Rounds 1–7 audited the mobile viewer as part of the whole codebase, and several of
+their fixes were mobile-side (F-2, F-4, F-10, F-12, R-3, R-6/R-13/R-14). This round
+asked the narrower question directly: **for every hardening the desktop front-ends
+apply, does the mobile app do the equivalent?** Each desktop measure was enumerated
+from `gui.rs`/`ui.rs` and checked against `App.kt` + `MainActivity.kt` + the FFI.
+
+Most were already at parity or deliberately, documentedly not applicable — the
+mobile-only downgrades (`mlock` off, no single-writer lock, cleartext crossing into
+the managed heap) are unchanged and still disclosed in `mobile/README.md`. Two real
+gaps were found and fixed:
+
+| # | Sev | Fix |
+| --- | --- | --- |
+| C-1 | Med | **The mobile app never showed the "last opened" / generation line.** Both desktop front-ends print `Unlocked. Last opened: <time> (generation N)` after a successful open — two tamper signals only the user can evaluate: an access time they do not recognise means somebody else opened the vault with their two passwords, and a generation that went *down* since last time means the whole file was rolled back to an older snapshot (§9.12). The FFI already exposed `previous_access()`/`generation()`, but the mobile UI dropped both on the floor and showed only the recovery notice — so an unauthorised open or a rollback that did not also trip the recovery path was **silent on mobile while it was visible on desktop**. Fixed: `App.kt` now renders the banner with the desktop's exact content and priority order (recovery notice first, else the last-opened line, else nothing for a never-before-opened vault). The timestamp is formatted by a new `Vault::previous_access_label()` in the FFI — reusing the core's `civil_from_unix` behind the desktop's `format_time` shape — rather than reimplemented in Kotlin, so the (fiddly) calendar math stays in one audited place and cannot drift between the three front-ends. |
+| C-2 | Low | **The host's own copies of the master passwords were never wiped.** `open_vault`'s contract says it wipes the *Rust-owned* `Vec<u8>` copies (F-12) and that "the host should still overwrite its own copies afterwards" — the host did not. `pw1.encodeToByteArray()` left a plaintext `ByteArray` per password for the GC to reclaim whenever, and the two `String` fields stayed in the composable's state for as long as the unlock screen lived, including **after a failed attempt** — the moment a user is most likely to put the phone down. The desktop wipes on both the success and the failure path (`wipe_passwords()`, an explicit round-5 behaviour). Fixed: the `ByteArray`s are cleared in a `finally` (they are mutable, so this is a real overwrite, matching the desktop's `zeroize()`), and both `String` fields are cleared after every attempt — which cannot overwrite the bytes (Kotlin strings are immutable) but does release the last reference so the GC can reclaim them instead of pinning both master passwords for the life of the screen. |
+
+Verified at parity, no change needed: the no-oracle unlock-error collapse (A-3/R-3 —
+`friendlyError` keeps specific messages only for the password-*independent* structural
+errors); password-history masking (F-5 — the FFI applies `display_detail`, and v1 does
+not surface history at all); the sensitive-clipboard path and its 15 s + on-lock wipe
+(F-10, F-2, F-4, R-6); momentary reveal (B-1 — the mobile reveal toggle lives in the
+detail composable and is destroyed on back-navigation, so it cannot go stale the way
+the desktop's screen-level toggles could); the recovery/rollback notice (R-12); and
+auto-lock on backgrounding plus `FLAG_SECURE`, which have **no desktop equivalent** and
+are strictly additional.
+
 ### 3.2 Investigated and refuted (no change needed)
 
 | # | Hypothesis | Why it does not hold |

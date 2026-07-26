@@ -691,6 +691,12 @@ back. The **Export directory** and **backup** are usable even in read-only mode.
 - No `unsafe` code; the encryption key is locked out of swap; secrets are wiped
   from memory on close.
 
+**Can spy software on my phone or computer read this?** The stored file, no — it is
+ciphertext needing both passwords. A device that is already compromised *while you have
+the vault unlocked*, yes, and no password manager can prevent that.
+[`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) spells out exactly what an attacker can
+and cannot do in each case, and what actually helps.
+
 For the full architecture, encryption scheme, and security caveats, see
 [`docs/DESIGN.md`](docs/DESIGN.md); for how the code is organized, see
 [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md); for the adversarial security
@@ -716,10 +722,16 @@ v1 of the apps is a **read-only viewer** (unlock → browse the records → view
 entry → reveal/copy a password). It currently surfaces the first five record types
 (Instructions, Trust & Will, Assets, Accounts, Real Estate); the Taxes tab is
 desktop-only for now. Copied passwords are auto-cleared from the clipboard after
-15 s and immediately on lock. Build/usage details, the offline import model, and the
-disclosed mobile security trade-offs are in
+15 s and immediately on lock; the vault also locks itself when the app leaves the
+foreground and after two minutes untouched. Build/usage details, the offline import
+model, and the disclosed mobile security trade-offs are in
 [`mobile/README.md`](mobile/README.md). Android builds on Linux/macOS/Windows;
 iOS requires a Mac with Xcode.
+
+**To put the app on your own phone**, follow
+[`mobile/INSTALL_ANDROID.md`](mobile/INSTALL_ANDROID.md) — toolchain, build, USB
+install, moving your encrypted vault across, and the debug-vs-release-signing
+trade-off as it actually stands today.
 
 ## Development
 

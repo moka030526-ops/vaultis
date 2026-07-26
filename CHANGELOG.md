@@ -16,8 +16,64 @@ These changes are committed but **not yet tagged** — the workspace crates are 
 at `0.1.0`. When cutting the release, rename this section to the chosen version +
 date and bump the crate versions to match.
 
+### Added
+
+- **Idle auto-lock on mobile (2 minutes).** Backgrounding already locked the vault, but a
+  phone left face-up and untouched stayed foregrounded and unlocked indefinitely — the most
+  likely way this vault gets read by someone who is not its owner. Any touch restarts the
+  countdown; the timer runs on a *monotonic* clock, so changing the device's time zone or
+  clock cannot extend it. The desktop has no equivalent, making this one of the few places
+  the mobile app is deliberately stricter.
+- **Anti-tap-jacking on Android.** `filterTouchesWhenObscured` on the content root discards
+  touches delivered while another app's window is drawn over ours, so a malicious overlay
+  cannot render its own interface and quietly route the taps into "Reveal" or "Copy"
+  underneath — turning a password the attacker cannot see into one on the clipboard.
+- **[`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)** — a plain answer to "can spy software
+  on my phone or computer read my vault?", covering what the encryption does and does not
+  cover, the realistic Android vectors (accessibility-service scraping, hostile keyboards,
+  root) and the desktop ones (same-user memory access, no screen-capture protection, no
+  idle lock), and what actually helps for both security and not-losing-the-data.
+- **[`mobile/INSTALL_ANDROID.md`](mobile/INSTALL_ANDROID.md)** — step-by-step install on a
+  real phone: toolchain, build, USB install, moving the encrypted vault into app-private
+  storage, and an honest account of the debug-vs-release-signing trade-off (the debug build
+  is currently the only one a vault can be loaded into, because the in-app import is still
+  a roadmap item).
+
 ### Fixed
 
+- **Android UI fixes for modern phones.** The app was built against targetSdk 35, where
+  Android 15 makes edge-to-edge mandatory, but handled no window insets — the top app bar
+  would have rendered under the status-bar clock and the "Unlock" button under the
+  gesture-navigation pill. It also had no dark theme (a dark-mode phone got a
+  full-brightness white screen, both from Compose and as a white launch flash from the
+  window theme), ignored the system Back button so the standard "go back to the list"
+  gesture instead quit the app and forced a full re-unlock, and could not scroll the unlock
+  screen — so with the keyboard up on a short screen or in landscape, the Unlock button was
+  unreachable. All four fixed: `safeDrawingPadding` + `enableEdgeToEdge`, a day/night colour
+  scheme and window theme, an expect/actual back handler (enabled only on the detail screen —
+  on the list, Back still leaves the app, which locks the vault), and a scrollable unlock
+  screen.
+- **Desktop → mobile hardening-parity sweep 2026-07-26** — every hardening measure the
+  desktop front-ends apply, checked one by one against the Android/iOS app (write-up in
+  [`docs/HARDENING.md`](docs/HARDENING.md) §3.1h). Most were already at parity; the
+  mobile-only downgrades (`mlock` off, no single-writer lock, cleartext in the managed
+  heap) are unchanged and still disclosed. Two gaps closed:
+  - **The mobile app never showed "Last opened … (generation N)" (Med).** Both desktop
+    front-ends print it after unlocking, and both halves are tamper signals only the
+    owner can judge: an access time you do not recognise means someone else opened the
+    vault with your two passwords, and a generation that went *down* means the file was
+    rolled back to an older copy. The FFI already exposed both values; the mobile UI
+    discarded them and showed only the recovery notice — so an unauthorised open was
+    **silent on the phone but visible on the desktop**. The app now renders the desktop's
+    exact banner and priority order, with the timestamp formatted by a new
+    `Vault::previous_access_label()` so the calendar math stays in the one audited
+    implementation instead of being rewritten in Kotlin.
+  - **The host never wiped its own copies of the master passwords (Low).** `open_vault`
+    wipes the Rust-side copies and documents that the host must clear its own; it did
+    not. The `ByteArray`s are now overwritten in a `finally` (mutable, so this is a real
+    wipe), and both unlock fields are cleared after **every** attempt — success and
+    failure alike, matching the desktop's `wipe_passwords()`; a failed attempt is exactly
+    when someone is likely to set the phone down.
 - **Deep audit 2026-07-25, round 2** — a second, deeper pass targeting the surfaces round 1 did
   not name: the single-instance guard, launch/path resolution, the merge apply path, the central
   sanitizers, and the numeric-cast and file-I/O primitives (full write-up in

@@ -3,6 +3,7 @@
 package com.vaultis
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -20,6 +22,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -39,6 +43,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -53,6 +59,35 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
+
+/**
+ * Lock the vault after this long with no touch anywhere in the app. Two minutes is the
+ * usual password-manager figure: long enough to read an entry through without being
+ * interrupted, short enough that a phone put down and walked away from does not stay
+ * unlocked. Locking is cheap and lossless here (v1 is read-only — there is nothing
+ * unsaved to lose), so the tradeoff is entirely in the user's favour.
+ */
+private val IDLE_LOCK_AFTER = 2.minutes
+
+/**
+ * Last-touch instant for the idle auto-lock.
+ *
+ * Deliberately a plain `var` in a holder rather than Compose state: a touch must NOT
+ * invalidate composition. Pointer events arrive continuously during a scroll, so making
+ * this observable would recompose (or restart the timer coroutine) tens of times a second
+ * for something no UI element displays. The timer reads it from inside a coroutine, which
+ * is not a snapshot observer, so nothing needs to be notified.
+ *
+ * A MONOTONIC mark, not a wall clock: the countdown must not be skippable by changing the
+ * device's time zone or clock while the vault is open.
+ */
+private class IdleClock {
+    var lastTouch: TimeMark = TimeSource.Monotonic.markNow()
+}
 
 /** The five vault tabs, each mapping to a core [RecordKind]. */
 private enum class Section(val title: String, val kind: RecordKind) {
@@ -92,7 +127,18 @@ object AppLifecycle {
  */
 @Composable
 fun App(vaultDir: String, copySecret: ((String) -> Unit)? = null) {
-    MaterialTheme {
+    // Follow the system light/dark setting. Without an explicit scheme MaterialTheme
+    // always uses the LIGHT one, so a phone in dark mode got a full-brightness white
+    // screen — bad at night and, for a vault you may open in public, needlessly
+    // conspicuous. (No dynamic/wallpaper colour on purpose: the palette should not
+    // vary by device for an app whose screenshots are its own documentation.)
+    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+        // `Surface` paints the themed background across the WHOLE window — including
+        // behind the status and navigation bars, which we now draw under (below).
+        // `safeDrawingPadding` then insets the actual content out of those bars, the
+        // display cutout, AND the on-screen keyboard. Android 15 (targetSdk 35) makes
+        // edge-to-edge mandatory, so without this the top app bar would sit under the
+        // status-bar clock and the "Unlock" button under the gesture-nav pill.
         var vault by remember { mutableStateOf<Vault?>(null) }
         val clipboard = LocalClipboardManager.current
         // App-scoped clipboard auto-clear. Copying a password bumps this token,
@@ -137,18 +183,73 @@ fun App(vaultDir: String, copySecret: ((String) -> Unit)? = null) {
             }
         }
 
+        // Idle auto-lock. Backgrounding the app already locks it, but a phone left face-up
+        // and UNTOUCHED on a desk or table stays foregrounded and unlocked indefinitely —
+        // the single most likely way this vault gets read by someone who is not the owner.
+        // (The desktop has no equivalent because it is not a device you put down in public;
+        // this is one of the few places the mobile app is deliberately STRICTER.)
+        //
+        // Any touch anywhere in the app stamps `idle.lastTouch` (see the pointer observer
+        // below); this loop sleeps exactly until the deadline that stamp implies, re-checks,
+        // and only locks once the screen has genuinely been idle for the whole window — so a
+        // touch mid-countdown extends it without restarting the coroutine. Reading a long
+        // entry without touching the screen is the one false positive, hence a tolerant
+        // timeout; the cost of being wrong is re-entering two passwords.
+        val idle = remember { IdleClock() }
+        LaunchedEffect(vault != null) {
+            if (vault == null) return@LaunchedEffect // already locked; nothing to time out
+            idle.lastTouch = TimeSource.Monotonic.markNow() // unlocking counts as activity
+            while (true) {
+                val remaining = IDLE_LOCK_AFTER - idle.lastTouch.elapsedNow()
+                if (remaining <= Duration.ZERO) break
+                delay(remaining)
+            }
+            vault?.destroy()
+            vault = null
+            if (clipboardToken != 0) {
+                clipboard.setText(AnnotatedString("")) // same wipe as an explicit lock
+                clipboardToken = 0
+            }
+        }
+
         val current = vault
-        if (current == null) {
-            UnlockScreen(vaultDir) { vault = it }
-        } else {
-            VaultScreen(current, copyToClipboard) {
-                current.destroy()
-                vault = null
-                // Only wipe the clipboard if WE put a secret there (token != 0); otherwise an
-                // unrelated clip the user copied meanwhile must be left untouched on lock.
-                if (clipboardToken != 0) {
-                    clipboard.setText(AnnotatedString("")) // wipe the copied secret on lock
-                    clipboardToken = 0 // we just wiped — cancel any pending auto-clear
+        // `Surface` paints the themed background across the WHOLE window, including
+        // behind the status and navigation bars (which we draw under — see
+        // MainActivity's enableEdgeToEdge). `safeDrawingPadding` then insets the
+        // CONTENT out of those bars, the display cutout, and the on-screen keyboard.
+        // Android 15 (targetSdk 35) makes edge-to-edge mandatory, so without this the
+        // top app bar would sit under the status-bar clock and the "Unlock" button
+        // under the gesture-nav pill.
+        Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .safeDrawingPadding()
+                    // Observe every touch to feed the idle timer above. `Initial` pass +
+                    // never consuming the event means this only WATCHES: taps, scrolls and
+                    // text entry still reach the UI underneath exactly as before.
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent(PointerEventPass.Initial)
+                                idle.lastTouch = TimeSource.Monotonic.markNow()
+                            }
+                        }
+                    }
+            ) {
+                if (current == null) {
+                    UnlockScreen(vaultDir) { vault = it }
+                } else {
+                    VaultScreen(current, copyToClipboard) {
+                        current.destroy()
+                        vault = null
+                        // Only wipe the clipboard if WE put a secret there (token != 0); otherwise
+                        // an unrelated clip the user copied meanwhile must be left untouched on lock.
+                        if (clipboardToken != 0) {
+                            clipboard.setText(AnnotatedString("")) // wipe the copied secret on lock
+                            clipboardToken = 0 // we just wiped — cancel any pending auto-clear
+                        }
+                    }
                 }
             }
         }
@@ -164,7 +265,11 @@ private fun UnlockScreen(vaultDir: String, onUnlocked: (Vault) -> Unit) {
     val scope = rememberCoroutineScope()
 
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        // Scrollable: with the soft keyboard up (and `safeDrawingPadding` insetting the
+        // content out of it), a short phone in landscape has too little height left for
+        // the two fields plus the button — without a scroll the "Unlock" button is simply
+        // unreachable. `Center` still centres it whenever it does fit.
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.Center,
     ) {
         Text("vaultis", style = MaterialTheme.typography.headlineMedium)
@@ -204,9 +309,32 @@ private fun UnlockScreen(vaultDir: String, onUnlocked: (Vault) -> Unit) {
                     // Key derivation (Argon2id) is heavy — keep it off the UI thread.
                     val result = runCatching {
                         withContext(Dispatchers.Default) {
-                            openVault(vaultDir, pw1.encodeToByteArray(), pw2.encodeToByteArray())
+                            // `open_vault` wipes the RUST-owned copies of these arrays, but
+                            // the host's own copies are the host's to clear (it says so in
+                            // its docs). A ByteArray is mutable, so — unlike the immutable
+                            // String fields below — this wipe really does overwrite the
+                            // master-password bytes. `finally` so it runs on the throwing
+                            // path too, which is where a wrong-password attempt lands.
+                            val b1 = pw1.encodeToByteArray()
+                            val b2 = pw2.encodeToByteArray()
+                            try {
+                                openVault(vaultDir, b1, b2)
+                            } finally {
+                                b1.fill(0)
+                                b2.fill(0)
+                            }
                         }
                     }
+                    // Drop the plaintext passwords from the UI state as soon as the attempt
+                    // is over — on success AND on failure, mirroring the desktop's
+                    // `wipe_passwords()` on both paths (a failed attempt is the moment a
+                    // user is most likely to step away). Kotlin Strings are immutable, so
+                    // this cannot overwrite the bytes the way the desktop's `zeroize()`
+                    // does; what it does do is release the last reference so the GC can
+                    // reclaim them, instead of pinning both master passwords in the heap
+                    // for as long as this screen lives.
+                    pw1 = ""
+                    pw2 = ""
                     busy = false
                     result
                         .onSuccess { onUnlocked(it) }
@@ -248,6 +376,11 @@ private fun VaultScreen(vault: Vault, onCopy: (String) -> Unit, onLock: () -> Un
     var section by remember { mutableStateOf(Section.Accounts) }
     var selectedId by remember { mutableStateOf<String?>(null) }
 
+    // System Back on a record returns to the list, like every other Android app. Only
+    // enabled while a record is open; on the list itself Back is left to leave the app,
+    // which locks the vault (see PlatformBackHandler).
+    PlatformBackHandler(enabled = selectedId != null) { selectedId = null }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -265,21 +398,56 @@ private fun VaultScreen(vault: Vault, onCopy: (String) -> Unit, onLock: () -> Un
             val id = selectedId
             if (id == null) {
                 Column(Modifier.fillMaxSize()) {
-                    // Surface the core's rollback/recovery notice (e.g. the vault was
-                    // recovered from its mirror, or its generation went backwards),
-                    // matching the desktop apps — so a tampered/rolled-back vault does
-                    // not open silently on mobile. Computed once per unlock.
-                    val notice = remember { vault.recoveryNotice() }
-                    if (notice != null) {
+                    // The unlock banner, with the SAME content and priority order both
+                    // desktop front-ends use (gui.rs / ui.rs after a successful open):
+                    //
+                    //   1. the core's rollback/recovery notice, if any — the vault was
+                    //      recovered from its in-place mirror, or its generation went
+                    //      backwards. Takes priority: a tampered/rolled-back vault must
+                    //      not open silently on mobile either.
+                    //   2. otherwise "Last opened: <time> (generation N)". Both halves are
+                    //      tamper signals the user is the only one who can check: an access
+                    //      time they do not recognise means somebody else opened the vault
+                    //      with their two passwords, and a generation that went DOWN since
+                    //      last time means the whole file was swapped for an older snapshot.
+                    //      Without this the mobile app was strictly weaker than the desktop
+                    //      at surfacing an unauthorised open.
+                    //
+                    // The timestamp is formatted by the FFI (`previousAccessLabel`), not
+                    // here, so the calendar math stays in the one audited implementation and
+                    // reads identically on desktop, Android, and iOS. Computed once per
+                    // unlock — these are properties of the snapshot that was opened.
+                    val recovery = remember { vault.recoveryNotice() }
+                    val opened = remember {
+                        // previousAccess() == 0 means "never opened before" (a vault created
+                        // on desktop and copied over, opened here for the first time) — the
+                        // desktop shows a bare "Vault unlocked." there rather than a
+                        // meaningless date, so there is no banner to show.
+                        if (vault.previousAccess() == 0L) null
+                        else "Last opened: ${vault.previousAccessLabel()} (generation ${vault.generation()})"
+                    }
+                    if (recovery != null) {
                         Surface(
                             color = MaterialTheme.colorScheme.errorContainer,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(
-                                "⚠ $notice",
+                                "⚠ $recovery",
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.padding(12.dp),
+                            )
+                        }
+                    } else if (opened != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                opened,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                             )
                         }
                     }
