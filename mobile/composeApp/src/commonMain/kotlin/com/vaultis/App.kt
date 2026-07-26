@@ -89,13 +89,26 @@ private class IdleClock {
     var lastTouch: TimeMark = TimeSource.Monotonic.markNow()
 }
 
-/** The five vault tabs, each mapping to a core [RecordKind]. */
+/**
+ * The vault tabs, each mapping to a core [RecordKind]. **All eight collections the core
+ * stores appear here**, in the desktop's tab order.
+ *
+ * `Urgent` is first, and is the tab the app opens on, because that is what it is for: the
+ * core describes it as "the most time-critical things an executor must know (whom to call,
+ * where the safe key is, an in-flight crisis) … the first thing seen on unlock". Earlier
+ * versions of this app showed only five tabs and opened on Accounts, so an executor reaching
+ * for a phone in exactly that crisis saw a complete-looking app with the urgent note, the tax
+ * filings and the general documents silently missing from it.
+ */
 private enum class Section(val title: String, val kind: RecordKind) {
+    Urgent("Urgent", RecordKind.URGENT),
     Instructions("Instructions", RecordKind.INSTRUCTION),
     TrustWill("Trust & Will", RecordKind.TRUST_WILL),
     Assets("Assets & Liabilities", RecordKind.ASSET_LIABILITY),
     Accounts("Accounts", RecordKind.ACCOUNT),
     RealEstate("Real Estate", RecordKind.REAL_ESTATE),
+    Taxes("Taxes", RecordKind.TAX_FILING),
+    Documents("Documents", RecordKind.GENERAL_DOCUMENT),
 }
 
 /**
@@ -373,7 +386,8 @@ private fun friendlyError(e: Throwable): String = when (e) {
 
 @Composable
 private fun VaultScreen(vault: Vault, onCopy: (String) -> Unit, onLock: () -> Unit) {
-    var section by remember { mutableStateOf(Section.Accounts) }
+    // Open on Urgent, like the desktop: the executor's "read this first" tab.
+    var section by remember { mutableStateOf(Section.Urgent) }
     var selectedId by remember { mutableStateOf<String?>(null) }
 
     // System Back on a record returns to the list, like every other Android app. Only
@@ -490,11 +504,41 @@ private fun DetailScreen(vault: Vault, kind: RecordKind, id: String, onCopy: (St
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
     ) {
         when (kind) {
+            RecordKind.URGENT -> {
+                val r = remember(id) { runCatching { vault.getUrgent(id) }.getOrNull() }
+                if (r == null) NotFound() else {
+                    Field("Title", r.title)
+                    Field("Description", r.description)
+                }
+            }
             RecordKind.INSTRUCTION -> {
                 val r = remember(id) { runCatching { vault.getInstruction(id) }.getOrNull() }
                 if (r == null) NotFound() else {
                     Field("Title", r.title)
                     Field("Description", r.description)
+                }
+            }
+            RecordKind.TAX_FILING -> {
+                val r = remember(id) { runCatching { vault.getTaxFiling(id) }.getOrNull() }
+                if (r == null) NotFound() else {
+                    Field("Owner", r.owner)
+                    Field("Year", r.year)
+                    Field("Notes", r.notes)
+                    // Show the count even though opening the files is post-MVP: an executor
+                    // must be able to tell that documents exist for a year.
+                    Field(
+                        "Attached documents",
+                        if (r.documentCount == 0u) "none"
+                        else "${r.documentCount} (open on desktop)",
+                    )
+                }
+            }
+            RecordKind.GENERAL_DOCUMENT -> {
+                val r = remember(id) { runCatching { vault.getGeneralDocument(id) }.getOrNull() }
+                if (r == null) NotFound() else {
+                    Field("Title", r.title)
+                    Field("Description", r.description)
+                    Field("Attached document", if (r.file != null) "yes (open on desktop)" else "none")
                 }
             }
             RecordKind.TRUST_WILL -> {

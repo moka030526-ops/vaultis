@@ -101,8 +101,9 @@ done
 
 # `${VAULTIS_SAMPLE_DIR:-}` lets the location be set from the environment too; the
 # `--sample-dir` flag wins over it, and both default to target/sample-vault.
+default_sample_dir="$repo_root/target/sample-vault"
 if [[ -z "$sample_dir" ]]; then
-    sample_dir="${VAULTIS_SAMPLE_DIR:-$repo_root/target/sample-vault}"
+    sample_dir="${VAULTIS_SAMPLE_DIR:-$default_sample_dir}"
 fi
 
 # --- Rust toolchain ------------------------------------------------------------
@@ -254,6 +255,21 @@ fi
 vault_file="$sample_dir/vault.pmv"
 
 if [[ -e "$vault_file" && $fresh -eq 1 ]]; then
+    # `--fresh` deletes a whole directory tree, and the only thing that made this
+    # "safe" was that the target contains a vault.pmv — which is exactly what a REAL
+    # vault contains. So `--fresh --sample-dir ~/my-vault` (or the same via
+    # VAULTIS_SAMPLE_DIR) would destroy real, irreplaceable data with no prompt and no
+    # backup. Refuse unless the target is the default throwaway location this script
+    # owns; deleting anything else is the user's own call to make, by hand.
+    if [[ "$sample_dir" != "$default_sample_dir" ]]; then
+        echo "error: refusing to --fresh a vault outside the default sample location." >&2
+        echo "       target:  $sample_dir" >&2
+        echo "       default: $default_sample_dir" >&2
+        echo "       That directory holds a real vault.pmv. If you are certain it is" >&2
+        echo "       disposable, delete it yourself and re-run:" >&2
+        echo "         rm -rf -- \"$sample_dir\"" >&2
+        exit 1
+    fi
     echo "==> Removing the existing sample vault (--fresh): $sample_dir"
     rm -rf -- "$sample_dir"
 fi

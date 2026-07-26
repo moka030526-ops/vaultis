@@ -9,7 +9,7 @@
 //! and the corruption-fails-closed recovery) lives in `vaultis-core` and is
 //! reused **verbatim**. This crate only:
 //!   * holds an opaque, mutex-guarded [`OpenVault`] behind a UniFFI interface,
-//!   * exposes flat value DTOs (Kotlin/Swift data classes) for the five record
+//!   * exposes flat value DTOs (Kotlin/Swift data classes) for the eight record
 //!     types, and
 //!   * maps the rich [`CoreVaultError`] down to a small, stable, **no-leak**
 //!     [`VaultError`] (wrong-password and corrupt both collapse to one variant,
@@ -17,7 +17,7 @@
 //!
 //! # v1 scope — READ-ONLY
 //!
-//! Open with the two passwords, browse the five tabs, view a record, read its
+//! Open with the two passwords, browse all eight tabs, view a record, read its
 //! edit history. No create/edit/delete/documents/rekey yet (those are additive
 //! follow-ups). A read-only open writes nothing to disk and never takes the
 //! single-writer lock.
@@ -131,18 +131,29 @@ impl From<CoreVaultError> for VaultError {
 }
 
 // ---------------------------------------------------------------------------
-// Value DTOs — flat mirrors of the five records.rs structs (read views).
+// Value DTOs — flat mirrors of the eight records.rs structs (read views).
 // History is NOT bundled (it can embed old/new passwords); fetch it explicitly.
 // ---------------------------------------------------------------------------
 
-/// Which of the five tabs / record collections to operate on.
+/// Which tab / record collection to operate on — all EIGHT the core stores.
+///
+/// The v1 surface deliberately exposed only five, which silently hid three
+/// collections from the mobile viewer with nothing on screen to say so. `Urgent` is
+/// the worst of the three to hide: the core documents it as "Tab 0 … the most
+/// time-critical things an executor must know (whom to call, where the safe key is,
+/// an in-flight crisis) are the first thing seen on unlock". An executor reaching for
+/// a phone in exactly that situation saw a complete-looking app with no urgent note in
+/// it. Ordered to match the desktop's tab order.
 #[derive(Debug, Clone, Copy, uniffi::Enum)]
 pub enum RecordKind {
+    Urgent,
     Instruction,
     TrustWill,
     AssetLiability,
     Account,
     RealEstate,
+    TaxFiling,
+    GeneralDocument,
 }
 
 /// One row in a tab's master list.
@@ -162,11 +173,49 @@ pub struct Change {
     pub detail: String,
 }
 
+/// An URGENT note — the executor's "read this first" collection (core tab 0).
+/// Field-identical to [`Instruction`], but a separate, prominent collection.
+#[derive(uniffi::Record)]
+pub struct Urgent {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[derive(uniffi::Record)]
 pub struct Instruction {
     pub id: String,
     pub title: String,
     pub description: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// One tax filing year. `documents` lists the volume file ids attached to the year;
+/// the host cannot open them yet, but it MUST be able to see that they exist.
+#[derive(uniffi::Record)]
+pub struct TaxFiling {
+    pub id: String,
+    pub owner: String,
+    pub year: String,
+    pub notes: String,
+    /// How many documents are attached (the ids themselves are not useful to the
+    /// host until document export exists, but the count must not be hidden).
+    pub document_count: u32,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// A general document entry (title + description + at most one attached file).
+#[derive(uniffi::Record)]
+pub struct GeneralDocument {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    /// Volume file id of the attached document, if any (opening it is post-MVP).
+    pub file: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -245,11 +294,46 @@ fn map_change(c: &records::Change) -> Change {
     Change { at: c.at, action: c.action.clone(), detail: records::display_detail(&c.detail) }
 }
 
+fn map_urgent(r: &records::Urgent) -> Urgent {
+    Urgent {
+        id: r.id.clone(),
+        title: r.title.clone(),
+        description: r.description.clone(),
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+    }
+}
+
 fn map_instruction(r: &records::Instruction) -> Instruction {
     Instruction {
         id: r.id.clone(),
         title: r.title.clone(),
         description: r.description.clone(),
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+    }
+}
+
+fn map_tax_filing(r: &records::TaxFiling) -> TaxFiling {
+    TaxFiling {
+        id: r.id.clone(),
+        owner: r.owner.clone(),
+        year: r.year.clone(),
+        notes: r.notes.clone(),
+        // `as u32` is safe: the document count is bounded by the store's own caps,
+        // far below u32::MAX, and a saturating cast keeps a corrupt count from wrapping.
+        document_count: u32::try_from(r.documents.len()).unwrap_or(u32::MAX),
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+    }
+}
+
+fn map_general_document(r: &records::GeneralDocument) -> GeneralDocument {
+    GeneralDocument {
+        id: r.id.clone(),
+        title: r.title.clone(),
+        description: r.description.clone(),
+        file: r.file.clone(),
         created_at: r.created_at,
         updated_at: r.updated_at,
     }
@@ -391,11 +475,14 @@ impl Vault {
         let ov = self.lock();
         let v = &ov.vault;
         match kind {
+            RecordKind::Urgent => v.urgent.iter().map(summary).collect(),
             RecordKind::Instruction => v.instructions.iter().map(summary).collect(),
             RecordKind::TrustWill => v.trust_wills.iter().map(summary).collect(),
             RecordKind::AssetLiability => v.assets.iter().map(summary).collect(),
             RecordKind::Account => v.accounts.iter().map(summary).collect(),
             RecordKind::RealEstate => v.real_estate.iter().map(summary).collect(),
+            RecordKind::TaxFiling => v.tax_filings.iter().map(summary).collect(),
+            RecordKind::GeneralDocument => v.general_documents.iter().map(summary).collect(),
         }
     }
 
@@ -404,13 +491,26 @@ impl Vault {
         let ov = self.lock();
         let v = &ov.vault;
         let n = match kind {
+            RecordKind::Urgent => v.urgent.len(),
             RecordKind::Instruction => v.instructions.len(),
             RecordKind::TrustWill => v.trust_wills.len(),
             RecordKind::AssetLiability => v.assets.len(),
             RecordKind::Account => v.accounts.len(),
             RecordKind::RealEstate => v.real_estate.len(),
+            RecordKind::TaxFiling => v.tax_filings.len(),
+            RecordKind::GeneralDocument => v.general_documents.len(),
         };
         n as u32
+    }
+
+    pub fn get_urgent(&self, id: String) -> Result<Urgent, VaultError> {
+        let ov = self.lock();
+        ov.vault
+            .urgent
+            .iter()
+            .find(|r| r.id == id)
+            .map(map_urgent)
+            .ok_or(VaultError::RecordNotFound)
     }
 
     pub fn get_instruction(&self, id: String) -> Result<Instruction, VaultError> {
@@ -420,6 +520,26 @@ impl Vault {
             .iter()
             .find(|r| r.id == id)
             .map(map_instruction)
+            .ok_or(VaultError::RecordNotFound)
+    }
+
+    pub fn get_tax_filing(&self, id: String) -> Result<TaxFiling, VaultError> {
+        let ov = self.lock();
+        ov.vault
+            .tax_filings
+            .iter()
+            .find(|r| r.id == id)
+            .map(map_tax_filing)
+            .ok_or(VaultError::RecordNotFound)
+    }
+
+    pub fn get_general_document(&self, id: String) -> Result<GeneralDocument, VaultError> {
+        let ov = self.lock();
+        ov.vault
+            .general_documents
+            .iter()
+            .find(|r| r.id == id)
+            .map(map_general_document)
             .ok_or(VaultError::RecordNotFound)
     }
 
@@ -471,11 +591,14 @@ impl Vault {
         let ov = self.lock();
         let v = &ov.vault;
         let history = match kind {
+            RecordKind::Urgent => v.urgent.iter().find(|r| r.id == id).map(|r| &r.history),
             RecordKind::Instruction => v.instructions.iter().find(|r| r.id == id).map(|r| &r.history),
             RecordKind::TrustWill => v.trust_wills.iter().find(|r| r.id == id).map(|r| &r.history),
             RecordKind::AssetLiability => v.assets.iter().find(|r| r.id == id).map(|r| &r.history),
             RecordKind::Account => v.accounts.iter().find(|r| r.id == id).map(|r| &r.history),
             RecordKind::RealEstate => v.real_estate.iter().find(|r| r.id == id).map(|r| &r.history),
+            RecordKind::TaxFiling => v.tax_filings.iter().find(|r| r.id == id).map(|r| &r.history),
+            RecordKind::GeneralDocument => v.general_documents.iter().find(|r| r.id == id).map(|r| &r.history),
         };
         history
             .map(|h| h.iter().map(map_change).collect())
@@ -536,19 +659,25 @@ mod tests {
         // Every RecordKind variant — a new/removed/renamed variant breaks this match.
         fn kind_name(k: RecordKind) -> &'static str {
             match k {
+                RecordKind::Urgent => "Urgent",
                 RecordKind::Instruction => "Instruction",
                 RecordKind::TrustWill => "TrustWill",
                 RecordKind::AssetLiability => "AssetLiability",
                 RecordKind::Account => "Account",
                 RecordKind::RealEstate => "RealEstate",
+                RecordKind::TaxFiling => "TaxFiling",
+                RecordKind::GeneralDocument => "GeneralDocument",
             }
         }
         for k in [
+            RecordKind::Urgent,
             RecordKind::Instruction,
             RecordKind::TrustWill,
             RecordKind::AssetLiability,
             RecordKind::Account,
             RecordKind::RealEstate,
+            RecordKind::TaxFiling,
+            RecordKind::GeneralDocument,
         ] {
             assert!(!kind_name(k).is_empty());
         }
@@ -637,20 +766,22 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Extended FFI coverage: build a vault with one of EACH of the five record
-    // types via the core, then drive every read-only FFI method. Tax filings and
-    // the new RealEstate portal fields are intentionally NOT surfaced by the v1
-    // FFI — see `full_vault_exposes_only_v1_surface` and
-    // `real_estate_with_new_fields_maps_only_v1_fields`.
+    // Extended FFI coverage: build a vault with one of EACH of the EIGHT record
+    // types via the core, then drive every read-only FFI method. All eight are now
+    // surfaced — the five-kind v1 surface silently hid Urgent, tax filings and general
+    // documents from the mobile viewer. The EXPANDED RealEstate portal fields are still
+    // deliberately not mapped; see `real_estate_with_new_fields_maps_only_v1_fields`.
     // -----------------------------------------------------------------------
 
     struct Ids {
+        urgent: String,
         ins: String,
         tw: String,
         asset: String,
         acc: String,
         re: String,
         tax: String,
+        gendoc: String,
     }
 
     /// Write a small throwaway source file (so `add_document` can ingest it).
@@ -664,6 +795,13 @@ mod tests {
         let path = dir.join("vault.pmv");
         let params = KdfParams { m_cost: 8, t_cost: 1, p_cost: 1 };
         let mut ov = OpenVault::create(path, pw1, pw2, params).unwrap();
+
+        // An URGENT note — the executor's "read this first" record (core tab 0).
+        let mut urgent = records::Urgent::new().unwrap();
+        urgent.title = "Call the lawyer first".into();
+        urgent.description = "Ring Pat Okafor on 555-0101 before touching anything.".into();
+        let urgent_id = urgent.id.clone();
+        records::upsert(&mut ov.vault.urgent, urgent);
 
         let mut ins = records::Instruction::new().unwrap();
         ins.title = "Funeral wishes".into();
@@ -746,7 +884,7 @@ mod tests {
         let re_id = re.id.clone();
         records::upsert(&mut ov.vault.real_estate, re);
 
-        // A tax filing — present in the vault, NOT exposed by the FFI.
+        // A tax filing — present in the vault AND now exposed by the FFI.
         let tax_loc = records::tax_doc_location("2024");
         let tax_src = write_src(dir, "1040.pdf", b"1040 bytes");
         let tax_blob = ov.add_document(&tax_loc, "1040.pdf", &tax_src).unwrap();
@@ -758,8 +896,27 @@ mod tests {
         let tax_id = tax.id.clone();
         records::upsert(&mut ov.vault.tax_filings, tax);
 
+        // A general document entry with a real attached blob.
+        let gd_src = write_src(dir, "passport.pdf", b"passport scan bytes");
+        let gd_blob = ov.add_document("general", "passport.pdf", &gd_src).unwrap();
+        let mut gd = records::GeneralDocument::new().unwrap();
+        gd.title = "Passport".into();
+        gd.description = "Scan of Jane's passport.".into();
+        gd.file = Some(gd_blob);
+        let gd_id = gd.id.clone();
+        records::upsert(&mut ov.vault.general_documents, gd);
+
         ov.save().unwrap();
-        Ids { ins: ins_id, tw: tw_id, asset: al_id, acc: acc_id, re: re_id, tax: tax_id }
+        Ids {
+            urgent: urgent_id,
+            ins: ins_id,
+            tw: tw_id,
+            asset: al_id,
+            acc: acc_id,
+            re: re_id,
+            tax: tax_id,
+            gendoc: gd_id,
+        }
     }
 
     fn open_full(dir: &std::path::Path) -> Arc<Vault> {
@@ -937,15 +1094,38 @@ mod tests {
         let ids = make_full_vault(&dir, b"one", b"two");
         let v = open_full(&dir);
 
+        // EVERY collection the core stores must be reachable. A kind missing here is a
+        // collection the phone silently hides from an executor — which is exactly the
+        // defect this covers: `Urgent` is the vault's "read this first" tab.
         for kind in [
+            RecordKind::Urgent,
             RecordKind::Instruction,
             RecordKind::TrustWill,
             RecordKind::AssetLiability,
             RecordKind::Account,
             RecordKind::RealEstate,
+            RecordKind::TaxFiling,
+            RecordKind::GeneralDocument,
         ] {
             assert_eq!(v.count(kind), 1, "{kind:?} present");
+            assert_eq!(v.list_records(kind).len(), 1, "{kind:?} listed");
+            assert!(!v.list_records(kind)[0].label.is_empty(), "{kind:?} has a list label");
         }
+
+        // The urgent note's actual CONTENT reaches the host, not just its count.
+        let urgent = v.get_urgent(ids.urgent.clone()).expect("urgent note is readable");
+        assert_eq!(urgent.title, "Call the lawyer first");
+        assert!(urgent.description.contains("555-0101"));
+
+        // Tax filings expose the attached-document COUNT, so an executor can at least
+        // see that documents exist for a year even though opening them is post-MVP.
+        let tax = v.get_tax_filing(ids.tax.clone()).expect("tax filing is readable");
+        assert_eq!(tax.year, "2024");
+        assert_eq!(tax.document_count, 1);
+
+        let gd = v.get_general_document(ids.gendoc.clone()).expect("general doc is readable");
+        assert_eq!(gd.title, "Passport");
+        assert!(gd.file.is_some(), "the attached blob is visible to the host");
 
         assert!(matches!(v.get_instruction(ids.tax.clone()), Err(VaultError::RecordNotFound)));
         assert!(matches!(v.get_trust_will(ids.tax.clone()), Err(VaultError::RecordNotFound)));
@@ -961,11 +1141,14 @@ mod tests {
         let ids = make_full_vault(&dir, b"one", b"two");
         let v = open_full(&dir);
         for (kind, id) in [
+            (RecordKind::Urgent, &ids.urgent),
             (RecordKind::Instruction, &ids.ins),
             (RecordKind::TrustWill, &ids.tw),
             (RecordKind::AssetLiability, &ids.asset),
             (RecordKind::Account, &ids.acc),
             (RecordKind::RealEstate, &ids.re),
+            (RecordKind::TaxFiling, &ids.tax),
+            (RecordKind::GeneralDocument, &ids.gendoc),
         ] {
             let hist = v.get_history(kind, id.clone()).unwrap();
             assert!(!hist.is_empty(), "history present for {kind:?}");
@@ -1018,11 +1201,14 @@ mod tests {
         make_full_vault(&dir, b"one", b"two");
         let v = open_full(&dir);
         for kind in [
+            RecordKind::Urgent,
             RecordKind::Instruction,
             RecordKind::TrustWill,
             RecordKind::AssetLiability,
             RecordKind::Account,
             RecordKind::RealEstate,
+            RecordKind::TaxFiling,
+            RecordKind::GeneralDocument,
         ] {
             assert!(matches!(
                 v.get_history(kind, "no-such-id".to_string()),

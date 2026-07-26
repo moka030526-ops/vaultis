@@ -18,6 +18,18 @@ date and bump the crate versions to match.
 
 ### Added
 
+- **The mobile app now shows all eight record types, and opens on Urgent.** It previously
+  surfaced five and silently omitted **Urgent**, **Taxes** and **Documents** — with nothing
+  on screen to say so, and opening on *Accounts*. `Urgent` is the vault's "read this first"
+  tab, described in the core as "the most time-critical things an executor must know (whom
+  to call, where the safe key is, an in-flight crisis)". An executor reaching for a phone in
+  exactly that crisis saw a complete-looking app with that note missing from it. For a vault
+  whose purpose is executor access, silently hiding content is worse than not having the
+  feature. Tax filings show how many documents are attached (opening them is still
+  desktop-only). The FFI test vault now builds one of *every* record kind and every
+  kind-iterating test enumerates all eight, so a kind added to the core cannot be quietly
+  skipped by the mobile surface again. Full write-up in
+  [`docs/HARDENING.md`](docs/HARDENING.md) §3.1i.
 - **Idle auto-lock on mobile (2 minutes).** Backgrounding already locked the vault, but a
   phone left face-up and untouched stayed foregrounded and unlocked indefinitely — the most
   likely way this vault gets read by someone who is not its owner. Any touch restarts the
@@ -41,6 +53,22 @@ date and bump the crate versions to match.
 
 ### Fixed
 
+- **`--fresh` could delete a real vault.** Both build scripts remove the sample directory
+  outright, guarded only by "does it contain a `vault.pmv`" — which is exactly what a *real*
+  vault contains. So `scripts/build.sh --fresh --sample-dir ~/my-vault` (or the same via
+  `VAULTIS_SAMPLE_DIR`) destroyed irreplaceable data with no prompt and no backup. Both now
+  refuse `--fresh` unless the target is the default throwaway location the script owns, and
+  say how to delete it by hand if that is really the intent.
+- **`get_vault.ps1` failed on exactly the machines it exists for, and could build from an
+  unverified repository.** It downloaded `…/releases/latest/download/Git-64-bit.exe`, which
+  is a **404** — Git-for-Windows ships only versioned assets — so on a fresh Windows box with
+  no Git the script died with a web error instead of installing anything. It now prefers
+  `winget` (which verifies the package itself) and otherwise resolves the real asset from the
+  releases API, anchored so the `PortableGit-…` self-extractor cannot be picked instead.
+  Separately, if a git repo already existed at `.\vault` it was pulled and its
+  `scripts\build.bat` executed **without checking the remote URL** — arbitrary code execution
+  from a planted or merely unrelated folder of that name. It now verifies `origin` and refuses
+  if it does not match.
 - **Windows shortcuts showed a generic icon instead of the vault artwork.** Every frame
   in both `.ico` files was PNG-compressed, including 16/32/48/64/128 px. Windows only
   decodes a PNG-compressed icon frame at **256 px**; below that it requires BMP/DIB and

@@ -719,9 +719,11 @@ storage logic is reimplemented. The repo is a Cargo workspace:
 - `mobile/` — the Compose Multiplatform Gradle project.
 
 v1 of the apps is a **read-only viewer** (unlock → browse the records → view an
-entry → reveal/copy a password). It currently surfaces the first five record types
-(Instructions, Trust & Will, Assets, Accounts, Real Estate); the Taxes tab is
-desktop-only for now. Copied passwords are auto-cleared from the clipboard after
+entry → reveal/copy a password). It surfaces **all eight record types** — Urgent,
+Instructions, Trust & Will, Assets, Accounts, Real Estate, Taxes and Documents — in
+the same tab order as the desktop, opening on **Urgent** so an executor sees the
+"read this first" note immediately. Attached documents are listed but can only be
+*opened* on the desktop for now. Copied passwords are auto-cleared from the clipboard after
 15 s and immediately on lock; the vault also locks itself when the app leaves the
 foreground and after two minutes untouched. Build/usage details, the offline import
 model, and the disclosed mobile security trade-offs are in

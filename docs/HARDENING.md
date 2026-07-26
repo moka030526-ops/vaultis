@@ -311,6 +311,52 @@ the desktop's screen-level toggles could); the recovery/rollback notice (R-12); 
 auto-lock on backgrounding plus `FLAG_SECURE`, which have **no desktop equivalent** and
 are strictly additional.
 
+### 3.1i Ninth round — deep hunt over the newest perimeter + modern crypto attack classes
+
+A deliberately adversarial pass aimed at (a) the code the previous eight rounds never
+covered — the mobile record surface, the install/build scripts — and (b) the
+*state-of-the-art* attack classes for password-based encryption, rather than re-reading
+the already heavily-tested core. Findings:
+
+| # | Sev | Fix |
+| --- | --- | --- |
+| D-1 | **High (safety)** | **The mobile viewer silently hid three of the eight record collections — including `Urgent`.** The v1 FFI surfaced five `RecordKind`s; the core stores eight. Nothing on screen said so, and the app opened on *Accounts*. The core documents `Urgent` as "Tab 0 … the most time-critical things an executor must know (whom to call, where the safe key is, an in-flight crisis) … the first thing seen on unlock" — so an executor reaching for a phone in exactly that crisis saw a complete-looking app with the urgent note, the tax filings and the general documents missing from it, and no way to discover that. For a vault whose entire purpose is executor access, silent omission is worse than the missing feature. Fixed: `Urgent`, `TaxFiling` and `GeneralDocument` added to `RecordKind` + DTOs + mappers + all eight dispatch sites + typed getters; the app now shows all eight tabs in the desktop's order and **opens on Urgent**. `TaxFiling` carries a `document_count` so an executor can at least see that documents exist for a year. The FFI test vault now builds one of *every* kind and every kind-iterating test enumerates all eight, so a future kind cannot be added to the core and quietly skipped here again. |
+| D-2 | Med | **"Last opened" cannot detect unauthorised READS.** `open_inner` skips the `last_opened_at` refresh entirely when `read_only` — and read-only is the *common* case (the desktop defaults to it; mobile is read-only always). So someone who opens the vault merely to read it leaves the stamp untouched: the signal detects unauthorised *edits*, not *reads*. The docs asserted the stronger claim, inviting the dangerous inference that an unchanged timestamp means nobody has been in. Corrected in `THREAT_MODEL.md` + `mobile/README.md`, and pinned by `read_only_opens_do_not_advance_previous_access`. |
+| D-3 | Med (data loss) | **`--fresh` could delete a real vault.** Both build scripts `rm -rf` / `rmdir /s /q` the sample directory, guarded only by "does it contain a `vault.pmv`" — which is precisely what a *real* vault contains. `build.sh --fresh --sample-dir ~/my-vault` (or the same via `VAULTIS_SAMPLE_DIR`) destroyed irreplaceable data with no prompt and no backup. Same class as F-9. Both scripts now refuse `--fresh` unless the target is the default throwaway location they own. Verified both ways: a planted `vault.pmv` outside the default survives, and the default path still deletes and reseeds. |
+| D-4 | Med | **`get_vault.ps1` was broken exactly where it was needed, and would build from an unverified repo.** (a) It fetched `…/releases/latest/download/Git-64-bit.exe`, which is a **404** — Git-for-Windows publishes only versioned assets (`Git-2.55.0.3-64-bit.exe`) — so with `$ErrorActionPreference = "Stop"` the script died on the one machine it exists for: a fresh Windows box with no Git. Now prefers `winget` (which verifies the package itself) and otherwise resolves the real asset from the releases API with an anchored pattern, so the `PortableGit-…-64-bit.7z.exe` self-extractor cannot be selected instead. (b) If a git repo already sat at `.\vault` it was pulled and `scripts\build.bat` run **out of it without checking the remote** — arbitrary code execution from a planted or merely unrelated same-named folder. It now verifies `origin` matches the expected URL and refuses otherwise. |
+
+**Modern crypto attack classes — assessed, no change needed.** Recorded here because
+"we looked and it holds" is a result:
+
+- **Key-commitment / partitioning-oracle attacks** (Len–Grubbs–Ristenpart). XChaCha20-
+  Poly1305 is not key-committing, so a crafted ciphertext *can* be made to authenticate
+  under many keys — the standard speed-up against password-based encryption. It does not
+  apply here: an "unlock succeeded" verdict requires the decrypted plaintext to also
+  deserialize into a `Vault`, and the attacker chooses only the ciphertext, so the
+  plaintext under each candidate key is `C ⊕ keystream_i` — they cannot make it valid
+  vault JSON under two different keys at once. The oracle therefore degenerates to
+  "was this one key right", with no partitioning gain. This holds *because* `Json` and
+  `Storage` failures are already collapsed into the single wrong-password error (A-3/R-3);
+  that no-oracle work is what closes this one too.
+- **Nonce reuse.** Every encryption draws a fresh 24-byte random nonce — vault writes
+  (`write_vault_file`), partition manifests, and each volume frame — with
+  `frame_nonces_are_unique_across_writes` pinning the frame path. At 192 bits the
+  birthday bound is not reachable.
+- **KDF strength.** Argon2id at 64 MiB / t=3 / p=1, applied **twice** (chained), is
+  comfortably above current OWASP guidance (19 MiB / t=2 / p=1).
+- **Pre-auth parameter DoS.** `Header::parse` calls `KdfParams::validate` before any
+  derivation, and redundancy recovery caps distinct-salt derivations at
+  `MAX_RECOVERY_SALTS = 3`, bounding a planted-candidate attack.
+- **Supply chain.** `cargo deny check` re-run this round: advisories, bans, licenses and
+  sources all ok across 599 dependencies.
+
+Also re-verified and found already correct (no change): CSV formula injection, including
+the leading-TAB/CR bypass (`display_safe` maps control characters to `_` before the
+`=`/`+`/`-`/`@` guard runs); cross-collection id collisions in the merge apply path
+(`accepted(kind)` scopes the id set per collection, so a crafted source cannot smuggle in
+a record the user never approved); and the `set -e` `A && B` patterns in the packaging
+scripts (empirically tested — a false `[[ ]]` does not abort the script).
+
 ### 3.2 Investigated and refuted (no change needed)
 
 | # | Hypothesis | Why it does not hold |

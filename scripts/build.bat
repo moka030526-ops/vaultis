@@ -150,8 +150,9 @@ goto collect_extra
 
 rem VAULTIS_SAMPLE_DIR lets the location be set from the environment too. The
 rem --sample-dir flag wins over it, and both default to target\sample-vault.
+set "DEFAULT_SAMPLE_DIR=%REPO_ROOT%\target\sample-vault"
 if "%SAMPLE_DIR%"=="" set "SAMPLE_DIR=%VAULTIS_SAMPLE_DIR%"
-if "%SAMPLE_DIR%"=="" set "SAMPLE_DIR=%REPO_ROOT%\target\sample-vault"
+if "%SAMPLE_DIR%"=="" set "SAMPLE_DIR=%DEFAULT_SAMPLE_DIR%"
 
 rem --- Rust toolchain -----------------------------------------------------
 rem
@@ -307,6 +308,12 @@ set "VAULT_FILE=%SAMPLE_DIR%\vault.pmv"
 
 if not exist "%VAULT_FILE%" goto seed
 if "%FRESH%"=="0" goto already_there
+rem --fresh deletes a whole directory tree, and the only thing that made this "safe"
+rem was that the target contains a vault.pmv - which is exactly what a REAL vault
+rem contains. So --fresh --sample-dir C:\my-vault, or the same via VAULTIS_SAMPLE_DIR,
+rem would destroy real, irreplaceable data with no prompt and no backup. Refuse unless
+rem the target is the default throwaway location this script owns.
+if /i not "%SAMPLE_DIR%"=="%DEFAULT_SAMPLE_DIR%" goto refuse_fresh
 echo ==^> Removing the existing sample vault ^(--fresh^): %SAMPLE_DIR%
 rmdir /s /q "%SAMPLE_DIR%"
 if exist "%VAULT_FILE%" (
@@ -335,6 +342,16 @@ goto shortcuts
 :already_there
 echo ==^> Sample vault already present - left untouched; use --fresh to rebuild it
 goto shortcuts
+
+:refuse_fresh
+echo. 1>&2
+echo error: refusing to --fresh a vault outside the default sample location. 1>&2
+echo        target:  %SAMPLE_DIR% 1>&2
+echo        default: %DEFAULT_SAMPLE_DIR% 1>&2
+echo        That directory holds a real vault.pmv. If you are certain it is 1>&2
+echo        disposable, delete it yourself and re-run. 1>&2
+popd
+exit /b 1
 
 rem The installer is pointed at the exe THIS run built - the %PROFILE% one - rather
 rem than left to auto-detect: a debug build must not silently install shortcuts for a
