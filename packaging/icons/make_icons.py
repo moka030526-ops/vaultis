@@ -10,6 +10,8 @@ Pure Pillow, no other tools needed. Run:  python3 make_icons.py
 Everything is drawn supersampled and downscaled, so the edges stay smooth.
 """
 
+import io
+import struct
 from pathlib import Path
 from PIL import Image, ImageDraw
 
@@ -120,15 +122,97 @@ def paste_padlock(base: Image.Image, locked: bool):
     base.alpha_composite(sh)
 
 
+def dib_frame(img: Image.Image) -> bytes:
+    """One icon frame in BMP/DIB form: BITMAPINFOHEADER + bottom-up BGRA + AND mask.
+
+    This is the format Windows expects for icon sizes BELOW 256. Pillow's ICO writer
+    emits PNG for *every* size unless told otherwise, and Explorer will not decode a
+    PNG-compressed entry at 16/32/48 px — it falls back to a generic icon, which is
+    exactly the size a shortcut is drawn at. See save_ico().
+    """
+    w, h = img.size
+    px = img.convert("RGBA").load()
+
+    # BITMAPINFOHEADER. Height is DOUBLED because the DIB notionally stacks the colour
+    # (XOR) bitmap and the mask (AND) bitmap; biSizeImage=0 is allowed for BI_RGB.
+    header = struct.pack(
+        "<IiiHHIIiiII",
+        40,        # biSize
+        w,         # biWidth
+        h * 2,     # biHeight  (XOR + AND)
+        1,         # biPlanes
+        32,        # biBitCount
+        0,         # biCompression = BI_RGB
+        0,         # biSizeImage
+        0, 0,      # biXPelsPerMeter, biYPelsPerMeter
+        0, 0,      # biClrUsed, biClrImportant
+    )
+
+    # XOR bitmap: BGRA, rows BOTTOM-UP. At 32bpp each row is already 4-byte aligned.
+    xor = bytearray()
+    for y in range(h - 1, -1, -1):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            xor += bytes((b, g, r, a))
+
+    # AND mask: 1bpp, bottom-up, each row padded to a 4-byte boundary. Left all-zero
+    # ("opaque"): 32bpp icons carry real transparency in the alpha channel above, and
+    # Windows uses that. The mask must still be PRESENT and correctly sized.
+    row_bytes = ((w + 31) // 32) * 4
+    and_mask = bytes(row_bytes * h)
+
+    return header + bytes(xor) + and_mask
+
+
+def save_ico(src: Image.Image, path: Path, sizes: list[int]) -> None:
+    """Write a multi-size .ico by hand, so each frame is in the format Windows wants.
+
+    256 px goes in PNG-compressed (the Vista+ convention, and what keeps the file
+    small); everything smaller goes in as BMP/DIB. Written manually because Pillow's
+    `sizes=` shortcut produces an all-PNG file, and its `bitmap_format="bmp"` produces
+    an all-BMP one — neither is the mixed layout Windows actually expects.
+    """
+    frames = []
+    for s in sorted(sizes, reverse=True):
+        frame = src.resize((s, s), Image.LANCZOS)
+        if s >= 256:
+            buf = io.BytesIO()
+            frame.save(buf, format="PNG")
+            frames.append((s, buf.getvalue()))
+        else:
+            frames.append((s, dib_frame(frame)))
+
+    # ICONDIR, then one 16-byte ICONDIRENTRY per frame, then the frame data.
+    offset = 6 + 16 * len(frames)
+    directory = b""
+    for s, blob in frames:
+        directory += struct.pack(
+            "<BBBBHHII",
+            s if s < 256 else 0,   # bWidth  (0 means 256)
+            s if s < 256 else 0,   # bHeight (0 means 256)
+            0,                     # bColorCount (0 = truecolour)
+            0,                     # bReserved
+            1,                     # wPlanes
+            32,                    # wBitCount
+            len(blob),             # dwBytesInRes
+            offset,                # dwImageOffset
+        )
+        offset += len(blob)
+
+    with open(path, "wb") as fh:
+        fh.write(struct.pack("<HHH", 0, 1, len(frames)))  # reserved=0, type=1 (icon)
+        fh.write(directory)
+        for _, blob in frames:
+            fh.write(blob)
+
+
 def main():
     for locked, name in [(True, "vaultis-locked"), (False, "vaultis-unlocked")]:
         big = draw_vault(locked)
         png = big.resize((SS // 2, SS // 2), Image.LANCZOS)          # 512px
         png.save(HERE / f"{name}.png")
         ico_base = big.resize((256, 256), Image.LANCZOS)
-        ico_base.save(HERE / f"{name}.ico",
-                      sizes=[(256, 256), (128, 128), (64, 64),
-                             (48, 48), (32, 32), (16, 16)])
+        save_ico(ico_base, HERE / f"{name}.ico", [256, 128, 64, 48, 32, 16])
         print("wrote", name + ".png", "and", name + ".ico")
 
 

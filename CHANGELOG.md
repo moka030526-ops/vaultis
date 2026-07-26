@@ -41,6 +41,18 @@ date and bump the crate versions to match.
 
 ### Fixed
 
+- **Windows shortcuts showed a generic icon instead of the vault artwork.** Every frame
+  in both `.ico` files was PNG-compressed, including 16/32/48/64/128 px. Windows only
+  decodes a PNG-compressed icon frame at **256 px**; below that it requires BMP/DIB and
+  silently falls back to a generic icon when it cannot decode one — and Explorer draws
+  Desktop shortcut icons at 32–48 px, so the icon was missing exactly where it mattered
+  while still previewing correctly in image viewers and on Linux (whose `.desktop`
+  entries use the PNGs and were never affected). `make_icons.py` now assembles the `.ico`
+  by hand — PNG at 256, BMP/DIB below — because Pillow's `sizes=` shortcut emits an
+  all-PNG file and its `bitmap_format="bmp"` an all-BMP one, and neither is the mixed
+  layout Windows expects. `make-shortcuts.ps1` additionally nudges the shell icon cache,
+  which is keyed by icon *path* and would otherwise keep drawing the old broken icon
+  after the files were replaced.
 - **Android UI fixes for modern phones.** The app was built against targetSdk 35, where
   Android 15 makes edge-to-edge mandatory, but handled no window insets — the top app bar
   would have rendered under the status-bar clock and the "Unlock" button under the

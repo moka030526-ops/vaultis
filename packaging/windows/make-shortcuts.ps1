@@ -104,6 +104,20 @@ function New-PMShortcut($name, $arguments, $icon) {
 
 New-PMShortcut "vaultis (View)" ""        $lockedIco
 New-PMShortcut "vaultis (Edit)" "--write" $unlockIco
+
+# --- refresh the shell icon cache -------------------------------------------
+# Windows caches shortcut icons keyed by icon PATH, not by file contents. If an icon
+# file at a path it has already cached is replaced (e.g. regenerating the .ico files),
+# Explorer keeps drawing the OLD cached image — including a stale generic icon from a
+# file it previously failed to decode. Nudging the cache makes the new icon appear
+# without a sign-out. Best effort: ie4uinit is absent on some editions/older builds.
+$ie4 = Join-Path $env:SystemRoot "System32\ie4uinit.exe"
+if (Test-Path $ie4) {
+    # -show on Win10/11; -ClearIconCache on older builds. Either may be a no-op.
+    & $ie4 -show 2>$null
+    & $ie4 -ClearIconCache 2>$null
+}
+
 Write-Host ""
 Write-Host "Done. Two shortcuts are on your Desktop:"
 Write-Host "  vaultis (View)  - read-only  (locked vault icon)"

@@ -29,6 +29,23 @@ python3 packaging/icons/make_icons.py
 The generated files are committed, so you only need to re-run the script if you
 want to tweak the artwork.
 
+> **If you change how the `.ico` files are written, keep the frame formats.** Windows
+> only decodes a **PNG-compressed** icon frame at **256 px**; at 16/32/48/64/128 it
+> requires **BMP/DIB**, and silently falls back to a **generic icon** when it cannot
+> decode one. Explorer draws shortcut icons at 32–48 px, so an all-PNG `.ico` looks
+> completely iconless on the Desktop while still previewing fine in image viewers and
+> on Linux — which makes it an easy bug to ship. `make_icons.py` writes the mixed
+> layout by hand (`save_ico`/`dib_frame`) precisely because Pillow's `sizes=` shortcut
+> produces an all-PNG file and its `bitmap_format="bmp"` produces an all-BMP one.
+>
+> To check a rebuilt icon without a Windows machine:
+>
+> ```bash
+> file packaging/icons/vaultis-locked.ico
+> # want: "256x256 with PNG image data ... 128x128, 32 bits/pixel"
+> # NOT:  "16x16 with PNG image data"   <- the broken, all-PNG shape
+> ```
+
 > **You may not need to run any of this by hand.** `scripts/build.sh` (Linux) and
 > `scripts\build.bat` (Windows) install the shortcuts themselves as their last step,
 > pointed at the binary they just built. Pass `--no-shortcuts` to skip it; `--no-sample`
@@ -117,3 +134,16 @@ the locked and unlocked icons respectively.
 
 > Both shortcuts point at `vaultis-gui.exe` (the GUI build), so neither opens a
 > console window. The console `vaultis.exe` is only for the command-line tools.
+
+### Shortcut shows a blank or generic icon
+
+- **Stale icon cache.** Windows caches shortcut icons by the icon's *path*, so
+  replacing an `.ico` in place leaves Explorer drawing the old image. The script
+  refreshes the cache itself; by hand, run `ie4uinit.exe -show`, or delete and recreate
+  the shortcut, or sign out and back in.
+- **The icon file moved.** The shortcut stores an absolute path to the `.ico`. If you
+  built in the repo and the shortcut points at `packaging\icons\…`, then moved or
+  deleted the repo, the icon is simply gone. Re-run the script with `-InstallDir`
+  against a stable folder holding both the exe and the icons.
+- **A hand-built `.ico`.** See the frame-format note above — an all-PNG `.ico` shows as
+  a generic icon at Desktop sizes.
