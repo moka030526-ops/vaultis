@@ -334,29 +334,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
-name = "vaultis-core"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "chacha20poly1305",
- "getrandom 0.4.2",
- "libc",
- "region",
- "serde",
- "serde_json",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
-name = "vaultis-fuzz"
-version = "0.0.0"
-dependencies = [
- "libfuzzer-sys",
- "vaultis-core",
-]
-
-[[package]]
 name = "password-hash"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -557,6 +534,29 @@ checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
 dependencies = [
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "vaultis-core"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "chacha20poly1305",
+ "getrandom 0.4.2",
+ "libc",
+ "region",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
+name = "vaultis-fuzz"
+version = "0.0.0"
+dependencies = [
+ "libfuzzer-sys",
+ "vaultis-core",
 ]
 
 [[package]]

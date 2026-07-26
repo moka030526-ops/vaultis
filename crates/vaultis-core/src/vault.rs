@@ -6678,8 +6678,131 @@ mod tests {
         let _ = fs::remove_file(&linkdest);
     }
 
+    /// EXPORT CONTAINMENT (adversarial corpus). `doc_tree_relpath` is the only thing
+    /// standing between a document path carried INSIDE a vault — which can come from a
+    /// hostile vault via `import_tree` or a cross-vault merge — and a real filesystem
+    /// write in `export_document_into` / `export_tree`. It had no direct test; its
+    /// containment was only ever exercised incidentally through the export paths.
+    ///
+    /// Every component of the result must be `Component::Normal`. That single assertion
+    /// rules out the whole traversal family at once: `ParentDir` (`..`), `RootDir` (a
+    /// leading `/`, which would make the join absolute) and `Prefix` (`C:`, `\\?\`,
+    /// `\\server\share` — on Windows `PathBuf::push` of a rooted or prefixed component
+    /// REPLACES everything pushed before it, which is the classic way a "relative" path
+    /// silently becomes absolute).
+    #[test]
+    fn doc_tree_relpath_never_escapes_the_export_root() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let root = Path::new("/tmp/vaultis-export-root");
+        let hostile = [
+            "../../../../etc/passwd",
+            "..",
+            "../",
+            "/..",
+            "a/../../b",
+            "....//....//etc",
+            "...",
+            ".....",
+            ". .",
+            " .. ",
+            "/etc/passwd",
+            "//etc//passwd",
+            "\\..\\..\\Windows\\System32",
+            "C:\\Windows\\System32\\drivers\\etc\\hosts",
+            "C:/Windows",
+            "\\\\server\\share\\file",
+            "\\\\?\\C:\\Windows",
+            "con",
+            "CON.pdf",
+            "lpt1",
+            "com\u{00B9}",           // superscript 1 -> COM1 on Windows
+            "a\u{202e}fdp.exe",      // RIGHT-TO-LEFT OVERRIDE
+            "a\u{200b}b",            // zero-width space
+            "\u{feff}bom",
+            "nul\0byte",
+            "trailing...",
+            "trailing   ",
+            "",
+            "/",
+            "///",
+            "\u{2028}line\u{2029}sep",
+            "tab\there",
+            "ok/../ok2",
+            "ünïcodé/文件",
+        ];
+        for vp in hostile {
+            let rel = doc_tree_relpath(vp, id);
+            assert!(!rel.as_os_str().is_empty(), "never empty (falls back to <id>.bin): {vp:?}");
+            assert!(rel.is_relative(), "must stay relative: {vp:?} -> {rel:?}");
+            for c in rel.components() {
+                assert!(
+                    matches!(c, std::path::Component::Normal(_)),
+                    "non-Normal component {c:?} from {vp:?} -> {rel:?}"
+                );
+            }
+            let joined = root.join(&rel);
+            assert!(joined.starts_with(root), "escaped the root: {vp:?} -> {joined:?}");
+            // A literal ".." must not survive as a whole component anywhere.
+            assert!(
+                !rel.components().any(|c| c.as_os_str() == ".."),
+                "a `..` component survived: {vp:?} -> {rel:?}"
+            );
+            assert_no_windows_rooting(&rel, vp);
+        }
+    }
+
+    /// Cross-platform check for the WINDOWS rooting escape, asserted on characters
+    /// rather than on `Component`.
+    ///
+    /// `Path::components()` parses with the HOST platform's rules. On Linux
+    /// `C:\Windows`, `\\server\share` and `\\?\C:\` are perfectly ordinary file names, so
+    /// they come back as `Component::Normal` and every containment assertion above passes
+    /// — while on Windows the same strings are a `Prefix`/`RootDir`, and `PathBuf::push`
+    /// of a prefixed or rooted component **replaces everything pushed before it**, turning
+    /// the "relative" export path absolute. A Linux-only test suite is therefore
+    /// structurally blind to the very escape `doc_tree_relpath`'s `['\\', ':', '\0']`
+    /// rejection exists to stop. Asserting on the characters closes that gap, so this
+    /// machine (and CI) really does verify the Windows behaviour.
+    fn assert_no_windows_rooting(rel: &Path, src: &str) {
+        for c in rel.components() {
+            let s = c.as_os_str().to_string_lossy();
+            assert!(!s.contains('\\'), "backslash survived (rooted on Windows): {src:?} -> {rel:?}");
+            assert!(!s.contains(':'), "colon survived (drive prefix on Windows): {src:?} -> {rel:?}");
+            assert!(!s.contains('\0'), "NUL survived: {src:?} -> {rel:?}");
+        }
+    }
+
     use proptest::prelude::*;
     proptest! {
+        /// EXPORT CONTAINMENT (arbitrary input). The corpus above pins the attacks we
+        /// thought of; this pins the ones we did not. For ANY string whatsoever, the
+        /// sanitized relative path must stay inside the export root.
+        #[test]
+        fn prop_doc_tree_relpath_never_escapes_the_export_root(
+            vp in any::<String>(),
+            id in "[0-9a-f]{32}",
+        ) {
+            let rel = doc_tree_relpath(&vp, &id);
+            prop_assert!(!rel.as_os_str().is_empty());
+            prop_assert!(rel.is_relative(), "must stay relative: {:?} -> {:?}", vp, rel);
+            for c in rel.components() {
+                prop_assert!(
+                    matches!(c, std::path::Component::Normal(_)),
+                    "non-Normal component {:?} from {:?}", c, vp
+                );
+            }
+            let root = Path::new("/tmp/vaultis-export-root");
+            prop_assert!(root.join(&rel).starts_with(root), "escaped: {:?} -> {:?}", vp, rel);
+            // See `assert_no_windows_rooting`: `Component` is host-parsed, so this
+            // character check is what makes a Linux run verify the Windows property.
+            for c in rel.components() {
+                let s = c.as_os_str().to_string_lossy();
+                prop_assert!(!s.contains('\\'), "backslash survived: {:?} -> {:?}", vp, rel);
+                prop_assert!(!s.contains(':'), "colon survived: {:?} -> {:?}", vp, rel);
+                prop_assert!(!s.contains('\0'), "NUL survived: {:?} -> {:?}", vp, rel);
+            }
+        }
+
         /// Virtual paths are always rooted, and `normalize_dir` is idempotent and
         /// never yields empty ("//") segments — so the limit check and storage see
         /// a single canonical form.

@@ -1296,6 +1296,75 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// COMPILE-TIME DRIFT GUARD — the fix for the defect where the mobile viewer showed
+    /// five of the core's eight record collections and silently hid `Urgent`, tax filings
+    /// and general documents from an executor.
+    ///
+    /// The destructure below is **exhaustive on purpose**: no `..` rest pattern. Adding a
+    /// field to `records::Vault` therefore makes this test fail to COMPILE, forcing whoever
+    /// adds it to come here and answer the question that was never asked last time: *is this
+    /// a record collection an executor must be able to read on their phone?* If it is, it
+    /// needs a `RecordKind`, a DTO, a getter and a tab — and the loop below then proves the
+    /// FFI actually reports it.
+    ///
+    /// Do not "fix" a compile failure here by adding `..`; that deletes the guard.
+    #[test]
+    fn every_core_record_collection_is_reachable_through_the_ffi() {
+        let dir = tmp();
+        make_full_vault(&dir, b"one", b"two");
+        let v = open_full(&dir);
+        let ov = v.lock();
+
+        let records::Vault {
+            // --- the record collections: each MUST have a RecordKind ------------------
+            urgent,
+            instructions,
+            trust_wills,
+            assets,
+            accounts,
+            real_estate,
+            tax_filings,
+            general_documents,
+            // --- everything else: metadata, not user-visible record collections -------
+            version: _,
+            generation: _,
+            last_opened_at: _,
+            id: _,
+            settings: _,
+            audit: _,
+            deleted_docs: _,
+            categories: _,
+        } = &ov.vault;
+
+        // Snapshot the true lengths while the guard is held...
+        let expected = [
+            ("urgent", urgent.len(), RecordKind::Urgent),
+            ("instructions", instructions.len(), RecordKind::Instruction),
+            ("trust_wills", trust_wills.len(), RecordKind::TrustWill),
+            ("assets", assets.len(), RecordKind::AssetLiability),
+            ("accounts", accounts.len(), RecordKind::Account),
+            ("real_estate", real_estate.len(), RecordKind::RealEstate),
+            ("tax_filings", tax_filings.len(), RecordKind::TaxFiling),
+            ("general_documents", general_documents.len(), RecordKind::GeneralDocument),
+        ];
+        // ...then RELEASE it before touching the FFI. `Vault::count` takes the very same
+        // std::sync::Mutex, which is NOT reentrant, so querying it while still holding the
+        // guard would deadlock this test rather than fail it.
+        drop(ov);
+
+        // Every collection is non-empty in the fixture, so a kind wired to the WRONG
+        // collection (or to none at all) cannot slip through by both sides reading 0.
+        for (name, len, kind) in expected {
+            assert!(len > 0, "fixture must populate `{name}` for this guard to mean anything");
+            assert_eq!(
+                v.count(kind) as usize,
+                len,
+                "core collection `{name}` holds {len} records but the FFI reports {} for {kind:?}",
+                v.count(kind)
+            );
+        }
+    }
+
     /// SCOPE OF THE "last opened" SIGNAL: a READ-ONLY open does not refresh
     /// `last_opened_at` (vault.rs skips the open-time save when `read_only`), so any
     /// number of read-only opens leave the reported previous-access stamp unchanged.

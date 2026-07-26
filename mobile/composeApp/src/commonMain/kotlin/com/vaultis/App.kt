@@ -503,6 +503,13 @@ private fun DetailScreen(vault: Vault, kind: RecordKind, id: String, onCopy: (St
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
     ) {
+        // NEVER add an `else ->` branch here. This `when` is exhaustive over RecordKind,
+        // which makes the Kotlin compiler REFUSE to build if the core/FFI gains a record
+        // kind this screen cannot render ("'when' expression must be exhaustive" —
+        // verified by deleting a branch). That compile error is the guard that stops a new
+        // collection being silently invisible on the phone, which is exactly how Urgent,
+        // Taxes and Documents went missing before. An `else` would turn that error back
+        // into a blank detail screen.
         when (kind) {
             RecordKind.URGENT -> {
                 val r = remember(id) { runCatching { vault.getUrgent(id) }.getOrNull() }
