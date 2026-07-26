@@ -156,6 +156,100 @@ pub(crate) fn fmt_money(v: f64) -> String {
 ///
 /// Shared by the GUI and TUI so the rule and its wording cannot drift between them; the
 /// CLI's `extract`/`export-tree`/`compact --backup-dest` enforce the same thing directly.
+/// The Argon2id cost to CREATE a new vault with — the built-in default (64 MiB, 3
+/// passes, 1 lane, applied twice by the two-password chain) unless overridden by
+/// `VAULTIS_KDF_MCOST_MIB` / `VAULTIS_KDF_TCOST`.
+///
+/// # Why this knob exists
+///
+/// Against a "harvest now, decrypt later" adversary — someone who copies the encrypted
+/// vault today and waits — the cipher is not the weak point. There is no public-key
+/// cryptography anywhere in vaultis, so Shor's algorithm has nothing to attack, and the
+/// key is a full 256 bits, which leaves ~128-bit security under Grover. What an attacker
+/// actually does is **guess the two passwords**, and the only two things standing in the
+/// way are their entropy and the per-guess cost set here. Password entropy dominates; this
+/// is the second lever, and it was previously not reachable at all — every create site
+/// hardcoded the default even though the on-disk format has always supported up to
+/// `MAX_M_COST` (512 MiB) and `MAX_T_COST` (16).
+///
+/// # Read this before raising it
+///
+/// The cost is baked into the vault at creation and paid on **every open, forever, on
+/// every device**. Raise it to 512 MiB and an unlock needs half a gigabyte of memory —
+/// which a phone may simply refuse, leaving the vault openable only on the desktop. For an
+/// estate vault, "my executor cannot open it" is a far more likely catastrophe than "a
+/// quantum computer read it in 2050". Prefer longer passwords first: entropy is free at
+/// open time, and this is not.
+///
+/// Invalid or out-of-range values fall back to the default with a warning rather than
+/// failing the create — the bound is `KdfParams::validate`, the same gate the reader uses,
+/// so this can never write a vault the reader would refuse.
+pub fn kdf_params_for_new_vault() -> vaultis_core::crypto::KdfParams {
+    use vaultis_core::crypto::KdfParams;
+    let default = KdfParams::default();
+
+    // `MiB` in the variable name because m_cost is in KiB — an easy factor-of-1024 trap.
+    let mib = std::env::var("VAULTIS_KDF_MCOST_MIB").ok();
+    let t = std::env::var("VAULTIS_KDF_TCOST").ok();
+    if mib.is_none() && t.is_none() {
+        return default;
+    }
+
+    let parse = |v: &Option<String>, name: &str, fallback: u32| -> u32 {
+        match v {
+            None => fallback,
+            Some(s) => match s.trim().parse::<u32>() {
+                Ok(n) => n,
+                Err(_) => {
+                    eprintln!("warning: {name}={s:?} is not a number; using {fallback}");
+                    fallback
+                }
+            },
+        }
+    };
+
+    let m_cost_mib = parse(&mib, "VAULTIS_KDF_MCOST_MIB", default.m_cost / 1024);
+    let candidate = KdfParams {
+        // Saturating: a silly MiB value must not wrap into a *weak* KiB cost. Anything
+        // out of range is caught by validate() below anyway.
+        m_cost: m_cost_mib.saturating_mul(1024),
+        t_cost: parse(&t, "VAULTIS_KDF_TCOST", default.t_cost),
+        p_cost: default.p_cost,
+    };
+
+    // An unparseable value falls back per-field, which can land exactly on the default;
+    // announcing that as "non-default" would be simply untrue. Say nothing in that case.
+    if candidate.m_cost == default.m_cost && candidate.t_cost == default.t_cost {
+        return default;
+    }
+
+    match candidate.validate() {
+        Ok(()) => {
+            eprintln!(
+                "note: creating this vault with a non-default KDF cost ({} MiB, {} passes). \
+                 Every future open — on every device, including phones — must pay it.",
+                candidate.m_cost / 1024,
+                candidate.t_cost
+            );
+            candidate
+        }
+        Err(_) => {
+            eprintln!(
+                "warning: requested KDF cost ({} MiB, {} passes) is outside the accepted range \
+                 ({}–{} MiB, 1–{} passes); using the default ({} MiB, {} passes).",
+                candidate.m_cost / 1024,
+                candidate.t_cost,
+                KdfParams::MIN_M_COST.div_ceil(1024),
+                KdfParams::MAX_M_COST / 1024,
+                KdfParams::MAX_T_COST,
+                default.m_cost / 1024,
+                default.t_cost,
+            );
+            default
+        }
+    }
+}
+
 pub fn checked_export_dir(vault_path: &Path, configured: &str) -> Result<PathBuf, String> {
     let dir = records::unquote_path(configured);
     if dir.is_empty() {

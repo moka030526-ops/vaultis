@@ -440,6 +440,50 @@ independently-keyed, authenticated, app-isolated layer for the estate secrets
 that stays locked while you work and that no other process — or a future you who
 only remembers one password — can open without both secrets.
 
+### 5.6 How this compares to `age` passphrase mode (and what rolling our own cost us)
+
+`age`'s passphrase mode is the closest well-reviewed design to this one, and the
+standard advice — don't invent an encryption construction — is right. This one *is*
+custom, so it is worth stating plainly what is the same, what differs, and what the
+difference has actually cost.
+
+**The same, in substance.** Both derive a symmetric key from a passphrase with a
+memory-hard KDF and encrypt with a ChaCha20-Poly1305 AEAD. Both authenticate their
+header parameters rather than leaving them malleable. Neither uses public-key
+cryptography in passphrase mode. Where the primitives differ, this design is the more
+modern pick: **Argon2id** (the current password-hashing recommendation) rather than
+`age`'s **scrypt**.
+
+**The real difference: no file-key indirection.** `age` derives a *wrapping* key from the
+passphrase and uses it to wrap a random **file key**, which is what actually encrypts the
+payload. `vaultis` derives the content key from the two passwords **directly**.
+
+That single choice is the whole tradeoff:
+
+- **Changing the passwords is expensive here.** With `age`'s indirection, a passphrase
+  change only re-wraps a small file key. With direct derivation, a rekey must
+  **re-encrypt the entire vault, volume and manifest** under the new key — which is
+  exactly why this codebase carries the elaborate `commit_rekey` staging, rename-ordering
+  and roll-forward machinery in §12, and why audit **A-1** found a genuine HIGH-severity
+  crash-durability bug there (fsync ordering across three renames). A file-key design
+  would have made that entire bug class unreachable. This is the honest price of the
+  custom construction, and it has already been paid once.
+- **What the indirection would have cost instead:** a file key that exists independently
+  of the passwords is one more secret that can be captured, escrowed, or silently reused
+  across a password change — so a password change would no longer guarantee that an
+  attacker who once had the old key is locked out. For an *estate* vault, "changing the
+  passwords genuinely re-keys everything" is a property worth having.
+- **`age` is not a drop-in alternative anyway.** Its passphrase mode takes one
+  passphrase. The defining requirement here is **two** passwords that are both required
+  and neither independently verifiable (§5.2) — a chained derivation `age` does not offer.
+
+**Verdict.** The construction is custom, but it is assembled conservatively from standard
+RustCrypto primitives with no novel cryptography: no home-made cipher, no home-made MAC,
+no hand-rolled padding, and the whole header bound as AAD. The one structural departure
+from `age` is deliberate, is documented above, and its cost has been measured rather than
+assumed.
+
+
 ## 6. On-disk file format (req. 8, 11)
 
 The vault is a **directory** `mypath/` holding three things:

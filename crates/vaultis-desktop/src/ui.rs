@@ -36,7 +36,6 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Row
 // zeroed on drop. These keep passwords from lingering in RAM.
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-use crate::crypto::KdfParams;
 use crate::csv;
 use crate::password::{self, GenOptions};
 use crate::records::{
@@ -1166,7 +1165,7 @@ impl App {
                     return;
                 }
             };
-            OpenVault::create(self.path.clone(), pw1.as_bytes(), pw2.as_bytes(), KdfParams::default())
+            OpenVault::create(self.path.clone(), pw1.as_bytes(), pw2.as_bytes(), crate::kdf_params_for_new_vault())
         } else {
             let f = &self.auth.fields;
             let (p1, p2) = (f[0].value.as_bytes(), f[1].value.as_bytes());

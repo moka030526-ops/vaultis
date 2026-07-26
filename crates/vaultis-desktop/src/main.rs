@@ -908,7 +908,7 @@ fn cli_import_tree(src_dir: PathBuf, dest: PathBuf) -> anyhow::Result<()> {
     eprintln!("Choose TWO NEW passwords for the new vault (entered in sequence).");
     let pw1 = read_password("New password 1: ")?;
     let pw2 = read_password("New password 2: ")?;
-    let params = vaultis::crypto::KdfParams::default();
+    let params = vaultis::kdf_params_for_new_vault();
     vault::OpenVault::import_tree(&src_dir, &dest, pw1.as_bytes(), pw2.as_bytes(), params)?;
     eprintln!("Imported. The new vault directory is {}.", dest.parent().unwrap_or(&dest).display());
     Ok(())

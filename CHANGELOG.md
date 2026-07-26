@@ -18,6 +18,24 @@ date and bump the crate versions to match.
 
 ### Added
 
+- **The Argon2id cost is now selectable when creating a vault**, via
+  `VAULTIS_KDF_MCOST_MIB` / `VAULTIS_KDF_TCOST` (1–512 MiB, 1–16 passes). The on-disk
+  format has always supported the full range and validated it on both read and write, but
+  every create site hardcoded the 64 MiB / 3-pass default, so the stronger settings were
+  unreachable. Out-of-range or unparseable values fall back to the default with a warning
+  rather than failing, so this can never write a vault the reader would refuse. Raising it
+  is deliberately noisy: the cost is paid on **every** open, forever, on **every** device,
+  and a 512 MiB vault may simply not open on a phone — for an estate vault, "my executor
+  could not open it" is a likelier catastrophe than a future decryption.
+- **[`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) now answers the "harvest now, decrypt
+  later" question.** In short: vaultis contains **no public-key cryptography at all**, so
+  Shor's algorithm — which is what actually threatens harvested TLS/PGP traffic — has
+  nothing to attack; the 256-bit XChaCha20-Poly1305 key leaves ~128-bit security under
+  Grover, which is exactly why 256-bit symmetric keys are the post-quantum target; and
+  there is no PQC algorithm to adopt, because ML-KEM/ML-DSA replace key exchange and
+  signatures, neither of which exists here. The section is explicit that the binding
+  constraint is **password entropy**, not the cipher, and that Argon2id's memory-hardness
+  is itself strongly quantum-hostile.
 - **The mobile app now shows all eight record types, and opens on Urgent.** It previously
   surfaced five and silently omitted **Urgent**, **Taxes** and **Documents** — with nothing
   on screen to say so, and opening on *Accounts*. `Urgent` is the vault's "read this first"

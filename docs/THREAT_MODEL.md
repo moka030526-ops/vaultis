@@ -54,6 +54,94 @@ holds.
 
 ---
 
+## Quantum computers, and "harvest now, decrypt later"
+
+The concern is exact and reasonable: an estate vault must stay secret for *decades*, and
+someone who copies the encrypted file today can simply keep it until better machines
+exist. So: is this vault's encryption going to survive that?
+
+**The short answer is yes, and mostly for a structural reason rather than a clever one.**
+
+### Why Shor's algorithm — the one that matters — does not apply
+
+Nearly all real "harvest now, decrypt later" risk in the world is about **public-key**
+cryptography: RSA, Diffie-Hellman and elliptic curves, which Shor's algorithm breaks
+outright. That is what threatens recorded TLS sessions, PGP mail and encrypted messengers,
+because their session keys are wrapped in public-key operations.
+
+**vaultis contains no public-key cryptography at all.** There is no key exchange, no
+certificate, no signature, no recipient key — because there is nothing to exchange keys
+*with*. The vault is a local file encrypted directly from your two passwords. Shor's
+algorithm has nothing to factor and no discrete log to solve. This is not a parameter that
+was tuned well; it is a consequence of the program being offline by design, and it removes
+the entire category.
+
+### Grover's algorithm, and why 256 bits is the right answer
+
+The quantum attack that *does* apply to symmetric ciphers is Grover's algorithm, which
+gives a **quadratic** speed-up on brute-force search — effectively halving key strength.
+
+vaultis uses **XChaCha20-Poly1305 with a full 256-bit key**, so Grover leaves roughly
+**128-bit** security. That is the standard post-quantum-safe target: it is exactly why NIST
+points at 256-bit symmetric keys, and it is not a number anyone expects to reach —
+Grover's search is also inherently *sequential*, so it parallelises poorly and cannot be
+brute-forced by simply building more machines.
+
+**There is nothing to "upgrade" the cipher to.** Post-quantum cryptography — ML-KEM
+(Kyber), ML-DSA (Dilithium) and friends — replaces key exchange and signatures. It does not
+replace symmetric encryption, because quantum computers do not break symmetric encryption;
+they only weaken it by the square root, which a 256-bit key already absorbs. Bolting a PQC
+algorithm onto this design would add moving parts and protect nothing.
+
+### The part that actually decides it: your two passwords
+
+An attacker with your encrypted vault will not attack ChaCha20. They will **guess your
+passwords**, because that is the cheaper path by an enormous margin — today and in any
+quantum future. The key is only as strong as the two secrets it is derived from.
+
+Two things stand in their way:
+
+- **Password entropy.** This dominates everything else on this page. Two long, unique,
+  unguessable passwords are what make the vault survive; a memorable phrase reused from
+  somewhere else means the cipher never gets attacked at all.
+- **Argon2id**, at 64 MiB and 3 passes, run **twice** (once per password, chained). Being
+  *memory-hard* matters here specifically: Grover would have to evaluate the whole
+  memory-hard function in superposition, which needs quantum RAM proportional to the memory
+  cost. Coherent quantum memory on that scale is far beyond anything on the horizon, so
+  memory-hard password hashing is one of the *worst* possible targets for a quantum
+  speed-up. The KDF is doing more for post-quantum safety than the cipher choice is.
+
+### If you want to turn it up
+
+The Argon2id cost is baked into a vault when it is **created** and cannot be changed
+afterwards without re-creating it. It can be raised at creation time:
+
+```bash
+VAULTIS_KDF_MCOST_MIB=256 VAULTIS_KDF_TCOST=4 vaultis import-tree <mirror> <new-vault-dir>
+```
+
+Accepted range: **1–512 MiB** memory, **1–16** passes. Anything outside it, or unparseable,
+falls back to the default with a warning rather than writing a vault the reader would
+refuse.
+
+**Think hard before raising it.** That cost is paid on *every* open, forever, on *every*
+device. A 512 MiB vault may be openable on your desktop and simply refuse to open on a
+phone. For an estate vault, **"my executor could not open it" is a far more likely
+catastrophe than "a quantum computer read it in 2050"** — and unlike the quantum scenario,
+it is one you can cause yourself today. Add entropy to your passwords first: it costs
+nothing at open time and buys strictly more than the KDF knob does.
+
+### The honest bottom line on quantum
+
+The cryptography here is in good shape against a future quantum adversary, and the reason
+is unglamorous: no public-key crypto to break, a 256-bit symmetric key, and a memory-hard
+KDF. The realistic failure mode for a vault harvested today is not a quantum computer — it
+is that the two passwords were guessable, or that the plaintext leaked from a device while
+the vault was unlocked (everything else on this page). The strongest thing you can do about
+"harvest now, decrypt later" is still to **not let the file be harvested**: keep it off
+cloud storage, keep backups on media you physically control, and treat every copy as
+permanent.
+
 ## What it does not cover
 
 | The attacker can… | Can they read your vault? |

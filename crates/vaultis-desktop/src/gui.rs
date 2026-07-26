@@ -39,7 +39,6 @@ use crate::records::{
 };
 use crate::ui::format_time;
 use crate::vault::{self, CategoryRemoval, OpenVault, VaultError};
-use crate::crypto::KdfParams;
 
 /// Launch the graphical app and block until the window is closed. `writable`
 /// enables mutations; when false the vault is opened read-only and write
@@ -1180,7 +1179,7 @@ impl GuiApp {
                     return;
                 }
             };
-            OpenVault::create(self.path.clone(), pw1.as_bytes(), pw2.as_bytes(), KdfParams::default())
+            OpenVault::create(self.path.clone(), pw1.as_bytes(), pw2.as_bytes(), crate::kdf_params_for_new_vault())
         } else {
             OpenVault::open_with(
                 self.path.clone(),
