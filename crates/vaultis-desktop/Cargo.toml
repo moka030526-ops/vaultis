@@ -35,6 +35,12 @@ directories = "6.0.0"
 # The egui windowed GUI. Optional + behind the `gui` feature so a terminal-only build
 # (and a static musl binary) doesn't pull in eframe and the desktop graphics stack.
 eframe = { version = "0.34.3", optional = true }
+# PNG decoding for the WINDOW ICON only (embedded at compile time from
+# packaging/icons/). Adds nothing new to the dependency tree: eframe already pulls
+# `png` transitively (eframe -> image -> png), so this is a direct edge to a crate
+# that is compiled into the GUI build either way. Optional + tied to `gui` because a
+# terminal-only/musl build has no window to put an icon on.
+png = { version = "0.18.1", optional = true }
 ratatui = "0.30.1"
 serde_json = "1.0.150"
 zeroize = { version = "1.9.0", features = ["derive"] }
@@ -53,7 +59,7 @@ libc = "0.2"
 default = ["gui"]
 # The egui windowed GUI. Pulls eframe (and, transitively, the desktop graphics stack)
 # and implies `clipboard`. Required by the `vaultis-gui` binary.
-gui = ["dep:eframe", "clipboard"]
+gui = ["dep:eframe", "dep:png", "clipboard"]
 # OS clipboard integration (arboard). On Linux this dynamically loads X11/Wayland, so a
 # fully-static (musl) build must leave it OFF; the terminal UI still works (copy is a
 # no-op with an explanatory status).

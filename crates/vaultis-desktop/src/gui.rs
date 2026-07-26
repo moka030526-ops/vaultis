@@ -71,8 +71,11 @@ pub fn run(path: std::path::PathBuf, writable: bool) -> anyhow::Result<()> {
             // centered card plus margins, ~600 tall for logo + vault picker + four
             // password rows + button. In-vault tabs scroll their own panes, so they are
             // comfortable at this size too.
-            .with_min_inner_size([620.0, 600.0])
-            .with_title("vaultis"),
+            .with_min_inner_size(MIN_INNER_SIZE)
+            .with_title("vaultis")
+            // `with_icon` takes IconData directly; a decode failure yields None and the
+            // platform default, so a bad asset can never stop the window opening.
+            .with_icon(window_icon().unwrap_or_default()),
         ..Default::default()
     };
     eframe::run_native(
@@ -87,6 +90,9 @@ pub fn run(path: std::path::PathBuf, writable: bool) -> anyhow::Result<()> {
             // Apply the saved color theme before the first frame (avoids a flash of
             // the default theme); the app re-applies it live when the user changes it.
             apply_theme(&cc.egui_ctx, load_theme());
+            // Same reason as the theme: apply the saved zoom before the first frame so
+            // the window does not visibly resize itself a frame after opening.
+            apply_ui_scale(&cc.egui_ctx, load_ui_scale());
             Ok(Box::new(GuiApp::new(path, writable)))
         }),
     )
@@ -390,12 +396,152 @@ fn accent(theme: Theme) -> egui::Color32 {
     }
 }
 
+/// How large the whole interface is drawn — a second, independent axis of styling
+/// from [`Theme`], which only changes colour.
+///
+/// This matters more than usual for this program. An estate vault is read by whoever
+/// has to settle an estate, which skews older than the person who set it up, often on
+/// an unfamiliar machine, sometimes in a hurry. "I cannot read it" is a real failure
+/// mode for a document nobody can afford to misread, and the fix should not be
+/// "change your display resolution".
+///
+/// Implemented with egui's zoom factor rather than by rewriting the type scale: zoom
+/// scales text, padding, icons, scrollbars and hit targets together, so the layout
+/// stays in proportion instead of large text overflowing controls sized for small text.
+#[derive(PartialEq, Eq, Clone, Copy, Default, Debug)]
+enum UiScale {
+    Compact,
+    #[default]
+    Normal,
+    Large,
+    Larger,
+    Largest,
+}
+
+impl UiScale {
+    const ALL: [UiScale; 5] =
+        [UiScale::Compact, UiScale::Normal, UiScale::Large, UiScale::Larger, UiScale::Largest];
+
+    /// Stable id for prefs.json (never the label — labels are free to be reworded).
+    fn id(self) -> &'static str {
+        match self {
+            UiScale::Compact => "compact",
+            UiScale::Normal => "normal",
+            UiScale::Large => "large",
+            UiScale::Larger => "larger",
+            UiScale::Largest => "largest",
+        }
+    }
+
+    fn from_id(id: &str) -> Option<UiScale> {
+        UiScale::ALL.into_iter().find(|s| s.id() == id)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            UiScale::Compact => "Compact (90%)",
+            UiScale::Normal => "Normal (100%)",
+            UiScale::Large => "Large (115%)",
+            UiScale::Larger => "Larger (130%)",
+            UiScale::Largest => "Largest (150%)",
+        }
+    }
+
+    /// The egui zoom factor. Capped at 1.5: past that the lock screen stops fitting a
+    /// small laptop display even with the scaled minimum window size below.
+    fn factor(self) -> f32 {
+        match self {
+            UiScale::Compact => 0.9,
+            UiScale::Normal => 1.0,
+            UiScale::Large => 1.15,
+            UiScale::Larger => 1.3,
+            UiScale::Largest => 1.5,
+        }
+    }
+}
+
+/// The window's minimum inner size at 100% zoom. The floor exists so the
+/// non-scrolling lock screen (its tallest variant, Create, with the two confirm rows)
+/// always fits whole — see the viewport builder.
+const MIN_INNER_SIZE: [f32; 2] = [620.0, 600.0];
+
+/// The window/taskbar icon, decoded from the committed 512×512 PNG that the desktop
+/// shortcuts already use, so the window, the launcher and the Desktop shortcut all
+/// show the same vault mark instead of a generic placeholder.
+///
+/// Embedded with `include_bytes!` rather than read from disk at runtime: the icon must
+/// not depend on the repository still being present next to the binary, and a missing
+/// file must not be able to change what the program does. Decode failure is not fatal —
+/// the window simply opens with the platform default, exactly as before.
+#[cfg(feature = "gui")]
+fn window_icon() -> Option<egui::IconData> {
+    // The locked-vault mark (the read-only default), matching packaging/linux's
+    // "vaultis (View)" launcher.
+    const PNG: &[u8] = include_bytes!("../../../packaging/icons/vaultis-locked.png");
+
+    // `Cursor` because png 0.18's reader wants `Read + Seek`, and a bare `&[u8]` is
+    // only `Read`.
+    let decoder = png::Decoder::new(std::io::Cursor::new(PNG));
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    // The committed icon is RGBA8; anything else means the asset was regenerated in a
+    // different format, in which case fall back rather than show garbled pixels.
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    buf.truncate(info.buffer_size());
+    Some(egui::IconData { rgba: buf, width: info.width, height: info.height })
+}
+
 /// Apply a theme to the egui context: its palette AND the shared typography and
 /// spacing rules. Called once before the first frame and again whenever the user
 /// picks a different theme.
 fn apply_theme(ctx: &egui::Context, theme: Theme) {
     ctx.set_visuals(visuals_for(theme));
     apply_style(ctx, theme);
+}
+
+/// Apply a UI scale, and grow the window's minimum size with it.
+///
+/// The minimum is scaled deliberately: it was chosen so the lock screen — which does
+/// not scroll — always fits, and that guarantee is in POINTS, so zooming to 150%
+/// without moving the floor would let the user shrink the window until the password
+/// fields were unreachable with no way to scroll to them. Scaling the floor keeps the
+/// original promise at every zoom level.
+fn apply_ui_scale(ctx: &egui::Context, scale: UiScale) {
+    let f = scale.factor();
+    ctx.set_zoom_factor(f);
+    ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
+        MIN_INNER_SIZE[0] * f,
+        MIN_INNER_SIZE[1] * f,
+    )));
+}
+
+/// Load the saved UI scale (see [`load_theme`] — same prefs file, same best-effort rules).
+fn load_ui_scale() -> UiScale {
+    crate::prefs_path().map(|p| load_ui_scale_from(&p)).unwrap_or_default()
+}
+
+fn load_ui_scale_from(path: &std::path::Path) -> UiScale {
+    crate::read_prefs_obj(path)
+        .get("ui_scale")
+        .and_then(|v| v.as_str())
+        .and_then(UiScale::from_id)
+        .unwrap_or_default()
+}
+
+fn save_ui_scale(scale: UiScale) {
+    if let Some(path) = crate::prefs_path() {
+        save_ui_scale_to(&path, scale);
+    }
+}
+
+/// Persist the scale, preserving every other prefs key (theme, export_dir, …).
+fn save_ui_scale_to(path: &std::path::Path, scale: UiScale) {
+    let mut obj = crate::read_prefs_obj(path);
+    obj.insert("ui_scale".into(), serde_json::Value::String(scale.id().to_string()));
+    crate::write_prefs_obj(path, &obj);
 }
 
 /// The typography, spacing, and shape rules shared by every screen.
@@ -797,6 +943,11 @@ struct GuiApp {
     /// only call `set_visuals` (and persist) when the selection actually changes.
     theme: Theme,
     applied_theme: Theme,
+    /// The selected interface scale, and the one currently applied — same
+    /// selected/applied pair as the theme, so zoom is only pushed to egui (and
+    /// persisted) when the selection actually changes, not every frame.
+    ui_scale: UiScale,
+    applied_ui_scale: UiScale,
     /// The in-app manual's browser state (search box + selected topic), kept here
     /// so the user's place in it survives leaving and re-entering Help.
     help: crate::gui_help::HelpState,
@@ -851,6 +1002,7 @@ impl GuiApp {
         // Load the saved theme; `applied_theme` starts equal to it so the first
         // frame doesn't needlessly re-apply/re-save (the same value `run` already set).
         let theme = load_theme();
+        let ui_scale = load_ui_scale();
         // Saved "view defaults" (Config checkboxes, prefs.json): seed the reveal-all
         // toggles and the grouped/flat view state so a freshly opened vault honours the
         // user's preferences. The pref values are also retained on the struct so the Config
@@ -933,6 +1085,8 @@ impl GuiApp {
             clipboard_clear_at: None,
             theme,
             applied_theme: theme,
+            ui_scale,
+            applied_ui_scale: ui_scale,
             help: crate::gui_help::HelpState::default(),
         }
     }
@@ -1783,6 +1937,25 @@ impl GuiApp {
                     ui.selectable_value(&mut self.theme, t, t.label());
                 }
             });
+            // Interface scale: the second styling axis. Applied and saved by `render`
+            // the moment the selection changes, so the effect is immediate and survives
+            // the next launch — like the theme, it is a local preference in prefs.json
+            // and holds no vault data, so it works in read-only mode too.
+            egui::ComboBox::from_label("Interface size")
+                .selected_text(self.ui_scale.label())
+                .show_ui(ui, |ui| {
+                    for sc in UiScale::ALL {
+                        ui.selectable_value(&mut self.ui_scale, sc, sc.label());
+                    }
+                });
+            ui.label(
+                egui::RichText::new(
+                    "Scales the whole window — text, buttons and spacing together. \
+                     Useful if the default is hard to read.",
+                )
+                .small()
+                .weak(),
+            );
             ui.add_space(14.0);
 
             // View defaults: local UI preferences (prefs.json), not vault content — so they
@@ -4644,6 +4817,12 @@ impl GuiApp {
             save_theme(self.theme);
             self.applied_theme = self.theme;
         }
+        // Same pattern for the interface scale (an independent axis from colour).
+        if self.ui_scale != self.applied_ui_scale {
+            apply_ui_scale(ui.ctx(), self.ui_scale);
+            save_ui_scale(self.ui_scale);
+            self.applied_ui_scale = self.ui_scale;
+        }
         // Clear the error banner once any later status message has replaced the failure
         // text it was showing (a success/info line means the problem is no longer current).
         if error_banner_is_stale(self.error.as_deref(), &self.status) {
@@ -5844,6 +6023,65 @@ mod tests {
 
     fn fast() -> KdfParams {
         KdfParams { m_cost: 256, t_cost: 1, p_cost: 1 }
+    }
+
+    /// The window icon must actually DECODE. `with_icon(window_icon().unwrap_or_default())`
+    /// fails silently by design — a broken asset just yields the platform default — so
+    /// without this test, regenerating the PNG in a non-RGBA8 format (or moving it) would
+    /// quietly drop the icon and nobody would notice until they looked at the taskbar.
+    #[test]
+    fn window_icon_decodes_to_rgba8() {
+        let icon = window_icon().expect("the committed icon PNG must decode");
+        assert_eq!(icon.width, 512, "expected the 512px source");
+        assert_eq!(icon.height, 512);
+        assert_eq!(
+            icon.rgba.len(),
+            (icon.width * icon.height * 4) as usize,
+            "RGBA8 = 4 bytes per pixel"
+        );
+        // Real artwork, not a fully transparent square.
+        assert!(icon.rgba.chunks_exact(4).any(|px| px[3] > 0), "icon has visible pixels");
+    }
+
+    /// Every UiScale round-trips through its prefs id, and the zoom factors are sane and
+    /// strictly increasing — a duplicate or inverted factor would make two menu entries
+    /// behave identically, or backwards.
+    #[test]
+    fn ui_scale_ids_round_trip_and_factors_increase() {
+        let mut prev = 0.0_f32;
+        for s in UiScale::ALL {
+            assert_eq!(UiScale::from_id(s.id()), Some(s), "{s:?} round-trips");
+            assert!(!s.label().is_empty());
+            let f = s.factor();
+            assert!(f > prev, "factors strictly increase: {s:?} = {f} after {prev}");
+            assert!((0.5..=2.0).contains(&f), "{s:?} factor {f} is in a usable range");
+            prev = f;
+        }
+        assert_eq!(UiScale::default().factor(), 1.0, "the default must not rescale");
+        assert_eq!(UiScale::from_id("nonsense"), None);
+    }
+
+    /// The scale preference persists next to the theme WITHOUT clobbering it — both live
+    /// in the same prefs.json, so a naive write of one would drop the other.
+    #[test]
+    fn saving_ui_scale_preserves_the_theme_and_vice_versa() {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("vaultis-prefs-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("prefs.json");
+
+        save_theme_to(&path, Theme::Nord);
+        save_ui_scale_to(&path, UiScale::Larger);
+        assert_eq!(load_theme_from(&path), Theme::Nord, "theme survived the scale write");
+        assert_eq!(load_ui_scale_from(&path), UiScale::Larger);
+
+        save_theme_to(&path, Theme::Dracula);
+        assert_eq!(load_ui_scale_from(&path), UiScale::Larger, "scale survived the theme write");
+        assert_eq!(load_theme_from(&path), Theme::Dracula);
+
+        // A missing file falls back to the default rather than failing startup.
+        assert_eq!(load_ui_scale_from(&dir.join("nope.json")), UiScale::default());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

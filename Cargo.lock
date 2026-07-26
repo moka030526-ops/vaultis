@@ -4740,6 +4740,7 @@ dependencies = [
  "eframe",
  "egui_kittest",
  "libc",
+ "png",
  "ratatui",
  "serde_json",
  "vaultis-core",

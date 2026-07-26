@@ -244,12 +244,21 @@ only the optional subfolder and the filename.
   the program **automatically clears the clipboard 15 seconds later** (and when
   you close the program), so a copied password doesn't linger.
 
-## Changing the colors (theme)
+## Changing the appearance (colors and size)
 
-Open the **Config** screen and pick a **Color theme** — ten palettes: Light, Dark,
-High contrast, Solarized, Sepia, Nord, Dracula, Gruvbox Dark, Gruvbox Light, and Rosé
-Pine. The change applies immediately and is remembered for next time. It's only a
-display preference — it changes nothing about your data.
+Open the **Config** screen. There are two independent settings:
+
+- **Color theme** — ten palettes: Light, Dark, High contrast, Solarized, Sepia, Nord,
+  Dracula, Gruvbox Dark, Gruvbox Light, and Rosé Pine.
+- **Interface size** — Compact (90%), Normal, Large (115%), Larger (130%) or Largest
+  (150%). This scales the *whole* window together — text, buttons and spacing — so
+  everything stays in proportion instead of big text overflowing small controls.
+  **If the default is hard to read, use this.** The program is often opened by whoever
+  has to settle an estate, on an unfamiliar computer, and "I can't read it" is not a
+  good enough reason to struggle with a document like this one.
+
+Both apply immediately and are remembered for next time. They are only display
+preferences — they change nothing about your data, and they work in read-only mode.
 
 ## Getting help inside the program
 

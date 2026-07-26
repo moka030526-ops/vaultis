@@ -18,6 +18,29 @@ date and bump the crate versions to match.
 
 ### Added
 
+- **An "Interface size" setting (Config → Appearance).** Compact / Normal / Large /
+  Larger / Largest (90%–150%), a second styling axis independent of the ten colour
+  themes. Implemented with egui's zoom factor rather than by rewriting the type scale, so
+  text, padding, icons, scroll bars and hit targets scale *together* and the layout stays
+  in proportion. The window's minimum size scales with it, which preserves an existing
+  guarantee: that floor exists so the non-scrolling lock screen always fits whole, and it
+  is expressed in points — at 150% zoom with a fixed floor, the password fields could
+  have been squeezed out of a window with no way to scroll to them. Persisted in
+  `prefs.json` next to the theme (both writes preserve the other's key), so it survives
+  restarts and works in read-only mode. This matters more than a normal preference here:
+  the program is often opened by whoever has to settle an estate, on an unfamiliar
+  machine, and being unable to read it is a real failure mode.
+- **The window now has an icon.** The GUI opened with the platform's generic placeholder
+  in the title bar, taskbar and alt-tab switcher, while the desktop shortcuts already used
+  the vault artwork — so the same app looked like two different things. It now embeds the
+  committed 512×512 `packaging/icons/vaultis-locked.png` at compile time (`include_bytes!`,
+  so it does not depend on the repo still sitting next to the binary). This adds **no new
+  dependency**: `png` was already compiled into the GUI build via `eframe → image → png`,
+  so this is only a direct edge to a crate that was there anyway — `Cargo.lock` grows by
+  exactly one line and `cargo deny` is unchanged. Decode failure is non-fatal (the window
+  falls back to the default icon), so a test asserts the asset really decodes to RGBA8
+  rather than silently regressing to a blank icon.
+
 - **The Argon2id cost is now selectable when creating a vault**, via
   `VAULTIS_KDF_MCOST_MIB` / `VAULTIS_KDF_TCOST` (1–512 MiB, 1–16 passes). The on-disk
   format has always supported the full range and validated it on both read and write, but
