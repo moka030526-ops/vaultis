@@ -1110,6 +1110,25 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// SCOPE OF THE "last opened" SIGNAL: a READ-ONLY open does not refresh
+    /// `last_opened_at` (vault.rs skips the open-time save when `read_only`), so any
+    /// number of read-only opens leave the reported previous-access stamp unchanged.
+    /// Mobile is read-only-only and the desktop defaults to read-only, so this pins
+    /// what the banner can and cannot detect: unauthorised WRITES, not reads.
+    #[test]
+    fn read_only_opens_do_not_advance_previous_access() {
+        let dir = tmp();
+        make_full_vault(&dir, b"one", b"two");
+        let first = open_full(&dir).previous_access();
+        std::thread::sleep(std::time::Duration::from_millis(1100)); // cross a 1-second tick
+        let second = open_full(&dir).previous_access();
+        assert_eq!(
+            first, second,
+            "a read-only open left no trace: previous_access did not advance ({first} -> {second})"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// A never-opened vault must read "never", not a 1970 epoch date, which would
     /// look like a real (and alarming) prior access to the user.
     #[test]

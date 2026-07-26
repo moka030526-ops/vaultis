@@ -206,10 +206,15 @@ more often than an attacker does:
 3. **Test your backup.** Actually open it, once. An untested backup is a hope.
 4. **Tell your executor the vault exists and how to get in.** Perfect encryption plus
    nobody knowing it is there equals the information being gone.
-5. **Watch the "Last opened" line** the app shows after you unlock. If it names a time you
-   do not recognise, someone else has opened the vault with your two passwords. If the
-   generation number is *lower* than you remember, you are looking at an older copy of the
-   file than you should be.
+5. **Watch the "Last opened" line** the app shows after you unlock — but know exactly what
+   it does and does not catch. It is refreshed only by a **writable** open (desktop
+   `--write`/Edit mode). The desktop *defaults* to read-only and the phone app is
+   read-only always, so **someone who opens your vault merely to READ it leaves this
+   timestamp untouched.** It detects unauthorised *edits*, not unauthorised *reads* —
+   which is the more likely intrusion. Treat an unfamiliar time as a definite alarm, but
+   never treat an unchanged one as proof that nobody has been in. The same caveat applies
+   to the generation number: it advances on save, so a lower-than-remembered value means
+   you are looking at an older copy of the file, while an unchanged one proves nothing.
 
 ---
 
