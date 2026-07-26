@@ -708,13 +708,22 @@ fn save_font_choice_to(path: &std::path::Path, font: FontChoice) {
     crate::write_prefs_obj(path, &obj);
 }
 
-/// The window's minimum inner size at 100% zoom. The floor exists so the lock screen's
-/// tallest variant — Create, with the two confirm rows — fits whole without scrolling.
+/// The window's minimum inner size at 100% zoom.
 ///
-/// The height carries an extra ~70 px for the Help footer added beneath the card, which
-/// did not exist when the original 600 was measured. The lock screen is also wrapped in
-/// a ScrollArea now, so being slightly wrong here is untidy rather than a trap.
-const MIN_INNER_SIZE: [f32; 2] = [620.0, 670.0];
+/// **Height** is sized so the lock screen's tallest variant — Create, with the two
+/// confirm rows — fits whole, plus ~70 px for the Help footer beneath the card.
+///
+/// **Width** is sized so the two-pane record tabs actually fit. This is the "devise a
+/// minimum and stop shrinking" line: the list pane and the form pane each have an
+/// intrinsic minimum (a label column, a field, and a row of buttons that cannot
+/// usefully get narrower), and below roughly this width the form pane's content — and
+/// on the Accounts and Real Estate tabs even the pane's own scrollbar — was pushed
+/// outside the window and clipped by `two_col`. 620 was chosen for the lock screen
+/// alone, before the two-pane tabs were measured against it.
+///
+/// Both floors are backstops, not guarantees: the lock screen and the form panes are
+/// scrollable, so being wrong here is untidy rather than a trap.
+const MIN_INNER_SIZE: [f32; 2] = [900.0, 670.0];
 
 /// The window/taskbar icon, decoded from the committed 512×512 PNG that the desktop
 /// shortcuts already use, so the window, the launcher and the Desktop shortcut all
@@ -2955,7 +2964,7 @@ impl GuiApp {
             // one both-axis ScrollArea, so this vertical scroller was nested inside
             // another one and was handed unbounded height — the layout could not settle
             // on a scrollbar, which is what flickered on a small window.
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("form_pane_urgent").show(&mut c[1], |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).id_salt("form_pane_urgent").show(&mut c[1], |ui| {
                 if let Some(r) = self.edit_urgent.as_mut() {
                     egui::Grid::new("urgent_form").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
                         ui.label("Title");
@@ -3025,7 +3034,7 @@ impl GuiApp {
             // one both-axis ScrollArea, so this vertical scroller was nested inside
             // another one and was handed unbounded height — the layout could not settle
             // on a scrollbar, which is what flickered on a small window.
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("form_pane_instructions").show(&mut c[1], |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).id_salt("form_pane_instructions").show(&mut c[1], |ui| {
                 // `.as_mut()` borrows the edited record mutably so the form widgets
                 // below can write directly into its fields.
                 if let Some(r) = self.edit_instruction.as_mut() {
@@ -3106,7 +3115,7 @@ impl GuiApp {
             // one both-axis ScrollArea, so this vertical scroller was nested inside
             // another one and was handed unbounded height — the layout could not settle
             // on a scrollbar, which is what flickered on a small window.
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("form_pane_trustwill").show(&mut c[1], |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).id_salt("form_pane_trustwill").show(&mut c[1], |ui| {
                 if let Some(r) = self.edit_trustwill.as_mut() {
                     egui::Grid::new("tw_form").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
                         ui.label("Document");
@@ -3185,7 +3194,7 @@ impl GuiApp {
             // one both-axis ScrollArea, so this vertical scroller was nested inside
             // another one and was handed unbounded height — the layout could not settle
             // on a scrollbar, which is what flickered on a small window.
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("form_pane_general").show(&mut c[1], |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).id_salt("form_pane_general").show(&mut c[1], |ui| {
                 if let Some(r) = self.edit_general.as_mut() {
                     egui::Grid::new("gen_form").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
                         ui.label("Title");
@@ -3355,7 +3364,7 @@ impl GuiApp {
             // one both-axis ScrollArea, so this vertical scroller was nested inside
             // another one and was handed unbounded height — the layout could not settle
             // on a scrollbar, which is what flickered on a small window.
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("form_pane_assets").show(&mut c[1], |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).id_salt("form_pane_assets").show(&mut c[1], |ui| {
                 if let Some(r) = self.edit_asset.as_mut() {
                     let w = self.writable;
                     egui::Grid::new("asset_form").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
@@ -3940,7 +3949,7 @@ impl GuiApp {
             // one both-axis ScrollArea, so this vertical scroller was nested inside
             // another one and was handed unbounded height — the layout could not settle
             // on a scrollbar, which is what flickered on a small window.
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("form_pane_accounts").show(&mut c[1], |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).id_salt("form_pane_accounts").show(&mut c[1], |ui| {
                 if let Some(r) = self.edit_account.as_mut() {
                     let w = self.writable;
                     egui::Grid::new("acct_form").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
@@ -3961,7 +3970,7 @@ impl GuiApp {
                         ui.end_row();
                         ui.label("Username");
                         ui.horizontal(|ui| {
-                            field_singleline(ui, &mut r.username, w, 380.0);
+                            field_singleline_with_buttons(ui, &mut r.username, w, 380.0, 1);
                             // Copy is a read, so it stays available even in read-only mode;
                             // disabled only when the field is empty (nothing to copy).
                             if ui.add_enabled(!r.username.is_empty(), egui::Button::new("📋")).on_hover_text("Copy").clicked() {
@@ -3976,7 +3985,7 @@ impl GuiApp {
                             // egui's undo buffer and re-routes the built-in copy through the
                             // history-excluded clipboard path. Read-only: the field is shown,
                             // selectable, and copyable, but not editable.
-                            secret_text_edit(ui, "acct_pw", &mut r.password, self.reveal_all, w, 280.0, &mut copy_pw);
+                            secret_text_edit(ui, "acct_pw", &mut r.password, self.reveal_all, w, fit_with_buttons(ui, 280.0, 2), &mut copy_pw);
                             // Generate is only useful when you can save; copy is a read.
                             if w && ui.button("🎲").on_hover_text("Generate").clicked() {
                                 generate = true;
@@ -4197,7 +4206,7 @@ impl GuiApp {
             // one both-axis ScrollArea, so this vertical scroller was nested inside
             // another one and was handed unbounded height — the layout could not settle
             // on a scrollbar, which is what flickered on a small window.
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("form_pane_realestate").show(&mut c[1], |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).id_salt("form_pane_realestate").show(&mut c[1], |ui| {
                 if let Some(r) = self.edit_realestate.as_mut() {
                     // No inner ScrollArea here: the whole tab is already wrapped in the
                     // CentralPanel's both-axis scroll. A nested vertical scroll over this
@@ -4327,7 +4336,7 @@ impl GuiApp {
             // one both-axis ScrollArea, so this vertical scroller was nested inside
             // another one and was handed unbounded height — the layout could not settle
             // on a scrollbar, which is what flickered on a small window.
-            egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("form_pane_taxes").show(&mut c[1], |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).id_salt("form_pane_taxes").show(&mut c[1], |ui| {
                 if let Some(r) = self.edit_taxfiling.as_mut() {
                     egui::Grid::new("tax_form").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
                         text_row(ui, "Owner", &mut r.owner, writable);
@@ -5717,6 +5726,26 @@ fn fit(ui: &egui::Ui, desired: f32) -> f32 {
     desired.min(ui.available_width() - 8.0).max(90.0)
 }
 
+/// Like [`fit`], but for a field that is followed by `buttons` trailing controls on the
+/// SAME row (a 📋 copy, a 🎲 generate, …).
+///
+/// `fit` alone reserves 8 px, which is right for a field that owns its whole row. In a
+/// `ui.horizontal` row the field is measured FIRST, so on a narrow pane it takes all the
+/// remaining width and the buttons after it are laid out past the pane's right edge —
+/// where `two_col`'s clip hides them. That is how the Accounts tab could push its copy,
+/// generate and reveal buttons out of the window at any window size: the overflow scaled
+/// with the pane instead of disappearing as the window grew.
+///
+/// The reserve is derived from the theme's own metrics rather than a magic number, so it
+/// tracks the interface-size setting: an emoji button is about one `interact_size.y`
+/// square plus its horizontal padding, and each needs an `item_spacing.x` gap.
+fn fit_with_buttons(ui: &egui::Ui, desired: f32, buttons: usize) -> f32 {
+    let s = ui.spacing();
+    let per_button = s.interact_size.y + s.button_padding.x * 2.0 + s.item_spacing.x;
+    let reserve = per_button * buttons as f32;
+    (desired).min(ui.available_width() - 8.0 - reserve).max(90.0)
+}
+
 /// A single-line text field that is editable when `writable`, and otherwise shown as
 /// an **immutable but still selectable/copyable** field. egui edits require a *mutable*
 /// `TextBuffer` while selection only needs an interactive widget — so binding a `&str`
@@ -5726,6 +5755,22 @@ fn fit(ui: &egui::Ui, desired: f32) -> f32 {
 fn field_singleline(ui: &mut egui::Ui, value: &mut String, writable: bool, width: f32) -> egui::Response {
     if writable {
         ui.add(egui::TextEdit::singleline(value).desired_width(fit(ui, width)))
+    } else {
+        read_only_value(ui, value)
+    }
+}
+
+/// Like [`field_singleline`], but for a field followed by `buttons` controls on the same
+/// row — see [`fit_with_buttons`] for why the plain version pushes them off the pane.
+fn field_singleline_with_buttons(
+    ui: &mut egui::Ui,
+    value: &mut String,
+    writable: bool,
+    width: f32,
+    buttons: usize,
+) -> egui::Response {
+    if writable {
+        ui.add(egui::TextEdit::singleline(value).desired_width(fit_with_buttons(ui, width, buttons)))
     } else {
         read_only_value(ui, value)
     }
@@ -5787,7 +5832,7 @@ fn portal_section(
                 // `title` is unique per portal (Property Mgmt / Insurance / HOA / Tax), so
                 // it is a valid per-field id salt for the secret-field hardening. Copy stays
                 // available read-only (it is a read, not an edit).
-                secret_text_edit(ui, title, password, reveal, writable, 260.0, copy_pw);
+                secret_text_edit(ui, title, password, reveal, writable, fit_with_buttons(ui, 260.0, 1), copy_pw);
                 if ui
                     .button("📋")
                     .on_hover_text("Copy to the clipboard (cleared automatically after 15 seconds)")
@@ -6261,10 +6306,13 @@ fn secret_text_edit(
     value: &mut String,
     revealed: bool,
     writable: bool,
+    // The FINAL width, already fitted by the caller — `fit` for a field that owns its
+    // row, `fit_with_buttons` when controls follow it on the same row. Passing it in
+    // rather than fitting here keeps the caller's row layout in one place (and this
+    // function within clippy's argument budget).
     width: f32,
     copied_out: &mut Option<Zeroizing<String>>,
 ) -> egui::Response {
-    let width = fit(ui, width);
     let id = ui.make_persistent_id(id_salt);
     // Read-only: bind a `&str` (immutable TextBuffer) so the field stays selectable and
     // copyable (incl. the hardened Ctrl+C reroute below) but cannot be edited; writable
@@ -6340,7 +6388,7 @@ fn password_field(
     // exists before any vault is open, so the read-only mode does not apply here.
     // `copied_out` surfaces a built-in Ctrl+C of the master password so the caller
     // arms the auto-clear (otherwise it would linger on the clipboard).
-    let resp = secret_text_edit(ui, id_salt, value, false, true, 280.0, copied_out);
+    let resp = secret_text_edit(ui, id_salt, value, false, true, fit(ui, 280.0), copied_out);
     resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
 }
 
@@ -6873,6 +6921,49 @@ mod tests {
         }
     }
 
+    /// The strip must keep wrapping — never scrolling, never clipping — at EVERY interface
+    /// scale, not just the default one.
+    ///
+    /// The wrap guarantee predates the interface-size setting, which can make every tab
+    /// 1.5× wider. That is precisely the case where a strip would be tempted to scroll or
+    /// run off the edge, and the requirement is absolute: extra rows, never a scrollbar.
+    #[test]
+    fn the_tab_strip_wraps_at_every_interface_scale() {
+        use egui_kittest::{kittest::NodeT as _, Harness};
+
+        for scale in UiScale::ALL {
+            let f = scale.factor();
+            // The narrowest real window at this scale — the worst case for a strip.
+            let w = MIN_INNER_SIZE[0] * f;
+            let (mut app, path) = app_unlocked("tabscale");
+            app.tab = Tab::Urgent;
+            let app = std::cell::RefCell::new(app);
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(w, 700.0 * f))
+                .with_max_steps(64)
+                .build_ui(|ui| app.borrow_mut().render(ui));
+            h.ctx.set_zoom_factor(f);
+            h.try_run().unwrap_or_else(|e| panic!("never settled at {scale:?}: {e}"));
+
+            for label in TAB_STRIP_LABELS {
+                let bb = h
+                    .root()
+                    .children_recursive()
+                    .filter(|n| n.accesskit_node().label().as_deref() == Some(label))
+                    .filter_map(|n| n.accesskit_node().bounding_box())
+                    .next()
+                    .unwrap_or_else(|| panic!("tab {label:?} did not lay out at {scale:?}"));
+                assert!(
+                    bb.x1 as f32 <= w + 1.0,
+                    "tab {label:?} runs off the right edge at {scale:?} (right={:.0}, window={w:.0}) \
+                     — the strip must add a row, never scroll or clip",
+                    bb.x1
+                );
+            }
+            cleanup(&path);
+        }
+    }
+
     /// The top bar's OTHER row — the global actions — must stay inside the window too. They are
     /// laid out right-to-left against the vault name, which gives up space first, so a narrow
     /// window must never push a button off either edge.
@@ -6974,6 +7065,92 @@ mod tests {
         );
         // Write mode still uses a real edit box, which is meant to be a uniform target.
         assert!(width_of(true) > 200.0, "editable fields keep their designed width");
+    }
+
+    /// A long UNBROKEN value in a right-hand form pane must stay inside the pane.
+    ///
+    /// `TextWrapMode::Wrap` breaks at word boundaries, so a value with no spaces in it —
+    /// a URL, an account or policy number, a long token — has nowhere to break and runs
+    /// past the pane. The form pane scrolls only VERTICALLY and `two_col` clips each
+    /// column at the divider, so the overflow is not merely ugly: it is invisible and
+    /// unreachable, with no scrollbar to say anything is missing.
+    /// NOTHING IS EVER TRUNCATED WITHOUT A SCROLLBAR.
+    ///
+    /// The form pane is clipped at the column divider by `two_col`, so content wider than
+    /// the pane does not merely spill — it vanishes, silently. Reported on Assets: a long
+    /// value simply stopped, with no scrollbar to say there was more.
+    ///
+    /// The invariant asserted here is the user-visible one rather than a pixel budget:
+    /// on every tab, in both modes, at the window's own minimum size, either the content
+    /// fits **or** a horizontal scrollbar exists to reach it.
+    ///
+    /// Long UNBROKEN values are used deliberately: `TextWrapMode::Wrap` breaks on word
+    /// boundaries, so a URL or an account number is the case with nowhere to break.
+    #[test]
+    fn no_tab_truncates_content_without_offering_a_scrollbar() {
+        use egui_kittest::{kittest::NodeT as _, Harness};
+
+        const LONG: &str =
+            "https://portal.example-financial-services.com/accounts/statements/2026/Q4/download?token=AbCdEf0123456789XYZ";
+
+        for writable in [false, true] {
+            for win_w in [MIN_INNER_SIZE[0], 1200.0] {
+                for tab in [
+                    Tab::Urgent, Tab::Instructions, Tab::TrustWill, Tab::Assets,
+                    Tab::Accounts, Tab::RealEstate, Tab::Taxes, Tab::GeneralDocuments,
+                ] {
+                    let path = tmp("notrunc");
+                    let ov = OpenVault::create(path.clone(), b"a", b"b", fast()).unwrap();
+                    let mut app = GuiApp::new(path.clone(), writable);
+                    app.vault = Some(ov);
+                    app.screen = Screen::Main;
+                    app.tab = tab;
+                    let mut a = AssetLiability::new().unwrap();
+                    a.title = LONG.into(); a.url = LONG.into(); a.description = LONG.into();
+                    a.institution = LONG.into(); a.owner = LONG.into();
+                    app.edit_asset = Some(a);
+                    let mut ac = Account::new().unwrap();
+                    ac.title = LONG.into(); ac.url = LONG.into(); ac.description = LONG.into();
+                    ac.username = LONG.into(); ac.password = LONG.into();
+                    app.edit_account = Some(ac);
+                    let mut re = RealEstate::new().unwrap();
+                    re.address = LONG.into(); re.comments = LONG.into();
+                    app.edit_realestate = Some(re);
+                    let mut tf = TaxFiling::new().unwrap();
+                    tf.notes = LONG.into();
+                    app.edit_taxfiling = Some(tf);
+                    let app = std::cell::RefCell::new(app);
+
+                    let mut h = Harness::builder()
+                        .with_size(egui::vec2(win_w, 700.0))
+                        .with_max_steps(64)
+                        .build_ui(|ui| app.borrow_mut().render(ui));
+                    h.run();
+
+                    let (mut maxx, mut has_hbar) = (0.0_f32, false);
+                    for n in h.root().children_recursive() {
+                        let role = format!("{:?}", n.accesskit_node().role());
+                        let Some(bb) = n.accesskit_node().bounding_box() else { continue };
+                        // A TextRun inside a TextEdit is the field's own clipped text,
+                        // which the field scrolls internally — normal, not a layout fault.
+                        if role != "TextRun" {
+                            maxx = maxx.max(bb.x1 as f32);
+                        }
+                        if role == "ScrollBar" && (bb.x1 - bb.x0) > (bb.y1 - bb.y0) {
+                            has_hbar = true;
+                        }
+                    }
+                    cleanup(&path);
+
+                    // A few px of slack: the pane's own vertical scrollbar sits at the edge.
+                    assert!(
+                        maxx <= win_w + 4.0 || has_hbar,
+                        "{tab:?} (writable={writable}) at {win_w}px: content reaches x={maxx:.0} \
+                         with NO horizontal scrollbar — it is clipped and unreachable"
+                    );
+                }
+            }
+        }
     }
 
     /// A keyboard arrow landing in the SAME egui frame as a Delete click on the Assets

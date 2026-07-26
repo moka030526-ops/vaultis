@@ -119,6 +119,24 @@ date and bump the crate versions to match.
 
 ### Fixed
 
+- **Long values were truncated in the record form panes with no scrollbar.** Reported on
+  Assets and Liabilities; a scan of every tab found it was broader than that. The form
+  pane scrolled only *vertically* while `two_col` clips each column at the divider, so
+  content wider than the pane did not merely spill — it vanished, with nothing on screen
+  to say anything was missing. At the old 620 px minimum window the Accounts tab pushed
+  labels, buttons and even the pane's own scrollbar past the window edge. Three fixes:
+  the form panes now scroll **both** ways, so overflow is always reachable; a new
+  `fit_with_buttons` reserves room for controls that follow a field on the same row
+  (`fit` reserved 8 px, so on a narrow pane the field took the whole width and the 📋/🎲
+  buttons after it were laid out off-pane — which is why Accounts overflowed at *every*
+  window size, not just small ones); and the minimum window width moves 620 → 900, sized
+  by measuring what the two-pane tabs actually need rather than the lock screen alone.
+  A regression test asserts the user-visible invariant on every tab, in both modes, at
+  the minimum size: content either fits **or** a horizontal scrollbar exists to reach it.
+- **The tab strip's no-scrolling rule is now pinned at every interface scale.** It has
+  always wrapped onto extra rows rather than scrolling, but that guarantee predated the
+  interface-size setting, which can make every tab 1.5× wider. A new test drives the real
+  window at each scale and requires every tab to be laid out inside it.
 - **`--fresh` could delete a real vault.** Both build scripts remove the sample directory
   outright, guarded only by "does it contain a `vault.pmv`" — which is exactly what a *real*
   vault contains. So `scripts/build.sh --fresh --sample-dir ~/my-vault` (or the same via
