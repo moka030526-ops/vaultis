@@ -93,6 +93,7 @@ pub fn run(path: std::path::PathBuf, writable: bool) -> anyhow::Result<()> {
             // Same reason as the theme: apply the saved zoom before the first frame so
             // the window does not visibly resize itself a frame after opening.
             apply_ui_scale(&cc.egui_ctx, load_ui_scale());
+            apply_fonts(&cc.egui_ctx, load_font_choice());
             Ok(Box::new(GuiApp::new(path, writable)))
         }),
     )
@@ -137,11 +138,17 @@ enum Theme {
     GruvboxDark,
     GruvboxLight,
     RosePine,
+    CatppuccinMocha,
+    CatppuccinLatte,
+    TokyoNight,
+    OneDark,
+    Everforest,
+    Zenburn,
 }
 
 impl Theme {
     /// Every theme, in menu order.
-    const ALL: [Theme; 10] = [
+    const ALL: [Theme; 16] = [
         Theme::Light,
         Theme::Dark,
         Theme::HighContrast,
@@ -152,6 +159,12 @@ impl Theme {
         Theme::GruvboxDark,
         Theme::GruvboxLight,
         Theme::RosePine,
+        Theme::CatppuccinMocha,
+        Theme::CatppuccinLatte,
+        Theme::TokyoNight,
+        Theme::OneDark,
+        Theme::Everforest,
+        Theme::Zenburn,
     ];
 
     /// Stable on-disk id (kept separate from the display label so relabelling
@@ -168,6 +181,12 @@ impl Theme {
             Theme::GruvboxDark => "gruvbox-dark",
             Theme::GruvboxLight => "gruvbox-light",
             Theme::RosePine => "rose-pine",
+            Theme::CatppuccinMocha => "catppuccin-mocha",
+            Theme::CatppuccinLatte => "catppuccin-latte",
+            Theme::TokyoNight => "tokyo-night",
+            Theme::OneDark => "one-dark",
+            Theme::Everforest => "everforest",
+            Theme::Zenburn => "zenburn",
         }
     }
 
@@ -184,6 +203,12 @@ impl Theme {
             Theme::GruvboxDark => "Gruvbox Dark",
             Theme::GruvboxLight => "Gruvbox Light",
             Theme::RosePine => "Rosé Pine",
+            Theme::CatppuccinMocha => "Catppuccin Mocha",
+            Theme::CatppuccinLatte => "Catppuccin Latte",
+            Theme::TokyoNight => "Tokyo Night",
+            Theme::OneDark => "One Dark",
+            Theme::Everforest => "Everforest",
+            Theme::Zenburn => "Zenburn",
         }
     }
 
@@ -345,6 +370,127 @@ fn visuals_for(theme: Theme) -> egui::Visuals {
             v.selection.stroke = egui::Stroke::new(1.0_f32, rgb(175, 58, 3));
             v
         }
+        Theme::CatppuccinMocha => {
+            // Catppuccin Mocha — the widely-used warm pastel dark palette.
+            let (base, mantle, surface) = (rgb(30, 30, 46), rgb(24, 24, 37), rgb(49, 50, 68));
+            let (text, blue, teal) = (rgb(205, 214, 244), rgb(137, 180, 250), rgb(148, 226, 213));
+            let mut v = egui::Visuals::dark();
+            v.panel_fill = base;
+            v.window_fill = base;
+            v.extreme_bg_color = mantle;
+            v.faint_bg_color = surface;
+            v.override_text_color = Some(text);
+            v.widgets.noninteractive.bg_fill = surface;
+            v.widgets.inactive.bg_fill = surface;
+            v.widgets.inactive.weak_bg_fill = mantle;
+            v.widgets.hovered.bg_fill = rgb(69, 71, 90);
+            v.widgets.active.bg_fill = blue;
+            v.selection.bg_fill = rgb(69, 71, 90);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, teal);
+            v.hyperlink_color = teal;
+            v
+        }
+        Theme::CatppuccinLatte => {
+            // Catppuccin Latte — the light member of the same family.
+            let (base, crust, surface) = (rgb(239, 241, 245), rgb(220, 224, 232), rgb(204, 208, 218));
+            let (text, blue) = (rgb(76, 79, 105), rgb(30, 102, 245));
+            let mut v = egui::Visuals::light();
+            v.panel_fill = base;
+            v.window_fill = rgb(245, 247, 250);
+            v.extreme_bg_color = Color32::WHITE;
+            v.faint_bg_color = rgb(230, 233, 239);
+            v.override_text_color = Some(text);
+            v.widgets.noninteractive.bg_fill = rgb(235, 238, 243);
+            v.widgets.inactive.bg_fill = rgb(228, 232, 239);
+            v.widgets.inactive.weak_bg_fill = rgb(236, 239, 244);
+            v.widgets.hovered.bg_fill = surface;
+            v.widgets.active.bg_fill = blue;
+            v.selection.bg_fill = rgb(188, 208, 245);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, blue);
+            v.hyperlink_color = blue;
+            v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, crust);
+            v
+        }
+        Theme::TokyoNight => {
+            // Tokyo Night — deep blue-black with cool accents.
+            let (bg, bg_dark, bg_hl) = (rgb(26, 27, 38), rgb(22, 22, 30), rgb(41, 46, 66));
+            let (fg, blue, cyan) = (rgb(192, 202, 245), rgb(122, 162, 247), rgb(125, 207, 255));
+            let mut v = egui::Visuals::dark();
+            v.panel_fill = bg;
+            v.window_fill = bg;
+            v.extreme_bg_color = bg_dark;
+            v.faint_bg_color = bg_hl;
+            v.override_text_color = Some(fg);
+            v.widgets.noninteractive.bg_fill = bg_hl;
+            v.widgets.inactive.bg_fill = bg_hl;
+            v.widgets.inactive.weak_bg_fill = bg_dark;
+            v.widgets.hovered.bg_fill = rgb(54, 60, 84);
+            v.widgets.active.bg_fill = blue;
+            v.selection.bg_fill = rgb(54, 60, 84);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, cyan);
+            v.hyperlink_color = cyan;
+            v
+        }
+        Theme::OneDark => {
+            // Atom One Dark — the familiar editor palette.
+            let (bg, bg_dark, gutter) = (rgb(40, 44, 52), rgb(33, 37, 43), rgb(49, 54, 63));
+            let (fg, blue, green) = (rgb(171, 178, 191), rgb(97, 175, 239), rgb(152, 195, 121));
+            let mut v = egui::Visuals::dark();
+            v.panel_fill = bg;
+            v.window_fill = bg;
+            v.extreme_bg_color = bg_dark;
+            v.faint_bg_color = gutter;
+            v.override_text_color = Some(fg);
+            v.widgets.noninteractive.bg_fill = gutter;
+            v.widgets.inactive.bg_fill = gutter;
+            v.widgets.inactive.weak_bg_fill = bg_dark;
+            v.widgets.hovered.bg_fill = rgb(62, 68, 81);
+            v.widgets.active.bg_fill = blue;
+            v.selection.bg_fill = rgb(62, 68, 81);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, green);
+            v.hyperlink_color = blue;
+            v
+        }
+        Theme::Everforest => {
+            // Everforest Dark — low-saturation green, easy on the eyes for long reading.
+            let (bg, bg_dim, bg1) = (rgb(45, 53, 59), rgb(35, 42, 46), rgb(52, 63, 68));
+            let (fg, green, aqua) = (rgb(211, 198, 170), rgb(167, 192, 128), rgb(131, 192, 146));
+            let mut v = egui::Visuals::dark();
+            v.panel_fill = bg;
+            v.window_fill = bg;
+            v.extreme_bg_color = bg_dim;
+            v.faint_bg_color = bg1;
+            v.override_text_color = Some(fg);
+            v.widgets.noninteractive.bg_fill = bg1;
+            v.widgets.inactive.bg_fill = bg1;
+            v.widgets.inactive.weak_bg_fill = bg_dim;
+            v.widgets.hovered.bg_fill = rgb(61, 72, 77);
+            v.widgets.active.bg_fill = green;
+            v.selection.bg_fill = rgb(61, 72, 77);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, aqua);
+            v.hyperlink_color = aqua;
+            v
+        }
+        Theme::Zenburn => {
+            // Zenburn — the classic low-contrast warm grey palette.
+            let (bg, bg_dark, bg_mid) = (rgb(63, 63, 63), rgb(51, 51, 51), rgb(79, 79, 79));
+            let (fg, cyan, yellow) = (rgb(220, 220, 204), rgb(140, 208, 211), rgb(240, 223, 175));
+            let mut v = egui::Visuals::dark();
+            v.panel_fill = bg;
+            v.window_fill = bg;
+            v.extreme_bg_color = bg_dark;
+            v.faint_bg_color = bg_mid;
+            v.override_text_color = Some(fg);
+            v.widgets.noninteractive.bg_fill = bg_mid;
+            v.widgets.inactive.bg_fill = bg_mid;
+            v.widgets.inactive.weak_bg_fill = bg_dark;
+            v.widgets.hovered.bg_fill = rgb(95, 95, 95);
+            v.widgets.active.bg_fill = cyan;
+            v.selection.bg_fill = rgb(95, 95, 95);
+            v.selection.stroke = egui::Stroke::new(1.0_f32, yellow);
+            v.hyperlink_color = cyan;
+            v
+        }
         Theme::RosePine => {
             // Rosé Pine — soft, moody low-contrast dark.
             let (base, surface, overlay) = (rgb(25, 23, 36), rgb(31, 29, 46), rgb(38, 35, 58));
@@ -393,6 +539,12 @@ fn accent(theme: Theme) -> egui::Color32 {
         Theme::GruvboxDark => rgb(254, 128, 25),
         Theme::GruvboxLight => rgb(175, 58, 3),
         Theme::RosePine => rgb(196, 167, 231),
+        Theme::CatppuccinMocha => rgb(137, 180, 250),
+        Theme::CatppuccinLatte => rgb(30, 102, 245),
+        Theme::TokyoNight => rgb(122, 162, 247),
+        Theme::OneDark => rgb(97, 175, 239),
+        Theme::Everforest => rgb(167, 192, 128),
+        Theme::Zenburn => rgb(140, 208, 211),
     }
 }
 
@@ -460,10 +612,109 @@ impl UiScale {
     }
 }
 
-/// The window's minimum inner size at 100% zoom. The floor exists so the
-/// non-scrolling lock screen (its tallest variant, Create, with the two confirm rows)
-/// always fits whole — see the viewport builder.
-const MIN_INNER_SIZE: [f32; 2] = [620.0, 600.0];
+/// The typeface the interface is drawn in — a third styling axis, independent of
+/// [`Theme`] (colour) and [`UiScale`] (size).
+///
+/// **Both faces are compiled into the binary.** Nothing here reads a font from the
+/// operating system, so the program looks identical on a machine with no fonts
+/// installed, renders the same on every platform, and cannot be changed by altering a
+/// file on disk. That last point is not only about portability: a font file is parsed
+/// by a rasterizer, so loading one from a path outside the binary would turn a cosmetic
+/// preference into a way to feed attacker-chosen bytes to a parser.
+///
+/// `Monospace` is not just a matter of taste. In a fixed-width face `0`/`O` and
+/// `1`/`l`/`I` are drawn differently, which is exactly the distinction you need when
+/// reading a revealed password off the screen to type it somewhere else.
+#[derive(PartialEq, Eq, Clone, Copy, Default, Debug)]
+enum FontChoice {
+    /// Ubuntu-Light — the proportional face bundled with egui.
+    #[default]
+    Default,
+    /// Hack — the fixed-width face bundled with egui; unambiguous digits and letters.
+    Monospace,
+}
+
+impl FontChoice {
+    const ALL: [FontChoice; 2] = [FontChoice::Default, FontChoice::Monospace];
+
+    fn id(self) -> &'static str {
+        match self {
+            FontChoice::Default => "default",
+            FontChoice::Monospace => "monospace",
+        }
+    }
+
+    fn from_id(id: &str) -> Option<FontChoice> {
+        FontChoice::ALL.into_iter().find(|f| f.id() == id)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            FontChoice::Default => "Default (proportional)",
+            FontChoice::Monospace => "Monospace (clearer 0/O and 1/l)",
+        }
+    }
+}
+
+/// Install the chosen typeface as the highest-priority proportional font.
+///
+/// Both faces are already loaded by `FontDefinitions::default()` (they ship inside
+/// epaint), so this only reorders the priority list — no file is read and no allocation
+/// of font bytes happens here. egui's own families stay behind the choice as the
+/// fallback chain, so a glyph the face lacks (emoji, accents, CJK) still renders from
+/// the bundled fonts rather than showing tofu.
+fn apply_fonts(ctx: &egui::Context, choice: FontChoice) {
+    ctx.set_fonts(font_definitions(choice));
+}
+
+/// The font set for a choice, as a PURE function of it.
+///
+/// Split out from [`apply_fonts`] so the self-containment property can be asserted
+/// directly: reading it back off a live `egui::Context` needs a frame in progress,
+/// which a unit test has no reason to fake.
+fn font_definitions(choice: FontChoice) -> egui::FontDefinitions {
+    let mut defs = egui::FontDefinitions::default();
+    if choice == FontChoice::Monospace
+        && let Some(list) = defs.families.get_mut(&egui::FontFamily::Proportional)
+    {
+        list.insert(0, "Hack".to_owned());
+    }
+    defs
+}
+
+/// Load the saved typeface (see [`load_theme`] — same prefs file, same best-effort rules).
+fn load_font_choice() -> FontChoice {
+    crate::prefs_path().map(|p| load_font_choice_from(&p)).unwrap_or_default()
+}
+
+fn load_font_choice_from(path: &std::path::Path) -> FontChoice {
+    crate::read_prefs_obj(path)
+        .get("font")
+        .and_then(|v| v.as_str())
+        .and_then(FontChoice::from_id)
+        .unwrap_or_default()
+}
+
+fn save_font_choice(font: FontChoice) {
+    if let Some(path) = crate::prefs_path() {
+        save_font_choice_to(&path, font);
+    }
+}
+
+/// Persist the typeface, preserving every other prefs key (theme, ui_scale, export_dir…).
+fn save_font_choice_to(path: &std::path::Path, font: FontChoice) {
+    let mut obj = crate::read_prefs_obj(path);
+    obj.insert("font".into(), serde_json::Value::String(font.id().to_string()));
+    crate::write_prefs_obj(path, &obj);
+}
+
+/// The window's minimum inner size at 100% zoom. The floor exists so the lock screen's
+/// tallest variant — Create, with the two confirm rows — fits whole without scrolling.
+///
+/// The height carries an extra ~70 px for the Help footer added beneath the card, which
+/// did not exist when the original 600 was measured. The lock screen is also wrapped in
+/// a ScrollArea now, so being slightly wrong here is untidy rather than a trap.
+const MIN_INNER_SIZE: [f32; 2] = [620.0, 670.0];
 
 /// The window/taskbar icon, decoded from the committed 512×512 PNG that the desktop
 /// shortcuts already use, so the window, the launcher and the Desktop shortcut all
@@ -948,9 +1199,21 @@ struct GuiApp {
     /// persisted) when the selection actually changes, not every frame.
     ui_scale: UiScale,
     applied_ui_scale: UiScale,
+    /// The selected typeface, and the one currently applied — same selected/applied
+    /// pair as the theme and scale. `set_fonts` rebuilds the font atlas, so it must
+    /// only run when the choice actually changes, never per frame.
+    font: FontChoice,
+    applied_font: FontChoice,
     /// The in-app manual's browser state (search box + selected topic), kept here
     /// so the user's place in it survives leaving and re-entering Help.
     help: crate::gui_help::HelpState,
+    /// Which screen Help must return to when its Back is pressed.
+    ///
+    /// Help is now reachable from the LOCK screen as well as the top bar, and those
+    /// need different exits: returning to `Main` from the lock screen would draw the
+    /// in-vault UI with no vault open. Recorded on the way in rather than inferred on
+    /// the way out.
+    help_return: Screen,
 }
 
 /// How long a copied password stays on the clipboard before it is auto-cleared.
@@ -1003,6 +1266,7 @@ impl GuiApp {
         // frame doesn't needlessly re-apply/re-save (the same value `run` already set).
         let theme = load_theme();
         let ui_scale = load_ui_scale();
+        let font = load_font_choice();
         // Saved "view defaults" (Config checkboxes, prefs.json): seed the reveal-all
         // toggles and the grouped/flat view state so a freshly opened vault honours the
         // user's preferences. The pref values are also retained on the struct so the Config
@@ -1087,7 +1351,10 @@ impl GuiApp {
             applied_theme: theme,
             ui_scale,
             applied_ui_scale: ui_scale,
+            font,
+            applied_font: font,
             help: crate::gui_help::HelpState::default(),
+            help_return: Screen::Main,
         }
     }
 
@@ -1541,6 +1808,55 @@ impl GuiApp {
                         .small(),
                 );
             }
+
+            // --- Footer: the way in to the manual, from the front door ------------
+            //
+            // The lock screen may be the ONLY screen an heir ever sees, and until now
+            // the manual was reachable only from the top bar — i.e. only *after*
+            // successfully unlocking. Someone handed this program and two passwords in
+            // an envelope had nowhere to turn before typing them.
+            //
+            // Composed as a quiet footer rather than a button beside "Unlock": the
+            // primary action must stay unambiguous, so this sits below the card,
+            // separated by a hairline, in the same weak/small register as the mode
+            // line above it. The question is asked before the link is offered, because
+            // someone who needs it is looking for a sentence that describes their
+            // situation, not a control they already know how to use.
+            ui.add_space(18.0);
+            // A hairline the width of the card, so the footer reads as part of the same
+            // composition instead of floating text below it.
+            ui.scope(|ui| {
+                ui.set_max_width(360.0);
+                ui.separator();
+            });
+            ui.add_space(10.0);
+            ui.label(
+                egui::RichText::new("New to this, or settling an estate?").weak().small(),
+            );
+            ui.add_space(2.0);
+            if ui
+                .link(egui::RichText::new("❓  Read the guide").color(accent))
+                .on_hover_text(
+                    "The built-in manual: what this program is, how to open a vault, \
+                     and what to do if you are an executor. No password needed.",
+                )
+                .clicked()
+            {
+                // Wipe any partly-typed master passwords before leaving for the manual.
+                // Reading a guide is an open-ended pause — plausibly the longest the
+                // program is left unattended — and there is no reason for two plaintext
+                // passwords to sit in memory (and in the fields, behind their mask) for
+                // the duration. The desktop already wipes on a failed unlock and on the
+                // change-password transition for the same reason; this is the same rule
+                // applied to the same kind of moment. Retyping after reading the manual
+                // is the expected flow anyway.
+                self.wipe_passwords();
+                self.auth_error = None;
+                // Back must come here, not to the vault UI — there is no vault open yet.
+                self.help_return = Screen::Auth;
+                self.screen = Screen::Help;
+            }
+            ui.add_space(6.0);
         });
     }
 
@@ -1783,6 +2099,7 @@ impl GuiApp {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if go_help {
+            self.help_return = Screen::Main;
             self.screen = Screen::Help;
         }
         if go_config {
@@ -1856,7 +2173,8 @@ impl GuiApp {
             writable: self.writable,
         };
         if crate::gui_help::ui(ui, &mut self.help, &ctx, accent(self.theme)) {
-            self.screen = Screen::Main;
+            // Back to wherever Help was opened from — the vault UI, or the lock screen.
+            self.screen = self.help_return;
         }
     }
 
@@ -1952,6 +2270,21 @@ impl GuiApp {
                 egui::RichText::new(
                     "Scales the whole window — text, buttons and spacing together. \
                      Useful if the default is hard to read.",
+                )
+                .small()
+                .weak(),
+            );
+            egui::ComboBox::from_label("Typeface")
+                .selected_text(self.font.label())
+                .show_ui(ui, |ui| {
+                    for f in FontChoice::ALL {
+                        ui.selectable_value(&mut self.font, f, f.label());
+                    }
+                });
+            ui.label(
+                egui::RichText::new(
+                    "Both typefaces are built into the program — nothing is loaded from \
+                     this computer, so it looks the same everywhere.",
                 )
                 .small()
                 .weak(),
@@ -4823,6 +5156,12 @@ impl GuiApp {
             save_ui_scale(self.ui_scale);
             self.applied_ui_scale = self.ui_scale;
         }
+        // …and the typeface (rebuilds the font atlas, hence only on a real change).
+        if self.font != self.applied_font {
+            apply_fonts(ui.ctx(), self.font);
+            save_font_choice(self.font);
+            self.applied_font = self.font;
+        }
         // Clear the error banner once any later status message has replaced the failure
         // text it was showing (a success/info line means the problem is no longer current).
         if error_banner_is_stale(self.error.as_deref(), &self.status) {
@@ -4835,12 +5174,22 @@ impl GuiApp {
         // Rendered before the per-screen panels so it sits above all of them.
         show_error_banner(&mut self.error, ui);
         if self.screen == Screen::Auth {
-            // The lock screen is deliberately NOT scrollable: it is a fixed, compact
-            // form that must read as one simple page. The window's `min_inner_size` is
-            // set large enough for the tallest variant (Create, with the two confirm
-            // rows) to fit whole, so there is nothing to scroll to.
+            // The lock screen is meant to read as one simple page, and `min_inner_size`
+            // is sized so the tallest variant (Create, with the two confirm rows, plus
+            // the Help footer) fits whole — so normally there is nothing to scroll and
+            // no scroll bar is drawn.
+            //
+            // It is nonetheless wrapped in a ScrollArea as a SAFETY NET, because the
+            // "it always fits" invariant now has two ways to be wrong: the footer added
+            // height to a screen whose floor was computed before it existed, and the
+            // interface-size setting can scale this screen by 1.5×. Without a scroll
+            // area, being wrong by one row does not look untidy — it puts the password
+            // fields or the Unlock button permanently out of reach, with no way to get
+            // to them. `auto_shrink` keeps the layout identical whenever it does fit.
             egui::CentralPanel::default().show_inside(ui, |ui| {
-                self.ui_auth(ui);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| self.ui_auth(ui));
             });
             return;
         }
@@ -6023,6 +6372,220 @@ mod tests {
 
     fn fast() -> KdfParams {
         KdfParams { m_cost: 256, t_cost: 1, p_cost: 1 }
+    }
+
+    /// The lock-screen Help link exists, and — the part that matters — Back returns to
+    /// the LOCK SCREEN, not to the in-vault UI.
+    ///
+    /// `ui_help` used to hardcode `Screen::Main` on Back, which was right when the top
+    /// bar was the only way in. Reached from the lock screen that would have dropped the
+    /// user into the vault UI **with no vault open**, so this pins the `help_return`
+    /// routing in both directions.
+    #[test]
+    fn lock_screen_help_opens_and_returns_to_the_lock_screen() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let path = tmp("authhelp");
+        let app = std::cell::RefCell::new(GuiApp::new(path.clone(), false));
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(760.0, 700.0))
+            .with_max_steps(64)
+            .build_ui(|ui| app.borrow_mut().render(ui));
+        h.try_run().expect("lock screen settles");
+
+        assert_eq!(app.borrow().screen, Screen::Auth, "starts locked");
+        assert_eq!(
+            h.query_all_by_label("❓  Read the guide").count(),
+            1,
+            "the lock screen offers the manual"
+        );
+
+        h.get_by_label("❓  Read the guide").click();
+        h.try_run().expect("help settles");
+        assert_eq!(app.borrow().screen, Screen::Help, "the link opens the manual");
+        assert_eq!(app.borrow().help_return, Screen::Auth, "…remembering where it came from");
+        assert!(app.borrow().vault.is_none(), "no vault was opened along the way");
+
+        h.get_by_label("⬅ Back").click();
+        h.try_run().expect("returns and settles");
+        assert_eq!(
+            app.borrow().screen,
+            Screen::Auth,
+            "Back returns to the LOCK screen, not to the vault UI"
+        );
+        cleanup(&path);
+    }
+
+    /// Opening the manual from the lock screen WIPES any partly-typed master passwords.
+    /// Reading a guide is an open-ended pause; two plaintext passwords must not sit in
+    /// the buffers for its duration.
+    #[test]
+    fn opening_help_from_the_lock_screen_wipes_typed_passwords() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let path = tmp("authwipe");
+        let mut app = GuiApp::new(path.clone(), false);
+        app.pw1 = "correct horse battery".into();
+        app.pw2 = "staple cathedral".into();
+        let app = std::cell::RefCell::new(app);
+
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(760.0, 700.0))
+            .with_max_steps(64)
+            .build_ui(|ui| app.borrow_mut().render(ui));
+        h.try_run().expect("settles");
+
+        h.get_by_label("❓  Read the guide").click();
+        h.try_run().expect("settles");
+
+        assert!(app.borrow().pw1.is_empty(), "password 1 was wiped before leaving for Help");
+        assert!(app.borrow().pw2.is_empty(), "password 2 was wiped before leaving for Help");
+        cleanup(&path);
+    }
+
+    /// The lock screen must remain fully usable at the window's own minimum size and at
+    /// every interface scale — the footer added height to a screen whose floor predates
+    /// it, and the scale setting can stretch it by 1.5×.
+    ///
+    /// "Usable" means the two things you cannot do without: the Unlock button and the
+    /// Help link must both still be laid out and reachable.
+    #[test]
+    fn lock_screen_stays_reachable_at_min_size_and_every_scale() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        for scale in UiScale::ALL {
+            let f = scale.factor();
+            let path = tmp("authscale");
+            // No vault.pmv exists at this fresh path, so the screen is in Create mode —
+            // its TALLEST variant, with the two extra confirm rows. That is exactly the
+            // case the size floor was chosen for, so it is the right one to squeeze.
+            let app = std::cell::RefCell::new(GuiApp::new(path.clone(), false));
+            assert_eq!(app.borrow().auth_mode, AuthMode::Create, "tallest lock-screen variant");
+
+            // The real window cannot go below this, so it is the worst case that can
+            // actually occur — sized exactly as `apply_ui_scale` scales the floor, and
+            // ZOOMED to match. Scaling the window without zooming the content (or vice
+            // versa) would test a configuration that cannot happen.
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(MIN_INNER_SIZE[0] * f, MIN_INNER_SIZE[1] * f))
+                .with_max_steps(64)
+                .build_ui(|ui| app.borrow_mut().render(ui));
+            h.ctx.set_zoom_factor(f);
+            h.try_run().unwrap_or_else(|e| panic!("lock screen never settled at {scale:?}: {e}"));
+
+            assert_eq!(
+                h.query_all_by_label("❓  Read the guide").count(),
+                1,
+                "the Help link stays reachable at {scale:?}"
+            );
+            // `>= 1`, not `== 1`: "Create vault" is both the heading and the button, so
+            // an exact count pins the wording of the screen rather than its reachability,
+            // which is what this test is about.
+            assert!(
+                h.query_all_by_label("Create vault").count() >= 1,
+                "the primary action stays reachable at {scale:?}"
+            );
+            cleanup(&path);
+        }
+    }
+
+    /// SELF-CONTAINMENT: every typeface must come from inside the binary.
+    ///
+    /// `apply_fonts` only reorders the families that `FontDefinitions::default()` already
+    /// populates from fonts compiled into epaint, so the set of font DATA it produces must
+    /// be byte-identical to the default for every choice. If someone later adds a face by
+    /// reading a file from the machine, this fails — which is the point: the program must
+    /// render identically on a computer with no fonts installed, and must never hand
+    /// bytes from outside the binary to a font rasterizer.
+    #[test]
+    fn every_typeface_is_compiled_in_and_reads_nothing_from_disk() {
+        let defaults = egui::FontDefinitions::default();
+
+        for choice in FontChoice::ALL {
+            let defs = font_definitions(choice);
+
+            // THE self-containment assertion: the font DATA must be exactly what epaint
+            // ships. Any face loaded from this computer would appear here as an extra
+            // key, so adding one later fails this test rather than silently making the
+            // program depend on the machine's font set.
+            assert_eq!(
+                defs.font_data.keys().collect::<Vec<_>>(),
+                defaults.font_data.keys().collect::<Vec<_>>(),
+                "{choice:?} introduced font data that is not compiled into the binary"
+            );
+
+            // The chosen face is one of those bundled names.
+            let name = match choice {
+                FontChoice::Default => "Ubuntu-Light",
+                FontChoice::Monospace => "Hack",
+            };
+            assert!(
+                defaults.font_data.contains_key(name),
+                "{choice:?} uses `{name}`, which must be a BUNDLED font, not a system one"
+            );
+            assert_eq!(choice, FontChoice::from_id(choice.id()).unwrap(), "id round-trips");
+            assert!(!choice.label().is_empty());
+        }
+        assert_eq!(FontChoice::from_id("nonsense"), None);
+    }
+
+    /// Monospace must actually take effect — i.e. be promoted ahead of the default
+    /// proportional face — otherwise the menu entry would be a no-op.
+    #[test]
+    fn monospace_choice_is_promoted_for_body_text() {
+        let mut defs = egui::FontDefinitions::default();
+        let before = defs.families.get(&egui::FontFamily::Proportional).unwrap().clone();
+        assert_ne!(before.first().map(String::as_str), Some("Hack"), "not the default already");
+
+        // Mirror what apply_fonts does, so the assertion is about the CHOICE, not the ctx.
+        defs.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "Hack".to_owned());
+        let after = defs.families.get(&egui::FontFamily::Proportional).unwrap();
+        assert_eq!(after.first().map(String::as_str), Some("Hack"), "Hack leads for body text");
+        // The bundled fallbacks stay BEHIND it, so a glyph Hack lacks still renders.
+        assert!(after.len() > 1, "fallback chain preserved: {after:?}");
+        for f in before {
+            assert!(after.contains(&f), "default fallback `{f}` was not dropped");
+        }
+    }
+
+    /// Every theme is distinct and complete: unique ids, unique labels, and an accent
+    /// that is actually readable against that theme's own panel background.
+    ///
+    /// The contrast check is the useful half — a new palette added by copying a
+    /// neighbouring arm and forgetting the accent would otherwise ship an invisible
+    /// focus ring and hyperlink colour.
+    #[test]
+    fn every_theme_is_distinct_and_its_accent_is_visible() {
+        use std::collections::HashSet;
+        let mut ids = HashSet::new();
+        let mut labels = HashSet::new();
+
+        // Relative luminance (WCAG), used only to reject an accent that vanishes.
+        fn luma(c: egui::Color32) -> f32 {
+            let f = |v: u8| {
+                let s = v as f32 / 255.0;
+                if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+            };
+            0.2126 * f(c.r()) + 0.7152 * f(c.g()) + 0.0722 * f(c.b())
+        }
+
+        for t in Theme::ALL {
+            assert!(ids.insert(t.id()), "duplicate theme id: {}", t.id());
+            assert!(labels.insert(t.label()), "duplicate theme label: {}", t.label());
+            assert_eq!(Theme::from_id(t.id()), Some(t), "{t:?} round-trips through its id");
+
+            let v = visuals_for(t);
+            let a = accent(t);
+            let bg = v.panel_fill;
+            let (l1, l2) = (luma(a), luma(bg));
+            let (hi, lo) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+            let ratio = (hi + 0.05) / (lo + 0.05);
+            assert!(
+                ratio >= 2.0,
+                "{t:?}: accent {a:?} is nearly invisible on its panel {bg:?} (contrast {ratio:.2})"
+            );
+        }
+        assert_eq!(ids.len(), Theme::ALL.len());
     }
 
     /// The window icon must actually DECODE. `with_icon(window_icon().unwrap_or_default())`

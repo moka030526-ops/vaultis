@@ -18,12 +18,37 @@ date and bump the crate versions to match.
 
 ### Added
 
+- **Help is now reachable from the lock screen.** The manual was only ever reachable from
+  the top bar — i.e. only *after* a successful unlock. Someone handed this program and two
+  passwords in an envelope had nowhere to turn *before* typing them, which is precisely
+  the person the manual is written for. It is presented as a quiet footer beneath the
+  card ("New to this, or settling an estate?" → "❓ Read the guide") rather than a button
+  beside Unlock, so the primary action stays unambiguous. Opening it **wipes any
+  partly-typed master passwords** — reading a guide is an open-ended pause, and there is
+  no reason for two plaintext passwords to sit in the buffers for its duration (the same
+  rule the desktop already applies on a failed unlock and on the change-password
+  transition). Back returns to the lock screen rather than the vault UI, and the lock
+  screen is now wrapped in a scroll area so the added footer, or a 150% interface scale,
+  cannot push the password fields out of reach.
+- **Six more colour schemes** (16 total): Catppuccin Mocha, Catppuccin Latte, Tokyo Night,
+  One Dark, Everforest and Zenburn. A test now checks every theme has a unique id and
+  label and that its accent clears a 2:1 contrast ratio against its own panel fill, so a
+  palette added by copying a neighbour and forgetting the accent cannot ship an invisible
+  focus ring.
+- **A "Typeface" setting**: Default (proportional) or Monospace. Monospace is more than
+  taste here — a fixed-width face distinguishes `0`/`O` and `1`/`l`, which is exactly what
+  you need when reading a revealed password off the screen. **Both faces are compiled into
+  the binary** (they ship inside egui), so the program renders identically on a machine
+  with no fonts installed; a test asserts the font *data* is byte-identical to the bundled
+  set for every choice, so a future face loaded from the filesystem fails the build rather
+  than quietly making the app depend on the machine — and never hands bytes from outside
+  the binary to a font rasterizer.
 - **An "Interface size" setting (Config → Appearance).** Compact / Normal / Large /
-  Larger / Largest (90%–150%), a second styling axis independent of the ten colour
+  Larger / Largest (90%–150%), a second styling axis independent of the colour
   themes. Implemented with egui's zoom factor rather than by rewriting the type scale, so
   text, padding, icons, scroll bars and hit targets scale *together* and the layout stays
   in proportion. The window's minimum size scales with it, which preserves an existing
-  guarantee: that floor exists so the non-scrolling lock screen always fits whole, and it
+  guarantee: that floor exists so the lock screen always fits whole, and it
   is expressed in points — at 150% zoom with a fixed floor, the password fields could
   have been squeezed out of a window with no way to scroll to them. Persisted in
   `prefs.json` next to the theme (both writes preserve the other's key), so it survives

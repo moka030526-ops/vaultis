@@ -244,12 +244,13 @@ only the optional subfolder and the filename.
   the program **automatically clears the clipboard 15 seconds later** (and when
   you close the program), so a copied password doesn't linger.
 
-## Changing the appearance (colors and size)
+## Changing the appearance (colors, size, typeface)
 
-Open the **Config** screen. There are two independent settings:
+Open the **Config** screen. There are three independent settings:
 
-- **Color theme** — ten palettes: Light, Dark, High contrast, Solarized, Sepia, Nord,
-  Dracula, Gruvbox Dark, Gruvbox Light, and Rosé Pine.
+- **Color theme** — sixteen palettes: Light, Dark, High contrast, Solarized, Sepia,
+  Nord, Dracula, Gruvbox Dark, Gruvbox Light, Rosé Pine, Catppuccin Mocha, Catppuccin
+  Latte, Tokyo Night, One Dark, Everforest, and Zenburn.
 - **Interface size** — Compact (90%), Normal, Large (115%), Larger (130%) or Largest
   (150%). This scales the *whole* window together — text, buttons and spacing — so
   everything stays in proportion instead of big text overflowing small controls.
@@ -257,7 +258,13 @@ Open the **Config** screen. There are two independent settings:
   has to settle an estate, on an unfamiliar computer, and "I can't read it" is not a
   good enough reason to struggle with a document like this one.
 
-Both apply immediately and are remembered for next time. They are only display
+- **Typeface** — Default (proportional) or Monospace. Monospace is worth knowing about
+  for a reason beyond taste: in a fixed-width face `0` and `O`, and `1` and `l`, are
+  drawn differently — which is exactly what you want when reading a revealed password
+  off the screen to type somewhere else. **Both typefaces are built into the program**;
+  nothing is loaded from your computer, so it looks the same on every machine.
+
+All three apply immediately and are remembered for next time. They are only display
 preferences — they change nothing about your data, and they work in read-only mode.
 
 ## Getting help inside the program
