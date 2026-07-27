@@ -127,7 +127,6 @@ fn light_visuals() -> egui::Visuals {
 /// — it holds no vault data, so it can apply on the lock screen too.
 #[derive(PartialEq, Eq, Clone, Copy, Default, Debug)]
 enum Theme {
-    #[default]
     Light,
     Dark,
     HighContrast,
@@ -138,6 +137,7 @@ enum Theme {
     GruvboxDark,
     GruvboxLight,
     RosePine,
+    #[default]
     CatppuccinMocha,
     CatppuccinLatte,
     TokyoNight,
@@ -958,6 +958,51 @@ fn section_heading(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     ui.label(egui::RichText::new(text).heading().color(color));
 }
 
+/// The opening words of every "this file is now plaintext on disk" status message.
+///
+/// It leads the message — rather than trailing the path, as it first did — because the
+/// status strip TRUNCATES (`Label::truncate`, see `ui_top_level`): with the caveat last,
+/// exporting to any deep path pushed the entire warning off the visible end and left a
+/// bare "Exported to /home/…/very/long/pa…" reading as an ordinary success notice. The
+/// one part of the sentence that must survive truncation is therefore the first part.
+///
+/// Doubling as the marker [`is_export_caveat`] matches on keeps the styling and the
+/// wording from drifting apart: there is one string, asserted by
+/// `export_status_messages_are_flagged_as_caveats`.
+const EXPORT_CAVEAT_PREFIX: &str = "⚠ UNENCRYPTED";
+
+/// Whether a status message is the plaintext-on-disk caveat raised by an export
+/// (`export_doc_to_config_dir` and the tab-CSV path). Drawn in red wherever the status
+/// is shown, so it does not read as just another quiet "Saved."-style confirmation.
+///
+/// Matched on [`EXPORT_CAVEAT_PREFIX`] rather than on "Exported" as it first was: Config's
+/// own "Export directory set to …" is a single character away from that prefix, so the
+/// check was one reworded message away from painting an unrelated confirmation red.
+fn is_export_caveat(status: &str) -> bool {
+    status.starts_with(EXPORT_CAVEAT_PREFIX)
+}
+
+/// The color an export caveat is drawn in: a statement of fact about a file that now sits
+/// unencrypted on disk, not the app's usual amber "might go wrong" caution.
+///
+/// Picked per theme rather than hardcoded. A single mid-red reads at roughly 3.2:1 on the
+/// dark palettes — under the 4.5:1 WCAG AA floor for text this small, and the *default*
+/// theme (Catppuccin Mocha) is one of them, which would have made the one message that
+/// most needs reading the hardest to read. Each variant is chosen to clear 4.5:1 against
+/// its own family's backgrounds — enforced by
+/// `export_caveat_color_clears_wcag_aa_on_every_theme`, which walks all 16.
+///
+/// The dark variant is as pale as it is because Zenburn is the binding case: its light-grey
+/// panels leave the least room, and one value has to clear every dark palette. Weight
+/// (`.strong()`) and the leading ⚠ carry the urgency that saturation would otherwise.
+fn export_caveat_color(visuals: &egui::Visuals) -> egui::Color32 {
+    if visuals.dark_mode {
+        egui::Color32::from_rgb(255, 175, 175)
+    } else {
+        egui::Color32::from_rgb(178, 24, 24)
+    }
+}
+
 // The color theme is stored in the shared, non-secret `prefs.json` alongside the
 // export directory (see `crate::prefs_path` / `crate::read_prefs_obj` in lib.rs). The
 // theme accessors live here because they reference the GUI-only `Theme` type; the
@@ -1093,6 +1138,11 @@ struct GuiApp {
     /// A warning from the most recent scan (root unreadable, or some entries skipped),
     /// shown beneath the picker. `None` when the scan was clean.
     vault_scan_warning: Option<String>,
+    /// Where `scripts/build.sh`'s demo vault actually lives, if one was ever built.
+    /// Resolved once at startup (see `launch::sample_vault_dir`); `None` hides the
+    /// lock screen's "Sample vault" button entirely rather than offering it and
+    /// failing on click.
+    sample_vault: Option<std::path::PathBuf>,
     pw1: String,
     confirm1: String,
     pw2: String,
@@ -1296,6 +1346,7 @@ impl GuiApp {
             vault_name,
             discovered_vaults: scan.vaults,
             vault_scan_warning: scan.warning,
+            sample_vault: crate::launch::sample_vault_dir(),
             // Pre-reserve generous capacity so typing a password never grows (and so
             // reallocates) these buffers, which would strand un-zeroized fragments of
             // the master password in freed heap. `wipe_passwords`/`Drop` wipe the live
@@ -1497,8 +1548,13 @@ impl GuiApp {
         let filename = format!("{base}-{}.csv", records::compact_utc(records::unix_now()));
         match vault::write_export_bytes(&dir, &filename, text.as_bytes()) {
             Ok(p) => {
-                self.status =
-                    format!("Exported {n} record(s) to {} — UNENCRYPTED, incl. any passwords.", p.display());
+                // Caveat FIRST — the path can be arbitrarily long and the status strip
+                // truncates. See `EXPORT_CAVEAT_PREFIX`.
+                self.status = format!(
+                    "{EXPORT_CAVEAT_PREFIX} — this CSV holds every password in the clear. \
+                     Exported {n} record(s) to {}",
+                    p.display()
+                );
             }
             Err(e) => self.fail(format!("CSV export failed: {e}")),
         }
@@ -1521,7 +1577,12 @@ impl GuiApp {
         if let Some(ov) = self.vault.as_ref() {
             match ov.export_document_into(id, &dir) {
                 Ok(p) => {
-                    self.status = format!("Exported to {} — this copy is NOT encrypted.", p.display())
+                    // Caveat FIRST — see `EXPORT_CAVEAT_PREFIX`.
+                    self.status = format!(
+                        "{EXPORT_CAVEAT_PREFIX} — this copy is a plain, readable file. \
+                         Exported to {}",
+                        p.display()
+                    )
                 }
                 Err(e) => self.fail(format!("Export failed: {e}")),
             }
@@ -1779,6 +1840,46 @@ impl GuiApp {
         self.merge_pw2.zeroize();
     }
 
+    /// Point the start page at the build script's sample vault, fill in its two demo
+    /// passwords, and open it — the one-click version of the walk-through in "Trying it out
+    /// on a sample vault".
+    ///
+    /// This can only ever OPEN, never create. `self.sample_vault` is resolved once, in the
+    /// constructor, so by the time the button is clicked the directory may be gone (a
+    /// `cargo clean` in another terminal removes it — it lives under `target/`). Left to
+    /// `submit_open_or_create`, a missing vault means `AuthMode::Create`, and in a `--write`
+    /// session that would silently BUILD a real vault locked with the two publicly-known
+    /// demo passwords, at a path the user believed already held a throwaway sample. The
+    /// same arm catches a directory whose name is not valid UTF-8, where the lossy
+    /// round-trip through `vault_name` would resolve to a different, non-existent path.
+    fn open_sample_vault(&mut self, dir: std::path::PathBuf) {
+        self.wipe_passwords();
+        // The remembered start-page location is the user's REAL vault; peeking at the demo
+        // must not overwrite it. `submit_open_or_create` persists root+name on every
+        // successful open, so snapshot the preference here and put it back afterwards: this
+        // session shows the sample vault, the next launch still opens where it did before.
+        let saved_root = crate::load_vault_root();
+        let saved_vault = crate::load_last_vault();
+
+        self.vault_root = dir.parent().map(|p| p.display().to_string()).unwrap_or_default();
+        self.vault_name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        self.refresh_discovered_vaults();
+        self.recompute_vault_path();
+        if self.auth_mode != AuthMode::Unlock {
+            self.sample_vault = None; // it is gone; stop offering it
+            self.auth_error =
+                Some(format!("No sample vault at {} any more — rebuild it with scripts/build.sh.", dir.display()));
+            return;
+        }
+
+        self.pw1.push_str(crate::launch::SAMPLE_PW1);
+        self.pw2.push_str(crate::launch::SAMPLE_PW2);
+        self.submit_open_or_create();
+
+        crate::save_vault_root(&saved_root);
+        crate::save_last_vault(&saved_vault);
+    }
+
     /// Clear every piece of PER-VAULT UI state to its fresh-launch default. Called on each
     /// successful open so a newly-unlocked vault never inherits the previous session's edit
     /// buffers (which can hold cleartext passwords), armed delete, active filters/search, or
@@ -1862,6 +1963,30 @@ impl GuiApp {
                         .weak()
                         .small(),
                 );
+            }
+
+            // Only shown on the actual lock screen (never mid-"Change master passwords" —
+            // this same widget renders that screen too, and clicking Sample would abandon
+            // an in-progress password change and open an unrelated vault instead), and only
+            // when `scripts/build.sh` actually built a demo vault at the resolved location
+            // (see `launch::sample_vault_dir`) — never a button that would fail on click.
+            // One click fills in its folder and its two demo passwords (sample1/sample2)
+            // and opens it directly, honouring whatever read-only/write mode this session
+            // was launched in, same as any other vault.
+            if self.auth_mode != AuthMode::ChangePassword
+                && let Some(dir) = self.sample_vault.clone()
+            {
+                ui.add_space(10.0);
+                if ui
+                    .button("Sample vault")
+                    .on_hover_text(
+                        "Open a throwaway practice vault full of invented data — see \
+                         “Trying it out on a sample vault” in Help.",
+                    )
+                    .clicked()
+                {
+                    self.open_sample_vault(dir);
+                }
             }
 
             // --- Footer: the way in to the manual, from the front door ------------
@@ -2750,7 +2875,13 @@ impl GuiApp {
 
         if !self.status.is_empty() {
             ui.separator();
-            ui.label(egui::RichText::new(&self.status).weak());
+            let text = egui::RichText::new(&self.status);
+            let text = if is_export_caveat(&self.status) {
+                text.color(export_caveat_color(ui.visuals())).strong()
+            } else {
+                text.weak()
+            };
+            ui.label(text);
         }
     }
 
@@ -5279,11 +5410,19 @@ impl GuiApp {
                         ui.label(egui::RichText::new("•").color(accent.gamma_multiply(0.5)).small());
                         ui.label(egui::RichText::new("Ready").weak().small());
                     } else {
-                        ui.label(egui::RichText::new("•").color(accent).small());
-                        // A long failure message truncates here rather than widening the
-                        // window; the banner above carries the full text.
-                        ui.add(egui::Label::new(egui::RichText::new(&self.status).small()).truncate())
-                            .on_hover_text(&self.status);
+                        let caveat = is_export_caveat(&self.status);
+                        let caveat_color = export_caveat_color(ui.visuals());
+                        ui.label(
+                            egui::RichText::new("•")
+                                .color(if caveat { caveat_color } else { accent })
+                                .small(),
+                        );
+                        // A long message truncates here rather than widening the window;
+                        // hover carries the full text. The export caveat is worded to put
+                        // its warning FIRST so truncation can only ever eat the path.
+                        let text = egui::RichText::new(&self.status).small();
+                        let text = if caveat { text.color(caveat_color).strong() } else { text };
+                        ui.add(egui::Label::new(text).truncate()).on_hover_text(&self.status);
                     }
                 },
                 |ui| {
@@ -6475,11 +6614,183 @@ fn clear_clipboard() {
 mod tests {
     use super::*;
     use crate::crypto::KdfParams;
+    use crate::launch;
     use crate::records::AssetLiability;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn fast() -> KdfParams {
         KdfParams { m_cost: 256, t_cost: 1, p_cost: 1 }
+    }
+
+    /// `open_sample_vault` points the start page at the given directory, fills in the
+    /// build script's two demo passwords, and opens it in one call — the button just
+    /// needs to find `self.sample_vault` and forward it here.
+    #[test]
+    fn open_sample_vault_fills_fields_and_opens_with_demo_passwords() {
+        let path = tmp("sample-target");
+        OpenVault::create(path.clone(), launch::SAMPLE_PW1.as_bytes(), launch::SAMPLE_PW2.as_bytes(), fast())
+            .unwrap();
+        let dir = path.parent().unwrap().to_path_buf();
+
+        let mut app = GuiApp::new(tmp("sample-launch"), true);
+        app.open_sample_vault(dir.clone());
+
+        assert!(app.vault.is_some(), "the sample vault opens");
+        assert_eq!(app.vault_dir, dir.display().to_string());
+        assert_eq!(app.screen, Screen::Main, "lands past the lock screen");
+        // Same discipline as any other successful unlock: the typed passwords are
+        // wiped from memory once they are no longer needed, sample or not.
+        assert!(app.pw1.is_empty(), "password 1 is wiped after a successful open");
+        assert!(app.pw2.is_empty(), "password 2 is wiped after a successful open");
+        cleanup(&path);
+    }
+
+    /// The lock screen only offers the "Sample vault" button when a sample vault was
+    /// actually found (`self.sample_vault`) — never a button that fails on click.
+    #[test]
+    fn sample_vault_button_shown_only_when_one_was_found() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let path = tmp("sample-button");
+        let app = std::cell::RefCell::new(GuiApp::new(path.clone(), false));
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(760.0, 700.0))
+            .with_max_steps(64)
+            .build_ui(|ui| app.borrow_mut().render(ui));
+        h.try_run().expect("lock screen settles");
+        assert_eq!(
+            h.query_all_by_label("Sample vault").count(),
+            0,
+            "no button when no sample vault was found"
+        );
+
+        app.borrow_mut().sample_vault = Some(path.parent().unwrap().to_path_buf());
+        h.try_run().expect("lock screen settles again");
+        assert_eq!(
+            h.query_all_by_label("Sample vault").count(),
+            1,
+            "the button appears once a sample vault is found"
+        );
+        cleanup(&path);
+    }
+
+    /// `self.sample_vault` is resolved ONCE in the constructor, so the directory can be gone
+    /// by the time the button is clicked (it lives under `target/`; a `cargo clean` in another
+    /// terminal removes it). Opening the sample vault must then FAIL, not fall through to
+    /// `AuthMode::Create` and silently build a real vault locked with the two publicly-known
+    /// demo passwords at a path the user believed already held a throwaway sample.
+    #[test]
+    fn open_sample_vault_refuses_to_create_a_vault_that_is_no_longer_there() {
+        let path = tmp("sample-vanished");
+        let dir = path.parent().unwrap().to_path_buf();
+        // The directory `sample_vault` pointed at exists but holds no vault (the same state
+        // `cargo clean` leaves, and the state a lossy non-UTF-8 name would resolve to).
+        assert!(!path.exists(), "no vault.pmv at the sample location");
+
+        let mut app = GuiApp::new(tmp("sample-vanished-launch"), true); // --write: could create
+        app.open_sample_vault(dir.clone());
+
+        assert!(app.vault.is_none(), "nothing is opened");
+        assert!(!path.exists(), "and crucially NOTHING was created with the demo passwords");
+        assert!(app.auth_error.is_some(), "the user is told why");
+        assert!(app.sample_vault.is_none(), "the dead button stops being offered");
+        cleanup(&path);
+    }
+
+    /// Both export paths must produce a status the styling recognises, and the caveat must
+    /// LEAD it: the status strip truncates, so a caveat placed after an arbitrarily long
+    /// export path would be the first thing cut off — leaving a bare "Exported to …" reading
+    /// as an ordinary success notice. Pins the wording and the marker together.
+    #[test]
+    fn export_status_messages_are_flagged_as_caveats() {
+        let (mut app, path) = app_unlocked("export-caveat");
+        let outdir = export_out(&path, "csv");
+        {
+            let ov = app.vault.as_mut().unwrap();
+            let mut a = Account::new().unwrap();
+            a.title = "Bank".into();
+            a.owner = "Jane".into();
+            a.password = "hunter2".into();
+            records::upsert(&mut ov.vault.accounts, a);
+        }
+        app.tab = Tab::Accounts;
+        app.export_dir = outdir.to_string_lossy().into();
+        app.export_current_tab_csv();
+        assert!(is_export_caveat(&app.status), "CSV export is styled as a caveat: {}", app.status);
+        assert!(app.status.starts_with(EXPORT_CAVEAT_PREFIX), "the caveat leads: {}", app.status);
+
+        // Config's own confirmation is one character away from the old "Exported" prefix and
+        // must NOT be painted red.
+        assert!(
+            !is_export_caveat("Export directory set to /tmp/x (used by every Export button)."),
+            "an ordinary Config confirmation is not an export caveat"
+        );
+        assert!(!is_export_caveat("Saved."));
+        cleanup(&path);
+    }
+
+    /// The caveat has to be legible in BOTH palette families. A single mid-red sat at ~3.2:1
+    /// on the dark themes — under the 4.5:1 WCAG AA floor for text this small, and the
+    /// default theme (Catppuccin Mocha) is one of them.
+    #[test]
+    fn export_caveat_color_clears_wcag_aa_on_every_theme() {
+        // WCAG relative luminance, then the standard contrast ratio.
+        fn lum(c: egui::Color32) -> f64 {
+            let f = |v: u8| {
+                let s = v as f64 / 255.0;
+                if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+            };
+            0.2126 * f(c.r()) + 0.7152 * f(c.g()) + 0.0722 * f(c.b())
+        }
+        fn contrast(a: egui::Color32, b: egui::Color32) -> f64 {
+            let (x, y) = (lum(a), lum(b));
+            let (hi, lo) = if x > y { (x, y) } else { (y, x) };
+            (hi + 0.05) / (lo + 0.05)
+        }
+
+        for t in Theme::ALL {
+            let v = visuals_for(t);
+            let fg = export_caveat_color(&v);
+            // Both surfaces the status line is ever drawn on.
+            for (what, bg) in [("panel", v.panel_fill), ("faint", v.faint_bg_color)] {
+                let ratio = contrast(fg, bg);
+                assert!(
+                    ratio >= 4.5,
+                    "{} on the {what} background contrasts at only {ratio:.2}:1 — under WCAG AA \
+                     for small text, and this is the one message that most needs reading",
+                    t.label()
+                );
+            }
+        }
+    }
+
+    /// `ui_auth`/`ui_auth_inner` render BOTH the lock screen and, reached via 🔑
+    /// Passwords, the in-vault "Change master passwords" screen (`AuthMode::ChangePassword`,
+    /// see the `auth_mode != ChangePassword` gate a few lines above this one on the
+    /// vault-root/name picker). The Sample vault button must not leak into that second
+    /// screen: clicking it there would abandon whatever new passwords the user had already
+    /// typed and instead open a completely unrelated vault.
+    #[test]
+    fn sample_vault_button_is_absent_during_change_password() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let (mut app, path) = app_unlocked("sample-vs-changepw");
+        app.sample_vault = Some(path.parent().unwrap().to_path_buf());
+        app.auth_mode = AuthMode::ChangePassword;
+        app.screen = Screen::Auth;
+        let app = std::cell::RefCell::new(app);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(760.0, 700.0))
+            .with_max_steps(64)
+            .build_ui(|ui| app.borrow_mut().render(ui));
+        h.try_run().expect("change-password screen settles");
+
+        assert_eq!(
+            h.query_all_by_label("Sample vault").count(),
+            0,
+            "Sample vault must not appear while changing the master passwords"
+        );
+        cleanup(&path);
     }
 
     /// The lock-screen Help link exists, and — the part that matters — Back returns to
@@ -7533,12 +7844,12 @@ mod tests {
     }
 
     #[test]
-    fn theme_id_round_trips_and_defaults_to_light() {
+    fn theme_id_round_trips_and_defaults_to_catppuccin_mocha() {
         for t in Theme::ALL {
             assert_eq!(Theme::from_id(t.id()), Some(t), "{} id must round-trip", t.label());
         }
         assert_eq!(Theme::from_id("nonsense"), None);
-        assert_eq!(Theme::default(), Theme::Light);
+        assert_eq!(Theme::default(), Theme::CatppuccinMocha);
         // Every theme builds a usable Visuals (no panic / field mismatch).
         for t in Theme::ALL {
             let _ = visuals_for(t);
@@ -7666,7 +7977,8 @@ mod tests {
         app.tab = Tab::Accounts;
         app.export_dir = outdir.to_string_lossy().into();
         app.export_current_tab_csv();
-        assert!(app.status.starts_with("Exported 1 record"), "status: {}", app.status);
+        assert!(is_export_caveat(&app.status), "status leads with the caveat: {}", app.status);
+        assert!(app.status.contains("Exported 1 record"), "status: {}", app.status);
         let entry = std::fs::read_dir(&outdir).unwrap().next().unwrap().unwrap();
         let name = entry.file_name().to_string_lossy().into_owned();
         assert!(name.starts_with("accounts-") && name.ends_with(".csv"), "timestamped name: {name}");
@@ -7716,7 +8028,7 @@ mod tests {
         let outside = export_out(&path, "csv");
         app.export_dir = outside.to_string_lossy().into();
         app.export_current_tab_csv();
-        assert!(app.status.starts_with("Exported"), "an outside directory still works: {}", app.status);
+        assert!(is_export_caveat(&app.status), "an outside directory still works: {}", app.status);
         cleanup(&path);
     }
 
@@ -7739,7 +8051,7 @@ mod tests {
         app.export_dir = outdir.to_string_lossy().into();
         app.writable = false; // a read-only session
         app.export_current_tab_csv();
-        assert!(app.status.starts_with("Exported"), "export ran read-only: {}", app.status);
+        assert!(is_export_caveat(&app.status), "export ran read-only: {}", app.status);
         assert!(
             app.status.contains("UNENCRYPTED"),
             "the plaintext warning must ride along with the success: {}",
@@ -8040,12 +8352,12 @@ mod tests {
         assert_eq!(load_theme_from(&p), Theme::Solarized);
         // Unknown id falls back to the default.
         std::fs::write(&p, br#"{"theme":"nope"}"#).unwrap();
-        assert_eq!(load_theme_from(&p), Theme::Light);
+        assert_eq!(load_theme_from(&p), Theme::CatppuccinMocha);
         // Over-cap file is rejected before the body is parsed (DoS guard).
         std::fs::write(&p, vec![b'{'; (crate::MAX_PREFS_SIZE as usize) + 1]).unwrap();
-        assert_eq!(load_theme_from(&p), Theme::Light);
+        assert_eq!(load_theme_from(&p), Theme::CatppuccinMocha);
         // Missing file -> default.
-        assert_eq!(load_theme_from(&dir.join("absent.json")), Theme::Light);
+        assert_eq!(load_theme_from(&dir.join("absent.json")), Theme::CatppuccinMocha);
         // A symlinked prefs file is refused even if its target is a valid prefs file.
         #[cfg(unix)]
         {
@@ -8053,7 +8365,7 @@ mod tests {
             save_theme_to(&real, Theme::Dark);
             let link = dir.join("link.json");
             std::os::unix::fs::symlink(&real, &link).unwrap();
-            assert_eq!(load_theme_from(&link), Theme::Light, "symlinked prefs refused");
+            assert_eq!(load_theme_from(&link), Theme::CatppuccinMocha, "symlinked prefs refused");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

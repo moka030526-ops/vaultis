@@ -204,9 +204,12 @@ pub(crate) const TOPICS: &[Topic] = &[
                 ),
             ]),
             Block::Note(
-                "Creating is only offered when the app was started in write mode (see “Read-only \
-                 vs. write mode”). A read-only session — the mode an heir should normally use — \
-                 can open and read any existing vault, but it will never offer to build a new one.",
+                "The button says Unlock or Create based only on whether a vault already exists at \
+                 the name you picked — it is the same in a read-only session as in a write \
+                 session. A read-only session will still show the Create screen for an empty \
+                 folder, but clicking Create there is refused with an error telling you to \
+                 relaunch with --write, since a read-only session cannot write a new vault to \
+                 disk. See “Read-only vs. write mode”.",
             ),
             Block::Sub("Why creating asks for every password twice"),
             Block::P(
@@ -274,9 +277,13 @@ pub(crate) const TOPICS: &[Topic] = &[
                 "Click the button to confirm. The vault is re-scrambled with a brand-new key; the old passwords stop working the instant this finishes.",
             ]),
             Block::Note(
-                "Changing your passwords only re-locks the small record file — it does not touch \
-                 the documents you have already uploaded. Everything you attached stays exactly \
-                 where it was and opens normally under the new pair of passwords.",
+                "Changing your passwords re-encrypts the WHOLE vault under the new pair — every \
+                 document you have already uploaded, not just the small record file — so the old \
+                 passwords cannot decrypt anything afterwards, including a copy of the old files \
+                 left behind on disk. On a vault with a lot of documents this can take noticeably \
+                 longer than an ordinary save; the process is crash-safe, so an interruption \
+                 partway through always leaves you with either the fully old vault or the fully \
+                 new one, never a mixture.",
             ),
             Block::Sub("Why a wrong password looks exactly like a damaged vault"),
             Block::P(
@@ -382,20 +389,6 @@ pub(crate) const TOPICS: &[Topic] = &[
                      you leave.",
                 ),
             ]),
-            Block::Sub("When the window is narrow, the tab strip wraps — it never hides a tab"),
-            Block::P(
-                "The strip of tabs never scrolls sideways and never hides a tab behind the edge of \
-                 the window. If the window is too narrow to fit all nine tabs on a single line, \
-                 the strip simply wraps onto a second (or third) line, and everything below moves \
-                 down slightly to make room. Every tab therefore stays fully visible and clickable \
-                 no matter how small you make the window.",
-            ),
-            Block::Note(
-                "Earlier versions of this app put the tab strip in a sideways-scrolling area, \
-                 where the last few tabs sat hidden off the right edge behind a scrollbar you had \
-                 to notice and drag. If you remember ever having to hunt for the Summary tab, that \
-                 is the exact problem this wrapping behaviour fixed.",
-            ),
             Block::Sub("What is inside a tab"),
             Block::P(
                 "Every record tab is split down the middle into two halves: the LIST of records \
@@ -666,25 +659,6 @@ pub(crate) const TOPICS: &[Topic] = &[
                 ("Cash", "Mentions cash, savings, checking, or money market."),
                 ("After tax", "Everything else — an ordinary brokerage account, a vehicle, a valuable item."),
             ]),
-            Block::Note(
-                "A retirement-sounding word always wins over a cash-sounding one, so \"Roth \
-                 savings\" is counted as before-tax, not cash. Liabilities are never placed in the \
-                 real-estate bucket — a mortgage is treated as a plain debt, and this view does not \
-                 try to split debts by tax treatment.",
-            ),
-            Block::Sub("How the dollar values are read"),
-            Block::Bullets(&[
-                "The value field is ordinary free text: a currency symbol, thousand-separating \
-                 commas, and a k/m/b suffix are all understood automatically (1.2m is read as \
-                 1,200,000).",
-                "Anything typed that is not recognisable as a number at all is counted as zero \
-                 rather than breaking the whole total.",
-                "Totals shown are rounded to whole currency units, so the columns stay easy to read.",
-                "Any record left with a blank owner is totalled under its own blank-owner row — \
-                 which is usually a useful sign that the record was left half-filled and needs a \
-                 second look.",
-            ]),
-            Block::P("Its numbers are only ever as good as the values typed into the individual records — it adds up what is there, and nothing more."),
         ],
     },
     // --- Working with records ------------------------------------------------
@@ -915,7 +889,9 @@ pub(crate) const TOPICS: &[Topic] = &[
                  your disk, just like any other document — the protection the vault gave it is \
                  gone the moment it is exported. Put exported files somewhere you trust, and \
                  delete them again once you are done with them. vaultis reminds you of this right \
-                 in the status line the moment an export finishes, not only here.",
+                 in the status line the moment an export finishes, not only here: the message \
+                 turns red and leads with “⚠ UNENCRYPTED”, before it names the file, so the \
+                 warning is readable even when a long path gets shortened to fit.",
             ),
         ],
     },
@@ -1007,9 +983,10 @@ pub(crate) const TOPICS: &[Topic] = &[
         body: &[
             Block::Sub("Appearance"),
             Block::P(
-                "Ten color themes to choose from: Light, Dark, High contrast, Solarized, Sepia, \
-                 Nord, Dracula, Gruvbox Dark, Gruvbox Light, and Rosé Pine. Your choice applies \
-                 immediately and is remembered the next time you open the app.",
+                "Sixteen color themes to choose from: Light, Dark, High contrast, Solarized, \
+                 Sepia, Nord, Dracula, Gruvbox Dark, Gruvbox Light, Rosé Pine, Catppuccin Mocha \
+                 (the default), Catppuccin Latte, Tokyo Night, One Dark, Everforest, and Zenburn. \
+                 Your choice applies immediately and is remembered the next time you open the app.",
             ),
             Block::Sub("View defaults"),
             Block::P("Three small preferences that decide how each tab looks the moment you first arrive on it:"),
@@ -1388,6 +1365,22 @@ pub(crate) const TOPICS: &[Topic] = &[
                  default that is a sample-vault folder under target/, unlocked with the two \
                  passwords sample1 and sample2.",
             ),
+            Block::Sub("Opening it in one click"),
+            Block::P(
+                "You do not have to type any of that in. Whenever a sample vault exists where the \
+                 build script puts it, the lock screen shows a “Sample vault” button beneath the \
+                 password fields: clicking it fills in the folder and both demo passwords and \
+                 opens the vault straight away. The button only appears when there really is a \
+                 sample vault to open, so on an ordinary installed copy of the program you will \
+                 never see it.",
+            ),
+            Block::Note(
+                "Opening the sample vault does not change which vault the program starts on next \
+                 time — your own vault stays the remembered one. And the button only ever OPENS: \
+                 if the sample vault has been deleted since the program started (running \
+                 `cargo clean` removes it), the button says so rather than quietly creating a new \
+                 vault with the demo passwords.",
+            ),
             Block::Sub("What is actually inside it"),
             Block::P(
                 "Every single tab is filled in — urgent notes, instructions, trust and will \
@@ -1498,12 +1491,6 @@ pub(crate) const TOPICS: &[Topic] = &[
                     "Words shorter than three letters are only ever matched literally, never by \
                      sound — searching \"u2\" finds only an exact \"u2\". Try searching the title \
                      instead if the username itself is short.",
-                ),
-                (
-                    "The row of tabs is sitting on two lines instead of one",
-                    "The window is simply too narrow to fit all of them on a single line, so the \
-                     strip wrapped onto a second line rather than hiding any tab from you. Widen the \
-                     window to bring them back onto one single line.",
                 ),
                 (
                     "A link is showing as a raw, meaningless id instead of a name",
@@ -2115,8 +2102,6 @@ mod tests {
             // Quoted / pasted paths, in the dedicated topic and where they are used.
             ("quoted path", "paths"),
             ("copy as path", "paths"),
-            // The wrapping tab strip.
-            ("tab strip narrow", "window"),
             // The search box: how it looks and how it matches.
             ("sound-alike", "searching"),
             ("search box", "searching"),

@@ -29,6 +29,27 @@ pub fn vault_file(dir: &str) -> PathBuf {
     PathBuf::from(dir).join(VAULT_FILE)
 }
 
+/// The two passwords `scripts/build.sh` unlocks its demo vault with — kept in sync
+/// with `SAMPLE_PW1`/`SAMPLE_PW2` in that script.
+pub const SAMPLE_PW1: &str = "sample1";
+pub const SAMPLE_PW2: &str = "sample2";
+
+/// Where `scripts/build.sh` puts its demo vault, if one was ever actually built there.
+///
+/// Mirrors the script's own resolution: `VAULTIS_SAMPLE_DIR` if set, else
+/// `target/sample-vault` next to the running executable. The executable always lives
+/// at `target/<debug|release>/<exe>`, so walking up two directories from it reaches
+/// `target/` without needing to know the repo root or which profile was built.
+/// Returns `None` (rather than a guessed path) when no vault actually lives there, so
+/// callers can hide the affordance instead of offering a button that then fails.
+pub fn sample_vault_dir() -> Option<PathBuf> {
+    let dir = match std::env::var("VAULTIS_SAMPLE_DIR") {
+        Ok(d) => PathBuf::from(d),
+        Err(_) => std::env::current_exe().ok()?.parent()?.parent()?.join("sample-vault"),
+    };
+    dir.join(VAULT_FILE).is_file().then_some(dir)
+}
+
 /// The outcome of scanning a root directory for vaults: the discovered vault names
 /// plus an optional human-readable `warning` to surface in the UI. The warning is
 /// `Some` when the root itself can't be read (the list is then empty) or when some
