@@ -160,8 +160,10 @@ pub(crate) const TOPICS: &[Topic] = &[
                  manager works even if the path has quotation marks around it, see “Typing file \
                  and folder paths”. vaultis then looks one level inside that folder for anything \
                  that looks like a vault (technically: any subfolder that contains a vault.pmv \
-                 file) and lists what it finds in the dropdown below. This folder choice is \
-                 remembered, so you will not have to type it again next time you open the app.",
+                 file) and lists what it finds in the dropdown below. vaultis does NOT remember \
+                 this folder between launches — it writes nothing outside the folder you point it \
+                 at. To skip typing it, start the program from inside your vaults folder, or pass \
+                 the folder on the command line.",
             ),
             Block::Sub("Step 2 — pick a vault, or name a new one"),
             Block::P(
@@ -329,9 +331,11 @@ pub(crate) const TOPICS: &[Topic] = &[
                  Estate tabs it contains every password spelled out in the clear — handle that \
                  exported file with exactly the same care you would the passwords themselves.",
                 "Make a backup copy of the still-encrypted vault.",
-                "Change the color theme, which tabs open grouped by default, and where exports go \
-                 — these are preferences remembered on this computer, not part of the vault's \
-                 actual data, so changing them does not need write access.",
+                "Change the color theme, the interface size, the typeface, and which tabs open \
+                 grouped — these are saved in a small prefs.conf in your vaults folder, not inside \
+                 the encrypted vault, so changing them does not need write access.",
+                "Set where exports go. This one is remembered only for the current session: you \
+                 set it again next time you open the app.",
             ]),
             Block::Sub("What you CANNOT do — write mode is required"),
             Block::Bullets(&[
@@ -986,15 +990,22 @@ pub(crate) const TOPICS: &[Topic] = &[
                 "Sixteen color themes to choose from: Light, Dark, High contrast, Solarized, \
                  Sepia, Nord, Dracula, Gruvbox Dark, Gruvbox Light, Rosé Pine, Catppuccin Mocha \
                  (the default), Catppuccin Latte, Tokyo Night, One Dark, Everforest, and Zenburn. \
-                 Your choice applies immediately and is remembered the next time you open the app.",
+                 Your choice applies immediately and is saved in your vaults folder, so it comes \
+                 back the next time you open a vault from there.",
             ),
             Block::Sub("View defaults"),
-            Block::P("Three small preferences that decide how each tab looks the moment you first arrive on it:"),
+            Block::P("Two small preferences that decide how each tab looks the moment you first arrive on it:"),
             Block::Rows(&[
-                ("Reveal all passwords by default", "Whether password fields start out already unmasked instead of hidden as dots."),
                 ("Group assets by default", "Whether the Assets tab opens already showing its tree view."),
                 ("Group accounts by default", "Whether the Accounts tab opens already showing its tree view."),
             ]),
+            Block::Note(
+                "There is deliberately no \u{201c}reveal all passwords by default\u{201d} setting. Passwords always \
+                 start hidden, and revealing them is a per-session choice you make each time. \
+                 Because prefs.conf sits in your vaults folder rather than inside the encrypted \
+                 vault, anyone who could edit that folder without knowing your passwords could \
+                 otherwise have switched masking off for you.",
+            ),
             Block::Sub("Asset / Liability types · Account types & subtypes"),
             Block::P(
                 "These are the dropdown lists used throughout the record forms. Add a new type or \
@@ -1007,11 +1018,18 @@ pub(crate) const TOPICS: &[Topic] = &[
             Block::Sub("Export directory"),
             Block::P(
                 "This is the one folder every Export button writes its decrypted copy into. It is \
-                 stored as a preference on this computer rather than inside the vault, which is \
-                 why it can be set even during a read-only session. Paste the folder's path in and \
-                 click its Set button — a path wrapped in double quotes is accepted and stored \
-                 without them automatically, see “Typing file and folder paths”. Clearing the box \
-                 and setting it to empty turns exporting off again entirely.",
+                 held for the CURRENT SESSION only and is never written to disk, so you set it \
+                 again each time you open the app — and it can be set even during a read-only \
+                 session. Paste the folder's path in and click its Set button — a path wrapped in \
+                 double quotes is accepted automatically, see “Typing file and folder paths”. \
+                 Clearing the box turns exporting off again entirely.",
+            ),
+            Block::Note(
+                "It is deliberately not remembered. This folder receives files with no encryption \
+                 at all — a CSV export spells out every password — and the only settings file \
+                 vaultis writes sits in your vaults folder, where anyone who can reach that folder \
+                 could edit it without knowing your passwords. Choosing the destination fresh each \
+                 session is what stops someone else from choosing it for you.",
             ),
             Block::Sub("Backup"),
             Block::P(
@@ -1375,8 +1393,7 @@ pub(crate) const TOPICS: &[Topic] = &[
                  never see it.",
             ),
             Block::Note(
-                "Opening the sample vault does not change which vault the program starts on next \
-                 time — your own vault stays the remembered one. And the button only ever OPENS: \
+                "The button only ever OPENS: \
                  if the sample vault has been deleted since the program started (running \
                  `cargo clean` removes it), the button says so rather than quietly creating a new \
                  vault with the demo passwords.",
@@ -1973,7 +1990,7 @@ fn paths_card(ui: &mut egui::Ui, ctx: &HelpContext) {
         .corner_radius(6)
         .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("Files on this machine").strong());
+            ui.label(egui::RichText::new("Where things are").strong());
             ui.add_space(6.0);
             // Vault/prefs paths are long; without a cap the card runs off the window.
             let cap = wrap_width(ui);
@@ -1988,8 +2005,9 @@ fn paths_card(ui: &mut egui::Ui, ctx: &HelpContext) {
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(
-                    "The preferences file holds the theme, the view defaults, and the export \
-                     directory. It contains no vault data and no secrets.",
+                    "prefs.conf holds only the theme, interface size, typeface and the two \
+                     grouping defaults. It sits in your vaults folder, is created only when you \
+                     change one of those settings, and contains no vault data and no secrets.",
                 )
                 .weak()
                 .small(),

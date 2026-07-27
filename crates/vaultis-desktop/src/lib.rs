@@ -350,60 +350,57 @@ fn lexical_normalize(path: &Path) -> PathBuf {
 
 // --- Local, non-secret preferences (shared by the GUI and TUI) ---------------
 //
-// A tiny `prefs.json` in the OS config dir holds UI preferences that are NOT vault
-// content — the GUI color theme and the document **export directory**. Keeping the
-// export directory here (rather than in the encrypted vault) is deliberate: it is a
-// local-machine preference, so it can be changed even in a READ-ONLY session, which
-// is what lets a read-only user (an heir) set where to extract documents. Both
-// front-ends read/write the same file through these helpers, and every write is a
-// read-modify-write so the theme and export-dir keys never clobber each other.
+// UI preferences live in ONE optional file, `prefs.conf`, in the **vault root** — the
+// folder that holds your vault folders, not the encrypted vault itself. Nothing is ever
+// written to an OS config directory: the app leaves no trace outside the folder you point
+// it at, so a vault root on a USB stick carries its own look with it and a machine that
+// has only ever *viewed* a vault is left exactly as it was found.
 //
-// Vault-root fallback: when a key is absent from the config-dir file, the loaders fall
-// back to a `prefs.json` sitting in the open vault's root folder. This lets a
-// self-contained / portable vault (see `docs/SELF_CONTAINED_BACKUP.md`) carry its own UI
-// defaults so they travel with the vault to a new machine. The fallback is READ-only:
-// the config-dir file always wins when it sets a key, and every `save_*` keeps writing
-// to the config dir, so a local choice is never silently overridden by the vault.
+// The file is OPTIONAL and is created only when a setting is actually changed. Absent (or
+// corrupt, or over-size — see `read_prefs_obj`) simply means the built-in defaults:
+// Catppuccin Mocha, 100% interface size, the default proportional typeface, ungrouped
+// lists.
 //
-// The fallback file is UNTRUSTED INPUT — it arrives with the vault media (a USB stick, a
-// restored archive, a vault handed to an heir), so whoever produced the vault chooses its
-// contents. It is therefore restricted to an ALLOWLIST of purely cosmetic keys
-// ([`VAULT_FALLBACK_KEYS`]); every security-relevant key is read from the config dir
-// alone. See that constant for which keys are excluded and why.
+// It holds exactly five keys — `theme`, `ui_scale`, `font`, `group_assets_default`,
+// `group_accounts_default` — all purely cosmetic. That limit is the security boundary,
+// not an oversight, because `prefs.conf` sits OUTSIDE the encryption as an ordinary file
+// next to the vault folders: anyone who can write to the vault media WITHOUT knowing the
+// two passwords can edit it. Two settings are therefore deliberately not persisted
+// anywhere, so that write access can never become plaintext theft:
+//
+//   * `export_dir` — where the front-ends write CLEARTEXT exports: the per-tab CSV (every
+//     account and portal password in the clear) and every decrypted document. Persisting
+//     it here would let a tampered vault root silently redirect those secrets to a
+//     cloud-synced folder, a Windows UNC share, or back into the vault folder where the
+//     next backup sweeps them up. It is set per session, in Config.
+//   * `reveal_all_default` — opens every password tab UNMASKED. A tampered file flipping
+//     it on would turn off the shoulder-surf/screen-share protection unasked. Reveal is
+//     now a per-session toggle that always starts OFF.
+//
+// The start page's vault root and last-opened vault are likewise not persisted: they would
+// have to say where the vault root IS, which cannot live inside that same root. The root
+// comes from the command line (`vaultis-gui DIR`) or the working directory, else the start
+// page opens empty. See `launch::initial_root_and_name`.
+//
+// Both front-ends share these helpers, and every write is a read-modify-write so one key
+// never clobbers another.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Hard cap on the prefs file size. It holds one short JSON object, so a larger file
 /// is corrupt or hostile; bounding the read before allocating means a huge or
-/// symlinked `prefs.json` can never stall or OOM the UI at startup.
+/// symlinked `prefs.conf` can never stall or OOM the UI at startup.
 pub(crate) const MAX_PREFS_SIZE: u64 = 64 * 1024;
 
-/// The ONLY keys a vault-root `prefs.json` may contribute (deny by default).
+/// The complete set of keys `prefs.conf` may carry (deny by default).
 ///
-/// That file travels with the vault media, so its author is whoever produced the vault —
-/// not necessarily the person opening it. Two of the keys it used to be able to set are
-/// security decisions, and are deliberately absent here:
-///
-/// * `export_dir` — the destination the front-ends write **cleartext** exports to: the
-///   per-tab CSV (which carries every account and portal password in the clear) and every
-///   decrypted document. A foreign vault that set it could silently redirect those secrets
-///   to a world-readable folder, a cloud-synced folder, a Windows UNC share, or back into
-///   the vault directory itself (where the user's next backup sweeps them up). The user
-///   picks this in Config; a vault must not pick it for them.
-/// * `reveal_all_default` — opens every password tab UNMASKED. A foreign vault flipping it
-///   on turns off the app's shoulder-surf/screen-share protection without the user asking.
-///
-/// The remaining view defaults only choose grouped-vs-flat list rendering, which carries no
-/// security meaning, so a portable vault may still carry them. (`theme` is not listed
-/// because it is read from the config dir directly, never through this fallback.)
-pub(crate) const VAULT_FALLBACK_KEYS: &[&str] = &["group_assets_default", "group_accounts_default"];
-
-/// Standard preferences path (`<config dir>/vaultis/prefs.json`), or `None` if the
-/// platform has no config dir.
-pub(crate) fn prefs_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("dev", "vaultis", "vaultis").map(|d| d.config_dir().join("prefs.json"))
-}
+/// Enforced on READ, so a hand-edited or tampered file cannot smuggle in a key the app
+/// would otherwise honour — notably `export_dir` and `reveal_all_default`, which were
+/// removed from the persisted set precisely because this file is writable by anyone with
+/// access to the vault media but not the passwords. See the module comment above.
+pub(crate) const PREFS_KEYS: &[&str] =
+    &["theme", "ui_scale", "font", "group_assets_default", "group_accounts_default"];
 
 /// Bounded, symlink-safe read of the prefs JSON object (empty map on any failure), so
 /// a setter can read-modify-write without clobbering other keys.
@@ -451,7 +448,7 @@ fn read_bounded_nofollow(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
 ///
 /// Written atomically through a fresh `O_EXCL` 0600 temp sibling, then renamed over the
 /// target. `std::fs::write` (the previous implementation) opens the path directly, so it
-/// FOLLOWS a symlink planted at `prefs.json` and truncates-then-writes in place — leaving a
+/// FOLLOWS a symlink planted at `prefs.conf` and truncates-then-writes in place — leaving a
 /// window where a concurrent front-end reads a half-written file, and a crash leaves it
 /// truncated. A rename REPLACES a symlink rather than writing through it, and matches the
 /// temp→rename discipline every other writer in this project uses.
@@ -464,7 +461,7 @@ pub(crate) fn write_prefs_obj(path: &Path, obj: &serde_json::Map<String, serde_j
     // collide on the same temp name.
     let Ok(suffix) = crypto::random_bytes::<8>() else { return };
     let suffix: String = suffix.iter().map(|b| format!("{b:02x}")).collect();
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("prefs.json");
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("prefs.conf");
     let tmp = match path.parent().filter(|p| !p.as_os_str().is_empty()) {
         Some(d) => d.join(format!(".{name}.{suffix}.tmp")),
         None => PathBuf::from(format!(".{name}.{suffix}.tmp")),
@@ -474,194 +471,90 @@ pub(crate) fn write_prefs_obj(path: &Path, obj: &serde_json::Map<String, serde_j
     }
 }
 
-/// Path to the vault-local `prefs.json` (`<vault_root>/prefs.json`), or `None` when no
-/// vault root is known yet (e.g. on the start page before a root is chosen). This file is
-/// a read-only fallback that lets a portable vault carry its own UI defaults.
-pub(crate) fn vault_prefs_path(vault_root: &str) -> Option<PathBuf> {
+/// Path to `<vault_root>/prefs.conf`, or `None` when no vault root is known yet (the start
+/// page before a root is typed or picked). This is the ONLY preferences file the app reads
+/// or writes — see the module comment above.
+pub(crate) fn prefs_path(vault_root: &str) -> Option<PathBuf> {
     // Normalized like every other directory the UI takes: trimmed, with a pasted
-    // "Copy as path" quote pair stripped, so a quoted root still finds its prefs.json.
+    // "Copy as path" quote pair stripped, so a quoted root still finds its prefs.conf.
     let root = records::unquote_path(vault_root);
-    (!root.is_empty()).then(|| Path::new(root).join("prefs.json"))
+    (!root.is_empty()).then(|| Path::new(root).join("prefs.conf"))
 }
 
-/// Overlay `config` onto `fallback`: every key present in `config` wins, while keys found
-/// only in `fallback` survive. Split out from `effective_prefs_obj` so the precedence rule
-/// (config-dir beats vault-root) is unit-tested without touching the real config dir.
-pub(crate) fn merge_prefs(
-    config: serde_json::Map<String, serde_json::Value>,
-    fallback: serde_json::Map<String, serde_json::Value>,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut obj = fallback;
-    for (k, v) in config {
-        obj.insert(k, v);
-    }
+/// The effective prefs object for a vault root: `<vault_root>/prefs.conf`, filtered to
+/// [`PREFS_KEYS`].
+///
+/// The filter is applied on READ and is the security boundary: `prefs.conf` is an ordinary
+/// unencrypted file beside the vault folders, so anyone with write access to the media —
+/// but not the two passwords — authors it. Restricting it to cosmetic keys means that
+/// access can change how the app LOOKS and nothing else. A missing, corrupt or over-size
+/// file contributes nothing (see [`read_prefs_obj`]), leaving the built-in defaults.
+pub(crate) fn effective_prefs_obj(vault_root: &str) -> serde_json::Map<String, serde_json::Value> {
+    prefs_path(vault_root).map(|p| effective_prefs_obj_from(&p)).unwrap_or_default()
+}
+/// Path-parametrized core of [`effective_prefs_obj`], so the key filter is testable
+/// against an arbitrary file.
+pub(crate) fn effective_prefs_obj_from(path: &Path) -> serde_json::Map<String, serde_json::Value> {
+    let mut obj = read_prefs_obj(path);
+    obj.retain(|k, _| PREFS_KEYS.contains(&k.as_str()));
     obj
 }
 
-/// The effective prefs object for the given vault root: the config-dir `prefs.json`
-/// overlaid (key-by-key) onto the vault-root `prefs.json` fallback. A missing/corrupt file
-/// on either side contributes nothing (see `read_prefs_obj`), so the worst case is an empty
-/// map and today's built-in defaults.
-pub(crate) fn effective_prefs_obj(vault_root: &str) -> serde_json::Map<String, serde_json::Value> {
-    effective_prefs_obj_from(prefs_path().as_deref(), vault_root)
-}
-/// Path-parametrized core of `effective_prefs_obj` (testable without the real config dir).
+/// The export-destination directory for THIS SESSION ("" until the user sets one).
 ///
-/// The vault-root side is filtered down to [`VAULT_FALLBACK_KEYS`] BEFORE the merge, so a
-/// `prefs.json` carried by untrusted vault media can only influence cosmetic rendering — it
-/// can never choose where cleartext exports are written, nor unmask passwords by default.
-pub(crate) fn effective_prefs_obj_from(
-    config_path: Option<&Path>,
-    vault_root: &str,
-) -> serde_json::Map<String, serde_json::Value> {
-    let config = config_path.map(read_prefs_obj).unwrap_or_default();
-    let mut fallback = vault_prefs_path(vault_root).map(|p| read_prefs_obj(&p)).unwrap_or_default();
-    fallback.retain(|k, _| VAULT_FALLBACK_KEYS.contains(&k.as_str()));
-    merge_prefs(config, fallback)
-}
-
-/// The saved export-destination directory ("" if unset).
+/// Deliberately **not persisted anywhere**. This is where the front-ends write CLEARTEXT
+/// exports — the per-tab CSV (every account and portal password in the clear) and every
+/// decrypted document. The only file the app writes is `<vault_root>/prefs.conf`, which
+/// sits unencrypted beside the vault folders and is therefore authored by anyone who can
+/// write to the media without knowing the two passwords; storing this key there would let
+/// tampering silently redirect those secrets to a synced folder or a UNC share. Asking
+/// once per session is the price of that guarantee.
 ///
-/// Read from the config dir ONLY — `export_dir` is excluded from [`VAULT_FALLBACK_KEYS`],
-/// so a `prefs.json` shipped with a foreign vault cannot choose where this machine writes
-/// cleartext CSVs (every password) and decrypted documents. Unset simply means the user is
-/// asked to set it in Config before the first export.
-pub(crate) fn load_export_dir(vault_root: &str) -> String {
-    effective_prefs_obj(vault_root).get("export_dir").and_then(|v| v.as_str()).unwrap_or("").to_string()
-}
-/// Single-path read (no fallback) — retained for the prefs round-trip tests.
-#[cfg(test)]
-pub(crate) fn load_export_dir_from(path: &Path) -> String {
-    read_prefs_obj(path).get("export_dir").and_then(|v| v.as_str()).unwrap_or("").to_string()
-}
-/// Persist the export-destination directory, preserving any other prefs keys (theme).
-pub(crate) fn save_export_dir(dir: &str) {
-    if let Some(path) = prefs_path() {
-        save_export_dir_to(&path, dir);
-    }
-}
-pub(crate) fn save_export_dir_to(path: &Path, dir: &str) {
-    let mut obj = read_prefs_obj(path);
-    obj.insert("export_dir".into(), serde_json::Value::String(dir.to_string()));
-    write_prefs_obj(path, &obj);
+/// Kept as a function (rather than inlining `String::new()` at the call sites) so the
+/// "starts unset every session" rule has one documented home.
+pub(crate) fn load_export_dir(_vault_root: &str) -> String {
+    String::new()
 }
 
-/// The saved **vault root** — the folder the start page scans for vaults ("" if unset).
-/// Like the export dir, this is a local-machine UI preference (NOT vault content), so it
-/// persists across sessions and is settable even in a read-only session.
-pub(crate) fn load_vault_root() -> String {
-    prefs_path().map(|p| load_vault_root_from(&p)).unwrap_or_default()
-}
-pub(crate) fn load_vault_root_from(path: &Path) -> String {
-    read_prefs_obj(path).get("vault_root").and_then(|v| v.as_str()).unwrap_or("").to_string()
-}
-/// Persist the vault root, preserving any other prefs keys (theme, export dir).
-pub(crate) fn save_vault_root(dir: &str) {
-    // This is reached from the unlock/create flow, which the front-end unit tests drive
-    // directly; skip the real-prefs write under `cfg(test)` so the suite never clobbers the
-    // developer's `~/.config/vaultis/prefs.json`. The write logic itself stays covered via
-    // the path-parametrized `save_vault_root_to` (see the `vault_root_round_trips` test).
-    if cfg!(test) {
-        return;
-    }
-    if let Some(path) = prefs_path() {
-        save_vault_root_to(&path, dir);
-    }
-}
-pub(crate) fn save_vault_root_to(path: &Path, dir: &str) {
-    let mut obj = read_prefs_obj(path);
-    obj.insert("vault_root".into(), serde_json::Value::String(dir.to_string()));
-    write_prefs_obj(path, &obj);
-}
-
-/// The **last opened vault** — the name (the folder leaf under the vault root) of the most
-/// recently unlocked/created vault ("" if none yet). Saved on a successful open/create and
-/// read at startup so the start page pre-selects it in the vault dropdown. Like `vault_root`
-/// this is a bootstrap key (it decides which vault among the root to highlight, read before
-/// any vault is open), so it lives in the config dir alone — no vault-root fallback.
-pub(crate) fn load_last_vault() -> String {
-    prefs_path().map(|p| load_last_vault_from(&p)).unwrap_or_default()
-}
-pub(crate) fn load_last_vault_from(path: &Path) -> String {
-    read_prefs_obj(path).get("last_vault").and_then(|v| v.as_str()).unwrap_or("").to_string()
-}
-/// Persist the last opened vault name, preserving any other prefs keys. Skipped under
-/// `cfg(test)` (reached from the unlock/create flow the unit tests drive) so the suite never
-/// clobbers the developer's real prefs; the write logic stays covered via `save_last_vault_to`.
-pub(crate) fn save_last_vault(name: &str) {
-    if cfg!(test) {
-        return;
-    }
-    if let Some(path) = prefs_path() {
-        save_last_vault_to(&path, name);
-    }
-}
-pub(crate) fn save_last_vault_to(path: &Path, name: &str) {
-    let mut obj = read_prefs_obj(path);
-    obj.insert("last_vault".into(), serde_json::Value::String(name.to_string()));
-    write_prefs_obj(path, &obj);
-}
-
-// --- View defaults: three local UI preferences (NOT vault content) -----------
+// --- View defaults: cosmetic, persisted in `<vault_root>/prefs.conf` ---------
 //
-// Each is a bool persisted in the shared `prefs.json` and read at startup by BOTH
-// front-ends to seed per-tab view state (so a freshly opened vault honours the
-// user's saved defaults). Like every other UI preference here they are settable
-// even in a read-only session and follow the export-dir read-modify-write template
-// (`as_bool()` / `Value::Bool`, defaulting to `false` = today's behaviour when
-// unset). The public `load_*`/`save_*` wrappers short-circuit under `cfg(test)`:
-// the loaders are invoked from `App::new`/`GuiApp::new` (which the unit tests
-// construct), so a stable `false` keeps those tests hermetic and independent of the
-// developer's real `~/.config/vaultis/prefs.json`; the path-parametrized
-// `_from`/`_to` helpers stay fully exercised by the round-trip tests.
+// Both front-ends read these at startup to seed per-tab view state. They only choose
+// grouped-vs-flat list rendering, which carries no security meaning, so they are safe to
+// carry in a file that travels with the vault media.
+//
+// The LOADERS run for real under test: prefs resolve against the vault root, which the suite
+// points at a temp directory, so reading is both hermetic and exercised.
+//
+// The SAVERS still short-circuit under `cfg(test)`. The test helpers put each vault directly
+// in `std::env::temp_dir()`, which makes the shared temp dir every test's vault ROOT — so one
+// test persisting a view default would write a `prefs.conf` that every other test then reads,
+// silently flipping their lists to grouped and changing row counts. The write path stays
+// fully covered by the path-parametrized `_to`/`_from` round-trip tests.
 
-/// "Reveal all passwords by default" — when set, every tab that has passwords opens
-/// with its reveal-all toggle ON instead of masked.
+/// "Reveal all passwords by default" is **not** a persisted setting.
 ///
-/// Read from the config dir ONLY (excluded from [`VAULT_FALLBACK_KEYS`]): unmasking every
-/// password on screen is the user's decision, not one a vault handed to them may make.
-pub(crate) fn load_reveal_all_default(vault_root: &str) -> bool {
-    if cfg!(test) {
-        return false;
-    }
-    effective_prefs_obj(vault_root).get("reveal_all_default").and_then(|v| v.as_bool()).unwrap_or(false)
-}
-#[cfg(test)]
-pub(crate) fn load_reveal_all_default_from(path: &Path) -> bool {
-    read_prefs_obj(path).get("reveal_all_default").and_then(|v| v.as_bool()).unwrap_or(false)
-}
-/// Persist the "reveal all by default" flag, preserving any other prefs keys.
-pub(crate) fn save_reveal_all_default(on: bool) {
-    if cfg!(test) {
-        return;
-    }
-    if let Some(path) = prefs_path() {
-        save_reveal_all_default_to(&path, on);
-    }
-}
-pub(crate) fn save_reveal_all_default_to(path: &Path, on: bool) {
-    let mut obj = read_prefs_obj(path);
-    obj.insert("reveal_all_default".into(), serde_json::Value::Bool(on));
-    write_prefs_obj(path, &obj);
+/// Reveal is a per-session toggle that always starts OFF. Persisting it would mean storing
+/// it in `<vault_root>/prefs.conf`, where anyone able to write to the vault media — without
+/// the passwords — could flip it on and defeat the app's shoulder-surf/screen-share
+/// protection unasked. Returning a constant keeps every caller unchanged.
+pub(crate) fn load_reveal_all_default(_vault_root: &str) -> bool {
+    false
 }
 
 /// "Group assets by default" — when set, the Assets & Liabilities view opens grouped.
 pub(crate) fn load_group_assets_default(vault_root: &str) -> bool {
-    if cfg!(test) {
-        return false;
-    }
     effective_prefs_obj(vault_root).get("group_assets_default").and_then(|v| v.as_bool()).unwrap_or(false)
 }
 #[cfg(test)]
 pub(crate) fn load_group_assets_default_from(path: &Path) -> bool {
-    read_prefs_obj(path).get("group_assets_default").and_then(|v| v.as_bool()).unwrap_or(false)
+    effective_prefs_obj_from(path).get("group_assets_default").and_then(|v| v.as_bool()).unwrap_or(false)
 }
 /// Persist the "group assets by default" flag, preserving any other prefs keys.
-pub(crate) fn save_group_assets_default(on: bool) {
+pub(crate) fn save_group_assets_default(vault_root: &str, on: bool) {
     if cfg!(test) {
         return;
     }
-    if let Some(path) = prefs_path() {
+    if let Some(path) = prefs_path(vault_root) {
         save_group_assets_default_to(&path, on);
     }
 }
@@ -673,21 +566,18 @@ pub(crate) fn save_group_assets_default_to(path: &Path, on: bool) {
 
 /// "Group accounts by default" — when set, the Accounts view opens grouped.
 pub(crate) fn load_group_accounts_default(vault_root: &str) -> bool {
-    if cfg!(test) {
-        return false;
-    }
     effective_prefs_obj(vault_root).get("group_accounts_default").and_then(|v| v.as_bool()).unwrap_or(false)
 }
 #[cfg(test)]
 pub(crate) fn load_group_accounts_default_from(path: &Path) -> bool {
-    read_prefs_obj(path).get("group_accounts_default").and_then(|v| v.as_bool()).unwrap_or(false)
+    effective_prefs_obj_from(path).get("group_accounts_default").and_then(|v| v.as_bool()).unwrap_or(false)
 }
 /// Persist the "group accounts by default" flag, preserving any other prefs keys.
-pub(crate) fn save_group_accounts_default(on: bool) {
+pub(crate) fn save_group_accounts_default(vault_root: &str, on: bool) {
     if cfg!(test) {
         return;
     }
-    if let Some(path) = prefs_path() {
+    if let Some(path) = prefs_path(vault_root) {
         save_group_accounts_default_to(&path, on);
     }
 }
@@ -726,120 +616,97 @@ mod tests {
         assert_eq!(fmt_money(-0.6), "-$1"); // rounds to a nonzero magnitude -> keeps its sign
     }
 
+    /// `export_dir` is a SESSION value now, never read from a file.
+    ///
+    /// It names where cleartext exports land (the CSV carries every password), and the only
+    /// file the app writes lives beside the vault folders where anyone with media access but
+    /// no passwords can edit it. So even a `prefs.conf` that explicitly sets the key must be
+    /// ignored — this pins that.
     #[test]
-    fn export_dir_round_trips_and_defaults_empty() {
+    fn export_dir_is_never_loaded_from_a_file() {
         let dir = tmp_prefs_dir();
-        let p = dir.join("prefs.json");
-        // Absent file -> empty string (unset).
-        assert_eq!(load_export_dir_from(&p), "");
-        // Save then load round-trips.
-        save_export_dir_to(&p, "/srv/exports");
-        assert_eq!(load_export_dir_from(&p), "/srv/exports");
-        // Re-saving overwrites the value.
-        save_export_dir_to(&p, "/other");
-        assert_eq!(load_export_dir_from(&p), "/other");
-        // Clearing it (empty string) is preserved as empty.
-        save_export_dir_to(&p, "");
-        assert_eq!(load_export_dir_from(&p), "");
+        let p = dir.join("prefs.conf");
+        std::fs::write(&p, br#"{"export_dir":"/attacker/drop"}"#).unwrap();
+        assert_eq!(load_export_dir(dir.to_str().unwrap()), "", "a planted export_dir is ignored");
+        assert!(
+            !effective_prefs_obj_from(&p).contains_key("export_dir"),
+            "export_dir is filtered out of the effective prefs entirely"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Same rule for `reveal_all_default`: a planted value must not unmask passwords.
     #[test]
-    fn export_dir_save_preserves_other_prefs_keys() {
-        // The read-modify-write must not clobber a co-resident key (e.g. the GUI theme).
+    fn reveal_all_default_is_never_loaded_from_a_file() {
         let dir = tmp_prefs_dir();
-        let p = dir.join("prefs.json");
-        std::fs::write(&p, br#"{"theme":"solarized"}"#).unwrap();
-        save_export_dir_to(&p, "/exports");
-        let obj = read_prefs_obj(&p);
-        assert_eq!(obj.get("theme").and_then(|v| v.as_str()), Some("solarized"), "theme key preserved");
-        assert_eq!(obj.get("export_dir").and_then(|v| v.as_str()), Some("/exports"), "export_dir written");
+        let p = dir.join("prefs.conf");
+        std::fs::write(&p, br#"{"reveal_all_default":true}"#).unwrap();
+        assert!(!load_reveal_all_default(dir.to_str().unwrap()), "a planted reveal-all is ignored");
+        assert!(
+            !effective_prefs_obj_from(&p).contains_key("reveal_all_default"),
+            "reveal_all_default is filtered out of the effective prefs entirely"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The read filter is an ALLOWLIST: only the five cosmetic keys survive, whatever else
+    /// the file carries. This is the security boundary for a file the app does not control.
+    #[test]
+    fn prefs_read_filter_admits_only_the_cosmetic_keys() {
+        let dir = tmp_prefs_dir();
+        let p = dir.join("prefs.conf");
+        std::fs::write(
+            &p,
+            br#"{"theme":"nord","ui_scale":"large","font":"monospace",
+                 "group_assets_default":true,"group_accounts_default":true,
+                 "export_dir":"/attacker/drop","reveal_all_default":true,
+                 "vault_root":"/attacker","last_vault":"evil","unknown_key":1}"#,
+        )
+        .unwrap();
+        let obj = effective_prefs_obj_from(&p);
+        let mut got: Vec<&str> = obj.keys().map(String::as_str).collect();
+        got.sort_unstable();
+        let mut want: Vec<&str> = PREFS_KEYS.to_vec();
+        want.sort_unstable();
+        assert_eq!(got, want, "only the cosmetic allowlist survives the read filter");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn view_default_bool_prefs_round_trip_and_default_false() {
         let dir = tmp_prefs_dir();
-        let p = dir.join("prefs.json");
-        // Absent file -> false (today's behaviour) for each flag.
-        assert!(!load_reveal_all_default_from(&p));
+        let p = dir.join("prefs.conf");
+        // Absent file -> false for each flag.
         assert!(!load_group_assets_default_from(&p));
         assert!(!load_group_accounts_default_from(&p));
         // Save true, then load round-trips for each.
-        save_reveal_all_default_to(&p, true);
         save_group_assets_default_to(&p, true);
         save_group_accounts_default_to(&p, true);
-        assert!(load_reveal_all_default_from(&p));
         assert!(load_group_assets_default_from(&p));
         assert!(load_group_accounts_default_from(&p));
         // Toggling back to false is preserved as false.
-        save_reveal_all_default_to(&p, false);
         save_group_assets_default_to(&p, false);
         save_group_accounts_default_to(&p, false);
-        assert!(!load_reveal_all_default_from(&p));
         assert!(!load_group_assets_default_from(&p));
         assert!(!load_group_accounts_default_from(&p));
+        // A non-bool value falls back to false rather than panicking.
+        std::fs::write(&p, br#"{"group_assets_default":"yes"}"#).unwrap();
+        assert!(!load_group_assets_default_from(&p), "non-bool value falls back to false");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn view_default_bool_prefs_coexist_with_other_keys() {
-        // Each flag's read-modify-write must not clobber co-resident keys (theme,
-        // export dir, vault root, or the sibling bool flags).
+        // Each flag's read-modify-write must not clobber a co-resident cosmetic key.
         let dir = tmp_prefs_dir();
-        let p = dir.join("prefs.json");
+        let p = dir.join("prefs.conf");
         std::fs::write(&p, br#"{"theme":"solarized"}"#).unwrap();
-        save_export_dir_to(&p, "/exports");
-        save_vault_root_to(&p, "/vaults");
-        save_reveal_all_default_to(&p, true);
         save_group_assets_default_to(&p, true);
         save_group_accounts_default_to(&p, true);
         let obj = read_prefs_obj(&p);
         assert_eq!(obj.get("theme").and_then(|v| v.as_str()), Some("solarized"), "theme preserved");
-        assert_eq!(obj.get("export_dir").and_then(|v| v.as_str()), Some("/exports"), "export_dir preserved");
-        assert_eq!(obj.get("vault_root").and_then(|v| v.as_str()), Some("/vaults"), "vault_root preserved");
-        assert_eq!(obj.get("reveal_all_default").and_then(|v| v.as_bool()), Some(true), "reveal_all_default written");
-        assert_eq!(obj.get("group_assets_default").and_then(|v| v.as_bool()), Some(true), "group_assets_default written");
-        assert_eq!(obj.get("group_accounts_default").and_then(|v| v.as_bool()), Some(true), "group_accounts_default written");
-        // A non-bool value for a flag key falls back to false rather than panicking.
-        std::fs::write(&p, br#"{"reveal_all_default":"yes"}"#).unwrap();
-        assert!(!load_reveal_all_default_from(&p), "non-bool value falls back to false");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn vault_root_round_trips_and_coexists_with_other_keys() {
-        let dir = tmp_prefs_dir();
-        let p = dir.join("prefs.json");
-        // Absent -> empty (unset), so the front-end falls back to its launch default.
-        assert_eq!(load_vault_root_from(&p), "");
-        // Round-trips, and the read-modify-write preserves a co-resident export dir.
-        save_export_dir_to(&p, "/exports");
-        save_vault_root_to(&p, "/vaults");
-        assert_eq!(load_vault_root_from(&p), "/vaults");
-        assert_eq!(load_export_dir_from(&p), "/exports", "export_dir preserved");
-        save_vault_root_to(&p, "/other-vaults");
-        assert_eq!(load_vault_root_from(&p), "/other-vaults");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn last_vault_round_trips_and_coexists_with_other_keys() {
-        let dir = tmp_prefs_dir();
-        let p = dir.join("prefs.json");
-        // Absent -> empty (no vault remembered yet), so the start page falls back to its
-        // launch/derived default.
-        assert_eq!(load_last_vault_from(&p), "");
-        // Round-trips, and the read-modify-write preserves a co-resident root + export dir.
-        save_vault_root_to(&p, "/vaults");
-        save_export_dir_to(&p, "/exports");
-        save_last_vault_to(&p, "personal");
-        assert_eq!(load_last_vault_from(&p), "personal");
-        assert_eq!(load_vault_root_from(&p), "/vaults", "vault_root preserved");
-        assert_eq!(load_export_dir_from(&p), "/exports", "export_dir preserved");
-        // Re-saving overwrites with the newly opened vault.
-        save_last_vault_to(&p, "work");
-        assert_eq!(load_last_vault_from(&p), "work");
+        assert_eq!(obj.get("group_assets_default").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(obj.get("group_accounts_default").and_then(|v| v.as_bool()), Some(true));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -862,60 +729,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// `prefs.conf` is resolved relative to the VAULT ROOT and nowhere else, and a quoted
+    /// pasted root still finds it.
     #[test]
-    fn merge_prefs_config_wins_key_by_key() {
-        // Config-dir keys override the vault-root fallback; fallback-only keys survive.
-        let mut config = serde_json::Map::new();
-        config.insert("export_dir".into(), serde_json::Value::String("/config".into()));
-        let mut fallback = serde_json::Map::new();
-        fallback.insert("export_dir".into(), serde_json::Value::String("/vault".into()));
-        fallback.insert("reveal_all_default".into(), serde_json::Value::Bool(true));
-        let merged = merge_prefs(config, fallback);
-        assert_eq!(merged.get("export_dir").and_then(|v| v.as_str()), Some("/config"), "config wins on shared key");
-        assert_eq!(merged.get("reveal_all_default").and_then(|v| v.as_bool()), Some(true), "fallback-only key survives");
-    }
-
-    #[test]
-    fn vault_root_prefs_json_is_a_read_fallback_for_cosmetic_keys_only() {
-        // A `prefs.json` in the vault root seeds COSMETIC keys the config-dir file leaves
-        // unset, and never overrides a key the config-dir file does set.
-        let dir = tmp_prefs_dir();
-        let config = dir.join("config-prefs.json");
-        let vault_root = dir.join("vault");
-        std::fs::create_dir_all(&vault_root).unwrap();
-        let vault_prefs = vault_root.join("prefs.json");
-        let vroot = vault_root.to_str().unwrap();
-
-        // Vault carries its own defaults; config dir is absent entirely.
-        std::fs::write(&vault_prefs, br#"{"group_assets_default":true}"#).unwrap();
-        let eff = effective_prefs_obj_from(Some(&config), vroot);
+    fn prefs_path_is_the_vault_root_and_nothing_else() {
+        assert!(prefs_path("").is_none(), "no root -> no prefs path");
+        assert!(prefs_path("   ").is_none(), "whitespace-only root is treated as unset");
+        assert_eq!(prefs_path("/my/vaults"), Some(PathBuf::from("/my/vaults/prefs.conf")));
         assert_eq!(
-            eff.get("group_assets_default").and_then(|v| v.as_bool()),
-            Some(true),
-            "vault seeds a cosmetic view flag"
+            prefs_path("  \"/my/vaults\"  "),
+            Some(PathBuf::from("/my/vaults/prefs.conf")),
+            "a pasted \"Copy as path\" root still resolves"
         );
-
-        // Now the config dir sets the same key: it wins.
-        std::fs::write(&config, br#"{"group_assets_default":false}"#).unwrap();
-        let eff = effective_prefs_obj_from(Some(&config), vroot);
-        assert_eq!(
-            eff.get("group_assets_default").and_then(|v| v.as_bool()),
-            Some(false),
-            "config-dir value wins over the vault's"
-        );
-
-        // An empty vault root disables the fallback (start page, before a root is chosen).
-        assert!(vault_prefs_path("").is_none(), "no vault-root path without a root");
-        assert!(vault_prefs_path("   ").is_none(), "whitespace-only root is treated as unset");
-        let eff = effective_prefs_obj_from(None, "");
-        assert!(eff.is_empty(), "no fallback contribution without a vault root");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_foreign_vaults_prefs_cannot_choose_where_cleartext_exports_go() {
-        // THE security property behind `VAULT_FALLBACK_KEYS`. The vault-root `prefs.json`
+        // THE security property behind `PREFS_KEYS`. The vault-root `prefs.conf`
         // ships with the vault media (a USB stick, a restored archive, a vault handed to an
         // heir), so its author is whoever produced the vault. It must not be able to set:
         //   * `export_dir`        — where the front-ends write the per-tab CSV (every
@@ -924,36 +754,32 @@ mod tests {
         //                           those secrets to a world-readable folder, a synced
         //                           folder, a Windows UNC share, or the vault dir itself.
         //   * `reveal_all_default` — opens every password tab UNMASKED.
-        // Both must stay unset here even though the config dir says nothing about them.
         let dir = tmp_prefs_dir();
-        let config = dir.join("config-prefs.json"); // deliberately absent: nothing to override
         let vault_root = dir.join("vault");
         std::fs::create_dir_all(&vault_root).unwrap();
         std::fs::write(
-            vault_root.join("prefs.json"),
+            vault_root.join("prefs.conf"),
             br#"{"export_dir":"/tmp/attacker-drop","reveal_all_default":true,
                  "vault_root":"/tmp/elsewhere","last_vault":"decoy","theme":"solarized",
                  "group_accounts_default":true}"#,
         )
         .unwrap();
         let vroot = vault_root.to_str().unwrap();
-        let eff = effective_prefs_obj_from(Some(&config), vroot);
+        let eff = effective_prefs_obj(vroot);
 
-        assert_eq!(eff.get("export_dir"), None, "a vault must NOT choose the cleartext export destination");
-        assert_eq!(eff.get("reveal_all_default"), None, "a vault must NOT unmask passwords by default");
-        // The bootstrap keys were never read through the fallback; confirm they still aren't.
-        assert_eq!(eff.get("vault_root"), None, "a vault cannot relocate the vault root");
-        assert_eq!(eff.get("last_vault"), None, "a vault cannot choose the remembered vault");
-        assert_eq!(eff.get("theme"), None, "theme is read from the config dir directly, not the fallback");
-        // The purely cosmetic view key still travels with a portable vault.
+        assert_eq!(eff.get("export_dir"), None, "a tampered prefs.conf must NOT choose the cleartext export destination");
+        assert_eq!(eff.get("reveal_all_default"), None, "a tampered prefs.conf must NOT unmask passwords");
+        assert_eq!(eff.get("vault_root"), None, "prefs.conf cannot relocate the vault root");
+        assert_eq!(eff.get("last_vault"), None, "prefs.conf cannot choose a vault");
+        // Cosmetic keys DO travel with the root — that is the whole point of the file.
+        assert_eq!(eff.get("theme").and_then(|v| v.as_str()), Some("solarized"), "theme travels with the root");
         assert_eq!(
             eff.get("group_accounts_default").and_then(|v| v.as_bool()),
             Some(true),
-            "cosmetic grouping default still travels with the vault"
+            "cosmetic grouping default travels with the root"
         );
-        // And the loader that actually feeds the export path reports "unset", so the UI asks
-        // the user to pick a folder instead of silently using the vault's.
-        assert_eq!(load_export_dir(vroot), "", "load_export_dir ignores the vault-supplied value");
+        // And the loader that feeds the export path reports "unset", so the UI asks the user.
+        assert_eq!(load_export_dir(vroot), "", "load_export_dir ignores any stored value");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1057,12 +883,12 @@ mod tests {
         let dir = tmp_prefs_dir();
         let target = dir.join("victim.txt");
         std::fs::write(&target, b"do not touch").unwrap();
-        let p = dir.join("prefs.json");
+        let p = dir.join("prefs.conf");
         #[cfg(unix)]
         std::os::unix::fs::symlink(&target, &p).unwrap();
 
-        save_export_dir_to(&p, "/exports");
-        assert_eq!(load_export_dir_from(&p), "/exports", "the prefs write landed");
+        save_group_assets_default_to(&p, true);
+        assert!(load_group_assets_default_from(&p), "the prefs write landed");
         #[cfg(unix)]
         {
             assert_eq!(std::fs::read(&target).unwrap(), b"do not touch", "the symlink target is untouched");

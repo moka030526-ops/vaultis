@@ -260,9 +260,10 @@ enforced in two layers:
   interactive widget), so a read-only user can highlight and copy a value but not
   change it (combos/checkboxes are simply disabled); the TUI's `handle_edit_key` drops
   typing / backspace / choice-cycling unless `writable`. The changeable settings in
-  read-only mode are the **local, non-secret preferences** kept in `prefs.json` (not the
-  vault) — the **color theme**, the **export directory**, and the **vault root** (§ Auth) —
-  plus the backup-destination field; backup and document export are themselves
+  read-only mode are the **local, non-secret preferences** kept in `<vault_root>/prefs.conf`
+  (not the vault) — the **color theme**, **interface size**, **typeface** and the two list
+  grouping defaults — plus the session-only **export directory**, the **vault root** (§ Auth)
+  and the backup-destination field; backup and document export are themselves
   read-only-safe reads. Storing the
   export directory as a preference (rather than in the vault) is what lets a read-only
   session set where to extract documents, so read-only document export keeps working.
@@ -552,7 +553,7 @@ offset  len  field
   initial create — the vault directory holds **exactly one** non-secret marker file
   whose *name and contents* are the commit time (`YYYYMMDD-HHMMSS` UTC). It lets an
   external backup/sync notice "the vault changed" by globbing one file, without
-  decrypting anything. The local `prefs.json` (theme, export dir, …) is **not** a
+  decrypting anything. The local `prefs.conf` (theme, interface size, …) is **not** a
   vault change and never writes a marker. The marker is written **strictly after** the
   durable commit — never before, so a failed/aborted save can't bump it — and
   **atomically** (unique temp → fsync → rename → dir fsync); the previous marker is then
@@ -748,19 +749,18 @@ include URGENT.) The four screens are:
    an "N skipped (inaccessible)" warning shown under the control rather than aborting the
    scan. The resolved path + mode are shown in the `Vault:` line.
 
-   The **root is persisted** across sessions as a local, non-secret preference
-   (`vault_root` in `prefs.json`, alongside the theme and export dir — **never** in the
-   vault), written on a successful open/create (`save_vault_root`) and re-seeded at startup
-   by `launch::initial_root_and_name`, whose precedence is **argument > cwd > saved
-   preference > per-user default**: an explicitly launched vault (`vaultis DIR`) always
-   wins (root = its parent, name = its folder); otherwise a **launch directory that is
-   itself a vault root** wins (`launch::cwd_vault_root` — the cwd qualifies iff
-   `discover_vaults` finds at least one vault directly beneath it, so the `vault.pmv` marker
-   stays the app's single definition of "a vault"; a cwd that is itself a vault is *not*
-   special-cased), pre-selecting the remembered `last_vault` only when that name is actually
-   among the vaults discovered there; otherwise a default launch adopts the saved root
-   and pre-selects a name only when the default vault lives directly under it. A cwd-derived
-   open persists like any other (`save_vault_root`/`save_last_vault` on success). The chosen
+   The **root is deliberately NOT persisted**: that pointer would have to record where the
+   vault root is, and the only file this app writes lives *inside* that root. It is resolved
+   at startup by `launch::initial_root_and_name`, whose precedence is **argument > cwd >
+   empty**: an explicitly launched vault (`vaultis DIR`) always wins (root = its parent,
+   name = its folder); otherwise a **launch directory that is itself a vault root** wins
+   (`launch::cwd_vault_root` — the cwd qualifies iff `discover_vaults` finds at least one
+   vault directly beneath it, so the `vault.pmv` marker stays the app's single definition of
+   "a vault"; a cwd that is itself a vault is *not* special-cased), with **no** vault
+   pre-selected inside it; otherwise both boxes open **empty** and the user types or pastes
+   a root. Nothing about the previous session is remembered — an earlier design kept a
+   `vault_root`/`last_vault` pair in an OS config file, which is exactly what moving prefs
+   into the vault root removed. The chosen
    root also seeds the Config **backup destination** default (still freely editable there).
    The mode flip rebuilds
    the password fields (Create asks for each password twice to confirm). After unlock
@@ -816,7 +816,8 @@ include URGENT.) The four screens are:
    `OpenVault::export_document_into`, which re-sanitizes each path component and never
    overwrites — `_N` suffix). The GUI exposes one global **Export** button per page; the
    TUI exports the document whose 1-based number is in the **Doc #** field (`Ctrl+E`).
-   Both read the export directory from the shared `prefs.json` (see Config below).
+   Both read the export directory from the current session's Config value (see Config
+   below); it is never persisted.
    Each record tab also offers **Export to CSV** (GUI: a "⬇ CSV" button in the list
    header; TUI: the `e` key) — it writes **all** of that tab's records, one row per
    record, to a timestamped file (`<tab>-<YYYYMMDD-HHMMSS>.csv`) in the same export
@@ -837,27 +838,41 @@ include URGENT.) The four screens are:
 4. **Config.** Edit the category lists (asset types, account types + subtypes), the
    **volume size** (`volume_max_size`), and the **redundancy** depth, and run a
    `backup` — all **write-mode only**, persisting into the encrypted vault (no external
-   config files). Two items are **local, non-secret preferences** stored in a small
-   `prefs.json` (in the OS config dir) instead of the vault — the **color theme** (10
-   palettes, GUI) and the **export directory** — so both can be changed even in
-   **read-only** mode (the export directory is about the local machine, not vault
-   content, which keeps read-only document export — the heir use case — working). The
-   **export directory** field appears in **both UIs' Config** screen and is the one
-   write-mode-exempt Config control (the TUI carves out its Config focus index 7
-   alongside the always-allowed `backup`; the GUI renders it outside the writable gate).
-   A separate **Help** screen renders a sectioned in-app guide plus the on-disk vault
-   and `prefs.json` paths.
+   config files). A small set of **local, non-secret preferences** lives instead in an
+   optional `prefs.conf` in the **vault root** (the folder holding the vault folders, not
+   the encrypted vault): the **color theme** (16 palettes), the **interface size**, the
+   **typeface**, and the two grouped-vs-flat list defaults. Nothing is written to an OS
+   config directory, so the app leaves no trace outside the folder it is pointed at and a
+   vault root on removable media carries its own look with it. The file is created only
+   when one of those settings is changed; absent, corrupt or over-size means the built-in
+   defaults (Catppuccin Mocha, 100%, default proportional). It is read through a
+   deny-by-default allowlist, `PREFS_KEYS` in `crates/vaultis-desktop/src/lib.rs`.
 
-   A vault root may carry its own `prefs.json`, so a portable vault brings its UI defaults
-   to a new machine — but that file arrives with the vault media, so its author is whoever
-   produced the vault, not necessarily the person opening it. It is therefore restricted to
-   a deny-by-default allowlist of purely **cosmetic** keys (`VAULT_FALLBACK_KEYS` in
-   `crates/vaultis-desktop/src/lib.rs`, currently the two grouped-vs-flat list defaults).
-   The **export directory** is deliberately excluded: it decides where the front-ends write
-   the per-tab CSV (every password in the clear) and every decrypted document, so a vault
-   must not be able to choose it. `reveal_all_default` is excluded for the same reason —
-   unmasking every password on screen is the user's decision. Both, like `vault_root` and
-   `last_vault`, are read from the local config directory alone (audit 2026-07-25, H-1).
+   That allowlist is the security boundary, because `prefs.conf` sits **outside the
+   encryption** as an ordinary file beside the vault folders: anyone who can write to the
+   media *without* knowing the two passwords authors it. Two settings are therefore not
+   persisted anywhere at all, so that write access can never become plaintext theft
+   (audit 2026-07-25, H-1):
+
+   * **`export_dir`** — where the front-ends write cleartext exports (the per-tab CSV
+     carries every password in the clear, plus every decrypted document). It is a
+     **per-session** value set in Config, and is still the one write-mode-exempt Config
+     control (the TUI carves out its Config focus index 7 alongside the always-allowed
+     `backup`; the GUI renders it outside the writable gate), which keeps read-only
+     document export — the heir use case — working.
+   * **`reveal_all_default`** — reveal is a per-session toggle that always starts OFF, and
+     the Config checkbox for it is gone from both front-ends.
+
+   The start page's **vault root** and **last-opened vault** are likewise not persisted:
+   that pointer would have to say where the vault root is, which cannot live inside that
+   same root. The root comes from the command line (`vaultis-gui DIR`) or the working
+   directory when it is a folder of vaults, else the start page opens empty
+   (`launch::initial_root_and_name`). Because the root is chosen *on* the lock screen,
+   `GuiApp::adopt_root_prefs` re-reads and applies `prefs.conf` whenever the root changes —
+   without writing, so merely browsing to a folder never creates the file there.
+
+   A separate **Help** screen renders a sectioned in-app guide plus the on-disk vault
+   and `prefs.conf` paths.
 
    The export directory is additionally required to be **outside the vault folder**
    (`checked_export_dir`, shared by both front-ends): cleartext written next to `vault.pmv`

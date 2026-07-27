@@ -85,8 +85,7 @@ pub fn join_root_name(root: &str, name: &str) -> String {
 
 /// A working directory that is a **vault root**: it holds at least one immediate
 /// subdirectory containing a `vault.pmv`. Produced by [`cwd_vault_root`] and consumed by
-/// [`initial_root_and_name`], which needs the discovered names to decide whether the
-/// remembered last vault can be pre-selected there.
+/// [`initial_root_and_name`]; the discovered names also seed the start page's dropdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CwdRoot {
     pub root: String,
@@ -101,7 +100,7 @@ pub struct CwdRoot {
 /// so the `vault.pmv` marker stays the single definition across the whole app. A CWD that is
 /// itself a vault (holding `vault.pmv` directly) is intentionally NOT special-cased — only
 /// the root-of-vaults shape triggers this. An unreadable or non-UTF-8 CWD yields `None`,
-/// which simply falls back to the saved/default behaviour.
+/// which simply leaves the start page empty.
 pub fn cwd_vault_root() -> Option<CwdRoot> {
     let cwd = std::env::current_dir().ok()?;
     let root = cwd.to_str()?.to_owned();
@@ -110,68 +109,38 @@ pub fn cwd_vault_root() -> Option<CwdRoot> {
 }
 
 /// Compute the start page's initial `(root, vault_name)` for a launched vault `path`, given
-/// the current directory `cwd` when it is a vault root ([`cwd_vault_root`], `None` otherwise),
-/// the persisted root preference `saved_root` and last-opened vault `saved_vault` ("" if unset).
+/// the current directory `cwd` when it is a vault root ([`cwd_vault_root`], `None` otherwise).
 ///
-/// Precedence is **argument > cwd > saved preference > per-user default**:
+/// Precedence is **argument > cwd > empty**:
 ///
 /// 1. An **explicitly launched** vault (a `path` differing from the per-user default) always
 ///    wins: its parent becomes the root and its folder the selected name, so `vaultis DIR`
-///    opens exactly `DIR` — both the cwd and the saved last vault are ignored, since the user
-///    named a specific target.
+///    opens exactly `DIR`.
 /// 2. Otherwise, a `cwd` that is a vault root becomes the root, so launching from a folder of
-///    vaults browses it. The remembered `saved_vault` is pre-selected only when it actually
-///    exists there (matched verbatim against the discovered names); otherwise the name is
-///    empty and the user picks from the dropdown.
-/// 3. Otherwise the saved root preference (if any) seeds the root — that is what makes
-///    "remember my root across startups" work — and the name is the remembered `saved_vault`,
-///    falling back to the default vault's folder only when it lives directly under that root,
-///    else empty.
-/// 4. Otherwise the default vault's own parent/folder.
+///    vaults browses it. No vault is pre-selected — the user picks from the dropdown.
+/// 3. Otherwise **empty**: the start page opens with both boxes blank and the user types or
+///    pastes a root.
 ///
-/// A `saved_vault` that no longer exists under the root simply resolves to "Create" via the
-/// caller's `path.exists()` check — harmless, not an error.
-pub fn initial_root_and_name(
-    path: &Path,
-    cwd: Option<&CwdRoot>,
-    saved_root: &str,
-    saved_vault: &str,
-) -> (String, String) {
+/// Case 3 used to fall back to a remembered root, and then to the per-user default vault's
+/// own parent (`~/.local/share/vaultis`). Both are gone: remembering the root needs a file
+/// outside the vault root, and this app writes nowhere else (see the prefs comment in
+/// `lib.rs`), while defaulting to an OS data directory would quietly point the start page at
+/// exactly the location that is no longer used. An empty start page is the honest answer to
+/// "you have not told me where your vaults are."
+pub fn initial_root_and_name(path: &Path, cwd: Option<&CwdRoot>) -> (String, String) {
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
     let dir_parent = dir.and_then(|d| d.parent()).filter(|p| !p.as_os_str().is_empty());
     let parent_str = dir_parent.map(|p| p.display().to_string());
     let leaf = dir.and_then(|d| d.file_name()).and_then(|n| n.to_str()).map(str::to_owned);
 
-    let launched_default = path == default_vault_path();
-    let saved = saved_root.trim();
-    if !launched_default {
+    if path != default_vault_path() {
         // Honor the launched vault: root = its parent, name = its folder.
         (parent_str.unwrap_or_else(|| ".".into()), leaf.unwrap_or_default())
     } else if let Some(cwd) = cwd {
-        // Launched bare from a folder of vaults: browse it. The remembered vault is
-        // pre-selected only if it is one of the vaults actually present here — comparing
-        // VERBATIM against `discover_vaults`' raw folder names, the same convention
-        // `join_root_name` inverts. A vault of the same name elsewhere must not cause a
-        // phantom selection pointing at a path that holds no vault.pmv.
-        let name = cwd.vaults.iter().find(|v| *v == saved_vault).cloned().unwrap_or_default();
-        (cwd.root.clone(), name)
-    } else if saved.is_empty() {
-        // No argument, no vault root in the cwd, no saved preference: the default vault.
-        (parent_str.unwrap_or_else(|| ".".into()), leaf.unwrap_or_default())
+        // Launched bare from a folder of vaults: browse it, nothing pre-selected.
+        (cwd.root.clone(), String::new())
     } else {
-        // Default launch + a saved root: browse that root. Prefer the remembered last vault;
-        // otherwise pre-select the default vault's folder when it lives directly under the
-        // root. The name is used VERBATIM (matching `discover_vaults`/`join_root_name`), so
-        // only the emptiness decision trims.
-        let name = if !saved_vault.trim().is_empty() {
-            saved_vault.to_string()
-        } else {
-            match (&parent_str, &leaf) {
-                (Some(p), Some(l)) if p == saved => l.clone(),
-                _ => String::new(),
-            }
-        };
-        (saved.to_string(), name)
+        (String::new(), String::new())
     }
 }
 
@@ -382,73 +351,43 @@ mod tests {
     }
 
     #[test]
-    fn initial_root_and_name_honors_explicit_launch_and_saved_root() {
+    fn initial_root_and_name_honors_an_explicit_launch() {
         // An explicit launch (path != default) always wins: parent is the root, folder the name.
         let p = PathBuf::from("/vaults/work/vault.pmv");
-        assert_eq!(initial_root_and_name(&p, None, "", ""), ("/vaults".to_string(), "work".to_string()));
-        // ...even when a (different) saved root exists — the explicit arg is not overridden.
-        assert_eq!(initial_root_and_name(&p, None, "/elsewhere", ""), ("/vaults".to_string(), "work".to_string()));
-        // ...and even when a saved last-vault exists: an explicit launch ignores it.
-        assert_eq!(initial_root_and_name(&p, None, "/elsewhere", "personal"), ("/vaults".to_string(), "work".to_string()));
-
-        // A DEFAULT launch with a saved root browses that root; the name is empty unless the
-        // default vault lives directly under it (and no last-vault is remembered).
-        let def = default_vault_path();
-        let (root, name) = initial_root_and_name(&def, None, "/my/vaults", "");
-        assert_eq!(root, "/my/vaults");
-        assert!(name.is_empty(), "default vault isn't under the saved root → no pre-selection");
-
-        // A default launch with NO saved root falls back to the default's own parent/leaf.
-        let (root2, name2) = initial_root_and_name(&def, None, "", "");
-        let def_parent = def.parent().unwrap().parent().unwrap().display().to_string();
-        let def_leaf = def.parent().unwrap().file_name().unwrap().to_str().unwrap().to_string();
-        assert_eq!(root2, def_parent);
-        assert_eq!(name2, def_leaf);
+        assert_eq!(initial_root_and_name(&p, None), ("/vaults".to_string(), "work".to_string()));
     }
 
+    /// A bare launch with no vault-root cwd starts EMPTY.
+    ///
+    /// This used to fall back to the per-user default vault's own parent
+    /// (`~/.local/share/vaultis`). That is now wrong twice over: the app no longer keeps
+    /// anything in an OS directory, and pre-filling the box with a path the user never chose
+    /// invites them to create a vault somewhere they will not think to back up. Empty is the
+    /// honest answer to "you have not said where your vaults are."
     #[test]
-    fn initial_root_and_name_prefers_saved_last_vault_on_default_launch() {
-        // A default launch with a saved root AND a remembered last vault pre-selects that
-        // vault, so the start page reopens where the user left off.
-        let def = default_vault_path();
-        let (root, name) = initial_root_and_name(&def, None, "/my/vaults", "personal");
-        assert_eq!(root, "/my/vaults");
-        assert_eq!(name, "personal", "remembered last vault is pre-selected");
-
-        // The remembered name is used VERBATIM (it round-trips with `discover_vaults`, which
-        // returns raw folder names) — only the emptiness decision trims.
-        let (_, spaced) = initial_root_and_name(&def, None, "/my/vaults", " my vault ");
-        assert_eq!(spaced, " my vault ", "name kept verbatim, not trimmed");
-
-        // A whitespace-only last vault counts as unset → no pre-selection.
-        let (_, blank) = initial_root_and_name(&def, None, "/my/vaults", "   ");
-        assert!(blank.is_empty(), "whitespace-only last vault → no pre-selection");
+    fn initial_root_and_name_is_empty_without_an_argument_or_a_vault_cwd() {
+        let (root, name) = initial_root_and_name(&default_vault_path(), None);
+        assert!(root.is_empty(), "no argument and no vault-root cwd -> empty root, got {root:?}");
+        assert!(name.is_empty(), "...and no pre-selected vault, got {name:?}");
     }
 
+    /// Nothing about the last session is remembered, so the start page can only ever be
+    /// seeded from the argument or the working directory. Pinned as a behaviour, because the
+    /// alternative (a remembered root) would require writing outside the vault root.
     #[test]
-    fn cwd_vault_root_outranks_the_saved_root_but_not_an_explicit_arg() {
+    fn initial_root_and_name_never_pre_selects_a_vault_from_the_cwd() {
         let cwd = CwdRoot { root: "/here".into(), vaults: vec!["alpha".into(), "personal".into()] };
-
-        // Bare launch from a folder of vaults: that folder becomes the root, beating the
-        // saved preference (precedence: arg > cwd > saved > default).
         let def = default_vault_path();
-        let (root, name) = initial_root_and_name(&def, Some(&cwd), "/my/vaults", "");
-        assert_eq!(root, "/here");
-        assert!(name.is_empty(), "nothing remembered → no pre-selection");
 
-        // The remembered vault is pre-selected only when it EXISTS in this root...
-        let (_, name) = initial_root_and_name(&def, Some(&cwd), "/my/vaults", "personal");
-        assert_eq!(name, "personal");
-        // ...otherwise the dropdown starts empty rather than pointing at a path with no vault.
-        let (_, name) = initial_root_and_name(&def, Some(&cwd), "/my/vaults", "work");
-        assert!(name.is_empty(), "last vault absent from the cwd root → no pre-selection");
+        // Bare launch from a folder of vaults: that folder becomes the root...
+        let (root, name) = initial_root_and_name(&def, Some(&cwd));
+        assert_eq!(root, "/here");
+        // ...but no vault inside it is chosen for the user, even though two were discovered.
+        assert!(name.is_empty(), "nothing is remembered -> no pre-selection, got {name:?}");
 
         // An explicit DIR argument still wins over the cwd.
         let p = PathBuf::from("/vaults/work/vault.pmv");
-        assert_eq!(
-            initial_root_and_name(&p, Some(&cwd), "/my/vaults", "personal"),
-            ("/vaults".to_string(), "work".to_string())
-        );
+        assert_eq!(initial_root_and_name(&p, Some(&cwd)), ("/vaults".to_string(), "work".to_string()));
     }
 
     #[test]

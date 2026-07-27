@@ -477,7 +477,7 @@ struct App {
     // the RE tab). Scoped per-tab so revealing one screen never reveals the other.
     re_reveal_all: bool,
     // Saved "view defaults" preferences (the three Config checkboxes, persisted in
-    // prefs.json and shared with the GUI). Kept SEPARATE from the live view state above so
+    // prefs.conf and shared with the GUI). Kept SEPARATE from the live view state above so
     // the Config checkboxes always show the saved default, never a transient toggle.
     // `reveal_default` seeds `reveal_all`/`re_reveal_all` at open AND is re-applied by
     // `switch_tab` (instead of forcing reveal back to masked); the grouping defaults seed
@@ -506,7 +506,7 @@ struct App {
     cfg_volume_size: String,
     cfg_backup_dest: String,
     cfg_redundancy: String,
-    // Prefs-backed export destination directory (shared with the GUI via prefs.json).
+    // Export destination directory for THIS SESSION (never persisted — see lib.rs prefs).
     // Document Export writes here, recreating the in-vault folder structure; settable
     // in read-only mode since it is a local preference, not vault content.
     cfg_export_dir: String,
@@ -542,14 +542,11 @@ impl Drop for App {
 impl App {
     fn new(path: PathBuf, writable: bool) -> Self {
         // Collapsed start page: the open target is `<root>/<name>`. Seed the root from the
-        // launch directory when it is a folder of vaults, else the saved preference (so
-        // startups share a default root), pre-selecting the launched vault's folder when
-        // appropriate; then derive the directory/path from root+name.
+        // launch directory when it is a folder of vaults, else EMPTY — nothing about the
+        // last-used root is remembered, because that would need a file outside the vault
+        // root and this app writes nowhere else (see the prefs comment in `lib.rs`).
         let cwd = crate::launch::cwd_vault_root();
-        let saved_root = crate::load_vault_root();
-        let saved_vault = crate::load_last_vault();
-        let (auth_root, auth_name) =
-            crate::launch::initial_root_and_name(&path, cwd.as_ref(), &saved_root, &saved_vault);
+        let (auth_root, auth_name) = crate::launch::initial_root_and_name(&path, cwd.as_ref());
         // Default the backup destination to the root (see the `cfg_backup_dest` field).
         let cfg_backup_dest = auth_root.clone();
         let auth_dir = crate::launch::join_root_name(&auth_root, &auth_name);
@@ -558,7 +555,7 @@ impl App {
         let scan = crate::launch::discover_vaults(&auth_root);
         // Highlight the selected vault in the picker if it was discovered under the root.
         let auth_vault_sel = scan.vaults.iter().position(|v| *v == auth_name).unwrap_or(0);
-        // Saved "view defaults" (Config checkboxes, prefs.json): seed the reveal-all toggles
+        // Saved "view defaults" (Config checkboxes, <vault_root>/prefs.conf): seed the toggles
         // and the grouped/flat view state so a freshly opened vault honours the user's
         // preferences; the pref values are retained on the struct so the Config checkboxes
         // show the saved default and `switch_tab` can re-apply reveal.
@@ -1174,14 +1171,9 @@ impl App {
         };
         match result {
             Ok(v) => {
-                // Persist the chosen root so the next startup defaults to the same place (a
-                // local prefs.json preference — never written into the vault), at the natural
-                // point the root is "confirmed" by a successful open/create.
-                crate::save_vault_root(records::unquote_path(&self.auth_root));
-                // Remember which vault was opened so the next startup pre-selects it in the
-                // picker. Saved verbatim (the raw folder name) so it round-trips through
-                // `discover_vaults`/`join_root_name`.
-                crate::save_last_vault(&self.auth_name);
+                // Which vault was opened is deliberately not written down: that pointer
+                // cannot live inside the root it names, and this app writes nowhere else.
+                //
                 // A recovery from an in-place redundant copy (§12.8) takes priority —
                 // the user needs to know a roll-forward/rollback happened.
                 let recovered = v.recovery_notice().map(|s| s.to_string());
@@ -1409,7 +1401,7 @@ impl App {
     // indices are the view-default checkboxes (toggled with Space/Enter). CFG_FOCUS_COUNT is
     // the wrap-around modulus for Tab/arrow navigation.
     const CFG_TEXT_FIELDS: usize = 8;
-    const CFG_CHECKBOXES: usize = 3;
+    const CFG_CHECKBOXES: usize = 2;
     const CFG_FOCUS_COUNT: usize = Self::CFG_TEXT_FIELDS + Self::CFG_CHECKBOXES;
 
     /// Toggle the view-default checkbox at the current focus (a Config index in
@@ -1420,26 +1412,17 @@ impl App {
         let on_off = |b: bool| if b { "on" } else { "off" };
         match self.cfg_focus {
             n if n == Self::CFG_TEXT_FIELDS => {
-                self.reveal_default = !self.reveal_default;
-                crate::save_reveal_all_default(self.reveal_default);
-                // Apply now so the current tab honours it immediately; `switch_tab` also
-                // re-applies `reveal_default` on every later tab change.
-                self.reveal_all = self.reveal_default;
-                self.re_reveal_all = self.reveal_default;
-                self.status = format!("Reveal all passwords by default: {}", on_off(self.reveal_default));
-            }
-            n if n == Self::CFG_TEXT_FIELDS + 1 => {
                 self.group_assets_default = !self.group_assets_default;
-                crate::save_group_assets_default(self.group_assets_default);
+                crate::save_group_assets_default(&self.auth_root, self.group_assets_default);
                 self.asset_grouped = self.group_assets_default;
                 // Flat list and grouped tree have different row counts/orderings, so reset
                 // the cursor — exactly as the live `g` toggle does.
                 self.selected = 0;
                 self.status = format!("Group assets by default: {}", on_off(self.group_assets_default));
             }
-            n if n == Self::CFG_TEXT_FIELDS + 2 => {
+            n if n == Self::CFG_TEXT_FIELDS + 1 => {
                 self.group_accounts_default = !self.group_accounts_default;
-                crate::save_group_accounts_default(self.group_accounts_default);
+                crate::save_group_accounts_default(&self.auth_root, self.group_accounts_default);
                 self.acct_grouped = self.group_accounts_default;
                 self.selected = 0;
                 self.status = format!("Group accounts by default: {}", on_off(self.group_accounts_default));
@@ -1637,13 +1620,12 @@ impl App {
                 },
                 _ => self.status = "Enter a whole number (0 = off).".into(),
             },
-            // Document export directory — a local, non-vault preference (prefs.json),
+            // Document export directory — a SESSION value, never written to disk,
             // so it is settable even read-only. Documents export into this directory,
             // recreating their volume folder structure. An empty value clears it.
             _ => {
                 let dir = records::unquote_path(&self.cfg_export_dir).to_string();
                 self.cfg_export_dir = dir.clone();
-                crate::save_export_dir(&dir);
                 // Tell the user NOW if the folder they just typed is one every export will
                 // refuse, instead of letting them discover it at the first export.
                 self.status = match crate::checked_export_dir(&self.path, &dir) {
@@ -3632,9 +3614,8 @@ impl App {
         // View-default checkboxes (focus CFG_TEXT_FIELDS..CFG_FOCUS_COUNT): rendered after
         // the text inputs, reusing the same focus marker/highlight, drawn as [x]/[ ]. Toggle
         // with Space/Enter (see `toggle_cfg_checkbox`). These are local UI preferences saved
-        // to prefs.json and shared with the GUI's Config "View defaults" checkboxes.
+        // to <vault_root>/prefs.conf and shared with the GUI's Config "View defaults" checkboxes.
         let checkboxes = [
-            ("Reveal all passwords by default", self.reveal_default),
             ("Group assets by default", self.group_assets_default),
             ("Group accounts by default", self.group_accounts_default),
         ];
@@ -4868,11 +4849,10 @@ mod tests {
             app.handle_key(key(KeyCode::Down));
         }
         assert_eq!(app.cfg_focus, App::CFG_TEXT_FIELDS);
-        assert!(!app.reveal_default, "reveal default starts off");
-        app.handle_key(key(KeyCode::Char(' '))); // toggle reveal-all-default ON
-        assert!(app.reveal_default, "reveal default toggled on");
-        assert!(app.reveal_all && app.re_reveal_all, "applied to live reveal state");
-        app.handle_key(key(KeyCode::Down)); // group-assets checkbox
+        // The FIRST checkbox is now group-assets: "reveal all by default" was removed
+        // because it is no longer persisted (a `prefs.conf` beside the vault folders is
+        // writable by anyone with media access but no passwords, so a stored reveal-all
+        // could unmask every password on open — see the prefs comment in `lib.rs`).
         app.handle_key(key(KeyCode::Char(' ')));
         assert!(app.group_assets_default && app.asset_grouped, "group-assets default toggled + applied");
         app.handle_key(key(KeyCode::Down)); // group-accounts checkbox (Enter also toggles)
