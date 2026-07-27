@@ -24,6 +24,60 @@ pub fn default_vault_path() -> PathBuf {
 /// treated as a vault iff it directly contains a file with this name.
 const VAULT_FILE: &str = "vault.pmv";
 
+/// The ONE file this app writes outside a vault root: a single line, in the per-user OS
+/// data directory, naming the last vault root a vault was successfully opened from.
+/// Everything else it remembers — theme, ui scale, font, list grouping — lives in
+/// `<vault_root>/prefs.json` and travels with the vault media instead (see the `lib.rs`
+/// prefs comment); this exception exists purely so the start page can find its way back
+/// to where you last worked without a shortcut or a `cd` trick.
+fn last_root_file() -> Option<PathBuf> {
+    ProjectDirs::from("dev", "vaultis", "vaultis").map(|d| d.data_dir().join("last_root.txt"))
+}
+
+/// The remembered last-opened root, or `None` on first run, or if the file is
+/// missing, unreadable, or empty.
+///
+/// Guarded under `cfg(test)` (returning `None`) because — unlike `prefs.json`, which is
+/// resolved per-vault-root and so is naturally hermetic under test — this file lives at one
+/// fixed OS path shared by every test AND the real app. Reading it for real would make the
+/// test suite's "does the start page open empty" assertions depend on whatever this
+/// developer's machine happens to have last opened. See [`load_last_root_from`] for the
+/// exercised, path-parametrized logic.
+pub fn load_last_root() -> Option<String> {
+    if cfg!(test) {
+        return None;
+    }
+    load_last_root_from(&last_root_file()?)
+}
+pub(crate) fn load_last_root_from(path: &Path) -> Option<String> {
+    let s = std::fs::read_to_string(path).ok()?;
+    let s = s.trim();
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// Remember `root` as the last-opened root, creating the file — and its parent directory,
+/// if the OS data directory doesn't exist yet — the first time this is called. Best-effort:
+/// a write failure is silently ignored, since this is a convenience for the next launch, not
+/// data the app depends on. Written via [`crate::write_atomic`] — the same temp-then-rename
+/// discipline `prefs.json` uses — rather than a direct `std::fs::write`, so a crash mid-write
+/// or a concurrent read can never see a half-written file, and a symlink planted at the path
+/// is replaced by the rename rather than opened and written through.
+///
+/// Guarded under `cfg(test)` for the same reason as [`load_last_root`]: this is the one fixed
+/// OS path shared by every test, and a test run must never leave a trace in — or take a cue
+/// from — this developer's real `last_root.txt`.
+pub fn save_last_root(root: &str) {
+    if cfg!(test) {
+        return;
+    }
+    if let Some(path) = last_root_file() {
+        save_last_root_to(&path, root);
+    }
+}
+pub(crate) fn save_last_root_to(path: &Path, root: &str) {
+    crate::write_atomic(path, root.as_bytes());
+}
+
 /// The vault file inside a user-supplied vault directory.
 pub fn vault_file(dir: &str) -> PathBuf {
     PathBuf::from(dir).join(VAULT_FILE)
@@ -109,25 +163,21 @@ pub fn cwd_vault_root() -> Option<CwdRoot> {
 }
 
 /// Compute the start page's initial `(root, vault_name)` for a launched vault `path`, given
-/// the current directory `cwd` when it is a vault root ([`cwd_vault_root`], `None` otherwise).
+/// the current directory `cwd` when it is a vault root ([`cwd_vault_root`], `None` otherwise)
+/// and the OS-remembered `last_root` ([`load_last_root`], `None` on first run).
 ///
-/// Precedence is **argument > cwd > empty**:
+/// Precedence is **argument > cwd > last root > empty**:
 ///
 /// 1. An **explicitly launched** vault (a `path` differing from the per-user default) always
 ///    wins: its parent becomes the root and its folder the selected name, so `vaultis DIR`
 ///    opens exactly `DIR`.
 /// 2. Otherwise, a `cwd` that is a vault root becomes the root, so launching from a folder of
 ///    vaults browses it. No vault is pre-selected — the user picks from the dropdown.
-/// 3. Otherwise **empty**: the start page opens with both boxes blank and the user types or
+/// 3. Otherwise, the last root a vault was successfully opened from (if any) is used the same
+///    way: browsed, nothing pre-selected.
+/// 4. Otherwise **empty**: the start page opens with both boxes blank and the user types or
 ///    pastes a root.
-///
-/// Case 3 used to fall back to a remembered root, and then to the per-user default vault's
-/// own parent (`~/.local/share/vaultis`). Both are gone: remembering the root needs a file
-/// outside the vault root, and this app writes nowhere else (see the prefs comment in
-/// `lib.rs`), while defaulting to an OS data directory would quietly point the start page at
-/// exactly the location that is no longer used. An empty start page is the honest answer to
-/// "you have not told me where your vaults are."
-pub fn initial_root_and_name(path: &Path, cwd: Option<&CwdRoot>) -> (String, String) {
+pub fn initial_root_and_name(path: &Path, cwd: Option<&CwdRoot>, last_root: Option<&str>) -> (String, String) {
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
     let dir_parent = dir.and_then(|d| d.parent()).filter(|p| !p.as_os_str().is_empty());
     let parent_str = dir_parent.map(|p| p.display().to_string());
@@ -139,6 +189,9 @@ pub fn initial_root_and_name(path: &Path, cwd: Option<&CwdRoot>) -> (String, Str
     } else if let Some(cwd) = cwd {
         // Launched bare from a folder of vaults: browse it, nothing pre-selected.
         (cwd.root.clone(), String::new())
+    } else if let Some(last) = last_root {
+        // Nothing about the cwd, but a root was remembered from a previous session.
+        (last.to_string(), String::new())
     } else {
         (String::new(), String::new())
     }
@@ -159,7 +212,13 @@ pub fn initial_root_and_name(path: &Path, cwd: Option<&CwdRoot>) -> (String, Str
 /// surrounding double quotes stripped), so a pasted quoted folder scans the same directory the
 /// start page would open — the dropdown and the open target can never disagree.
 pub fn discover_vaults(root: &str) -> VaultScan {
-    let root = std::path::Path::new(crate::records::unquote_path(root));
+    let root = crate::records::unquote_path(root);
+    // An empty root isn't a read ERROR — nothing has been typed yet — so say so plainly
+    // rather than surfacing the OS's "No such file or directory" for path "".
+    if root.is_empty() {
+        return VaultScan { vaults: Vec::new(), warning: Some("Specify a vault root.".to_string()) };
+    }
+    let root = std::path::Path::new(root);
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
         Err(e) => {
@@ -354,40 +413,77 @@ mod tests {
     fn initial_root_and_name_honors_an_explicit_launch() {
         // An explicit launch (path != default) always wins: parent is the root, folder the name.
         let p = PathBuf::from("/vaults/work/vault.pmv");
-        assert_eq!(initial_root_and_name(&p, None), ("/vaults".to_string(), "work".to_string()));
+        assert_eq!(initial_root_and_name(&p, None, Some("/elsewhere")), ("/vaults".to_string(), "work".to_string()));
     }
 
-    /// A bare launch with no vault-root cwd starts EMPTY.
+    /// A bare launch with no vault-root cwd and no remembered root starts EMPTY.
     ///
     /// This used to fall back to the per-user default vault's own parent
-    /// (`~/.local/share/vaultis`). That is now wrong twice over: the app no longer keeps
-    /// anything in an OS directory, and pre-filling the box with a path the user never chose
-    /// invites them to create a vault somewhere they will not think to back up. Empty is the
-    /// honest answer to "you have not said where your vaults are."
+    /// (`~/.local/share/vaultis`). That fallback is gone: pre-filling the box with a path the
+    /// user never chose invites them to create a vault somewhere they will not think to back
+    /// up. Empty is the honest answer to "you have not said where your vaults are, and none
+    /// was remembered either."
     #[test]
-    fn initial_root_and_name_is_empty_without_an_argument_or_a_vault_cwd() {
-        let (root, name) = initial_root_and_name(&default_vault_path(), None);
-        assert!(root.is_empty(), "no argument and no vault-root cwd -> empty root, got {root:?}");
+    fn initial_root_and_name_is_empty_without_an_argument_cwd_or_remembered_root() {
+        let (root, name) = initial_root_and_name(&default_vault_path(), None, None);
+        assert!(root.is_empty(), "no argument, cwd, or remembered root -> empty root, got {root:?}");
         assert!(name.is_empty(), "...and no pre-selected vault, got {name:?}");
     }
 
-    /// Nothing about the last session is remembered, so the start page can only ever be
-    /// seeded from the argument or the working directory. Pinned as a behaviour, because the
-    /// alternative (a remembered root) would require writing outside the vault root.
+    /// Neither the cwd nor the remembered root ever pre-selects a specific vault — only the
+    /// ROOT is seeded; the user still picks (or types) the vault itself.
     #[test]
-    fn initial_root_and_name_never_pre_selects_a_vault_from_the_cwd() {
+    fn initial_root_and_name_never_pre_selects_a_vault_from_cwd_or_last_root() {
         let cwd = CwdRoot { root: "/here".into(), vaults: vec!["alpha".into(), "personal".into()] };
         let def = default_vault_path();
 
         // Bare launch from a folder of vaults: that folder becomes the root...
-        let (root, name) = initial_root_and_name(&def, Some(&cwd));
-        assert_eq!(root, "/here");
+        let (root, name) = initial_root_and_name(&def, Some(&cwd), Some("/remembered"));
+        assert_eq!(root, "/here", "cwd wins over the remembered root");
         // ...but no vault inside it is chosen for the user, even though two were discovered.
-        assert!(name.is_empty(), "nothing is remembered -> no pre-selection, got {name:?}");
+        assert!(name.is_empty(), "no pre-selection even with a cwd root, got {name:?}");
 
-        // An explicit DIR argument still wins over the cwd.
+        // An explicit DIR argument still wins over both the cwd and the remembered root.
         let p = PathBuf::from("/vaults/work/vault.pmv");
-        assert_eq!(initial_root_and_name(&p, Some(&cwd)), ("/vaults".to_string(), "work".to_string()));
+        assert_eq!(
+            initial_root_and_name(&p, Some(&cwd), Some("/remembered")),
+            ("/vaults".to_string(), "work".to_string())
+        );
+    }
+
+    /// With no argument and no vault-root cwd, the last root a vault was successfully opened
+    /// from (persisted outside any vault root — see `save_last_root`) seeds the start page, the
+    /// same way a cwd root does: browsed, with nothing pre-selected.
+    #[test]
+    fn initial_root_and_name_falls_back_to_the_remembered_root() {
+        let (root, name) = initial_root_and_name(&default_vault_path(), None, Some("/my/vaults"));
+        assert_eq!(root, "/my/vaults");
+        assert!(name.is_empty(), "the remembered root never pre-selects a vault, got {name:?}");
+    }
+
+    #[test]
+    fn last_root_round_trips_through_a_plain_file() {
+        let path = std::env::temp_dir().join(format!("pmv-last-root-{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        // Missing file -> None, not an error.
+        assert_eq!(load_last_root_from(&path), None);
+
+        // Saving creates the file (and would create its parent dir, were one missing) and it
+        // reads back exactly what was saved.
+        save_last_root_to(&path, "/my/vaults");
+        assert!(path.is_file());
+        assert_eq!(load_last_root_from(&path), Some("/my/vaults".to_string()));
+
+        // Saving again overwrites rather than appending.
+        save_last_root_to(&path, "/other/root");
+        assert_eq!(load_last_root_from(&path), Some("/other/root".to_string()));
+
+        // Blank contents (whitespace only) read back as None, same as a missing file.
+        std::fs::write(&path, "   \n").unwrap();
+        assert_eq!(load_last_root_from(&path), None);
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

@@ -260,7 +260,7 @@ enforced in two layers:
   interactive widget), so a read-only user can highlight and copy a value but not
   change it (combos/checkboxes are simply disabled); the TUI's `handle_edit_key` drops
   typing / backspace / choice-cycling unless `writable`. The changeable settings in
-  read-only mode are the **local, non-secret preferences** kept in `<vault_root>/prefs.conf`
+  read-only mode are the **local, non-secret preferences** kept in `<vault_root>/prefs.json`
   (not the vault) — the **color theme**, **interface size**, **typeface** and the two list
   grouping defaults — plus the session-only **export directory**, the **vault root** (§ Auth)
   and the backup-destination field; backup and document export are themselves
@@ -553,7 +553,7 @@ offset  len  field
   initial create — the vault directory holds **exactly one** non-secret marker file
   whose *name and contents* are the commit time (`YYYYMMDD-HHMMSS` UTC). It lets an
   external backup/sync notice "the vault changed" by globbing one file, without
-  decrypting anything. The local `prefs.conf` (theme, interface size, …) is **not** a
+  decrypting anything. The local `prefs.json` (theme, interface size, …) is **not** a
   vault change and never writes a marker. The marker is written **strictly after** the
   durable commit — never before, so a failed/aborted save can't bump it — and
   **atomically** (unique temp → fsync → rename → dir fsync); the previous marker is then
@@ -749,18 +749,21 @@ include URGENT.) The four screens are:
    an "N skipped (inaccessible)" warning shown under the control rather than aborting the
    scan. The resolved path + mode are shown in the `Vault:` line.
 
-   The **root is deliberately NOT persisted**: that pointer would have to record where the
-   vault root is, and the only file this app writes lives *inside* that root. It is resolved
-   at startup by `launch::initial_root_and_name`, whose precedence is **argument > cwd >
-   empty**: an explicitly launched vault (`vaultis DIR`) always wins (root = its parent,
-   name = its folder); otherwise a **launch directory that is itself a vault root** wins
-   (`launch::cwd_vault_root` — the cwd qualifies iff `discover_vaults` finds at least one
-   vault directly beneath it, so the `vault.pmv` marker stays the app's single definition of
-   "a vault"; a cwd that is itself a vault is *not* special-cased), with **no** vault
-   pre-selected inside it; otherwise both boxes open **empty** and the user types or pastes
-   a root. Nothing about the previous session is remembered — an earlier design kept a
-   `vault_root`/`last_vault` pair in an OS config file, which is exactly what moving prefs
-   into the vault root removed. The chosen
+   The **root** is resolved at startup by `launch::initial_root_and_name`, whose precedence is
+   **argument > cwd > remembered root > empty**: an explicitly launched vault (`vaultis DIR`)
+   always wins (root = its parent, name = its folder); otherwise a **launch directory that is
+   itself a vault root** wins (`launch::cwd_vault_root` — the cwd qualifies iff
+   `discover_vaults` finds at least one vault directly beneath it, so the `vault.pmv` marker
+   stays the app's single definition of "a vault"; a cwd that is itself a vault is *not*
+   special-cased); otherwise the **last root a vault was successfully opened from** is used,
+   the same way (`launch::load_last_root`/`save_last_root` — a single plain-text path in the
+   per-user OS data directory, written only on a successful open, never for the one-click
+   sample vault); otherwise both boxes open **empty** and the user types or pastes a root. In
+   every non-argument case **no** vault is pre-selected inside the root — only the root itself
+   is seeded, and the user always picks or types the vault name. That last-root file is the
+   ONE exception to "the only file this app writes lives inside the vault root" (see the
+   `prefs.json` entry below): it holds nothing but that one path, precisely because a pointer
+   to the root cannot itself live inside the root it names. The chosen
    root also seeds the Config **backup destination** default (still freely editable there).
    The mode flip rebuilds
    the password fields (Create asks for each password twice to confirm). After unlock
@@ -839,7 +842,7 @@ include URGENT.) The four screens are:
    **volume size** (`volume_max_size`), and the **redundancy** depth, and run a
    `backup` — all **write-mode only**, persisting into the encrypted vault (no external
    config files). A small set of **local, non-secret preferences** lives instead in an
-   optional `prefs.conf` in the **vault root** (the folder holding the vault folders, not
+   optional `prefs.json` in the **vault root** (the folder holding the vault folders, not
    the encrypted vault): the **color theme** (16 palettes), the **interface size**, the
    **typeface**, and the two grouped-vs-flat list defaults. Nothing is written to an OS
    config directory, so the app leaves no trace outside the folder it is pointed at and a
@@ -848,7 +851,7 @@ include URGENT.) The four screens are:
    defaults (Catppuccin Mocha, 100%, default proportional). It is read through a
    deny-by-default allowlist, `PREFS_KEYS` in `crates/vaultis-desktop/src/lib.rs`.
 
-   That allowlist is the security boundary, because `prefs.conf` sits **outside the
+   That allowlist is the security boundary, because `prefs.json` sits **outside the
    encryption** as an ordinary file beside the vault folders: anyone who can write to the
    media *without* knowing the two passwords authors it. Two settings are therefore not
    persisted anywhere at all, so that write access can never become plaintext theft
@@ -863,16 +866,21 @@ include URGENT.) The four screens are:
    * **`reveal_all_default`** — reveal is a per-session toggle that always starts OFF, and
      the Config checkbox for it is gone from both front-ends.
 
-   The start page's **vault root** and **last-opened vault** are likewise not persisted:
-   that pointer would have to say where the vault root is, which cannot live inside that
-   same root. The root comes from the command line (`vaultis-gui DIR`) or the working
-   directory when it is a folder of vaults, else the start page opens empty
-   (`launch::initial_root_and_name`). Because the root is chosen *on* the lock screen,
-   `GuiApp::adopt_root_prefs` re-reads and applies `prefs.conf` whenever the root changes —
+   The start page's **vault root** is the one thing this app *does* remember outside a vault
+   root, because the pointer to the root cannot live inside the root it names. It is a single
+   plain-text path, `launch::save_last_root`/`load_last_root`, written to the per-user OS data
+   directory only when a vault is actually opened successfully (never for the one-click
+   sample vault — see `GuiApp::open_sample_vault`) — nothing else lives in that file or that
+   directory. The **last-opened vault name** within the root is still never persisted: the
+   root comes from the command line (`vaultis-gui DIR`), the working directory when it is a
+   folder of vaults, or that remembered root, else the start page opens empty
+   (`launch::initial_root_and_name`), and in every non-argument case the user still picks or
+   types the vault name themselves. Because the root is chosen *on* the lock screen,
+   `GuiApp::adopt_root_prefs` re-reads and applies `prefs.json` whenever the root changes —
    without writing, so merely browsing to a folder never creates the file there.
 
    A separate **Help** screen renders a sectioned in-app guide plus the on-disk vault
-   and `prefs.conf` paths.
+   and `prefs.json` paths.
 
    The export directory is additionally required to be **outside the vault folder**
    (`checked_export_dir`, shared by both front-ends): cleartext written next to `vault.pmv`

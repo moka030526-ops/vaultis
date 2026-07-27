@@ -88,12 +88,16 @@ pub fn run(path: std::path::PathBuf, writable: bool) -> anyhow::Result<()> {
             // Now that the egui context exists, let later launches raise this window.
             focus.serve(cc.egui_ctx.clone());
             // Resolve the start-page root the same way `GuiApp::new` will, so the saved
-            // look can be read from `<vault_root>/prefs.conf` BEFORE the first frame (a
+            // look can be read from `<vault_root>/prefs.json` BEFORE the first frame (a
             // flash of the default theme otherwise). When no root is known yet the start
             // page opens empty and these simply fall back to the built-in defaults; the
             // app re-applies all three live once a root is chosen.
-            let boot_root =
-                crate::launch::initial_root_and_name(&path, crate::launch::cwd_vault_root().as_ref()).0;
+            let boot_root = crate::launch::initial_root_and_name(
+                &path,
+                crate::launch::cwd_vault_root().as_ref(),
+                crate::launch::load_last_root().as_deref(),
+            )
+            .0;
             apply_theme(&cc.egui_ctx, load_theme(&boot_root));
             // Same reason as the theme: apply the saved zoom before the first frame so
             // the window does not visibly resize itself a frame after opening.
@@ -579,7 +583,7 @@ impl UiScale {
     const ALL: [UiScale; 5] =
         [UiScale::Compact, UiScale::Normal, UiScale::Large, UiScale::Larger, UiScale::Largest];
 
-    /// Stable id for prefs.conf (never the label — labels are free to be reworded).
+    /// Stable id for prefs.json (never the label — labels are free to be reworded).
     fn id(self) -> &'static str {
         match self {
             UiScale::Compact => "compact",
@@ -1008,7 +1012,7 @@ fn export_caveat_color(visuals: &egui::Visuals) -> egui::Color32 {
     }
 }
 
-// The color theme is stored in the shared, non-secret `prefs.conf` alongside the
+// The color theme is stored in the shared, non-secret `prefs.json` alongside the
 // export directory (see `crate::prefs_path` / `crate::read_prefs_obj` in lib.rs). The
 // theme accessors live here because they reference the GUI-only `Theme` type; the
 // generic prefs primitives and the export-dir accessors are shared in `crate`.
@@ -1185,7 +1189,7 @@ struct GuiApp {
     // Kept separate from `reveal_all` so the two screens don't reveal each other.
     re_reveal_all: bool,
     // Saved "view defaults" preferences (the three Config checkboxes, persisted in
-    // prefs.conf). They are kept SEPARATE from the live view state above so the Config
+    // prefs.json). They are kept SEPARATE from the live view state above so the Config
     // checkboxes always reflect the saved default, never a transient per-tab toggle.
     // `reveal_default` seeds `reveal_all`/`re_reveal_all` at open AND is re-applied by the
     // tab-switch reset (instead of forcing reveal back to masked); the two grouping
@@ -1310,13 +1314,14 @@ impl GuiApp {
     // `new` keyword in Rust — this is just a regular function.
     fn new(path: std::path::PathBuf, writable: bool) -> Self {
         // Collapsed start page: the open target is `<root>/<name>`. The root comes from the
-        // launched path, else the working directory when that is a folder of vaults, else
-        // nothing — the start page opens EMPTY and the user types or pastes a root. There is
-        // no remembered root: it would have to be stored outside the vault root (the one
-        // place this app writes), which is exactly what it no longer does. See
+        // launched path, else the working directory when that is a folder of vaults, else the
+        // last root a vault was successfully opened from (see `launch::save_last_root`), else
+        // nothing — the start page opens EMPTY and the user types or pastes a root. See
         // `launch::initial_root_and_name` and the prefs comment in `lib.rs`.
         let cwd = crate::launch::cwd_vault_root();
-        let (vault_root, vault_name) = crate::launch::initial_root_and_name(&path, cwd.as_ref());
+        let last_root = crate::launch::load_last_root();
+        let (vault_root, vault_name) =
+            crate::launch::initial_root_and_name(&path, cwd.as_ref(), last_root.as_deref());
         // Default the backup destination to the root (see the `backup_dest` field).
         let backup_dest = vault_root.clone();
         let vault_dir = crate::launch::join_root_name(&vault_root, &vault_name);
@@ -1330,10 +1335,10 @@ impl GuiApp {
         let theme = load_theme(&vault_root);
         let ui_scale = load_ui_scale(&vault_root);
         let font = load_font_choice(&vault_root);
-        // Saved "view defaults" (Config checkboxes, `<vault_root>/prefs.conf`): seed the
+        // Saved "view defaults" (Config checkboxes, `<vault_root>/prefs.json`): seed the
         // grouped/flat view state so a freshly opened vault honours the user's preferences.
         // `reveal_default` is always false — reveal is a per-session toggle that is never
-        // persisted, so a tampered prefs.conf can't unmask passwords (see `lib.rs`).
+        // persisted, so a tampered prefs.json can't unmask passwords (see `lib.rs`).
         let reveal_default = crate::load_reveal_all_default(&vault_root);
         let group_assets_default = crate::load_group_assets_default(&vault_root);
         let group_accounts_default = crate::load_group_accounts_default(&vault_root);
@@ -1698,11 +1703,15 @@ impl GuiApp {
                 }
             }
             // `A | B =>` matches either variant with one arm.
-            AuthMode::Create | AuthMode::Unlock => self.submit_open_or_create(),
+            AuthMode::Create | AuthMode::Unlock => self.submit_open_or_create(true),
         }
     }
 
-    fn submit_open_or_create(&mut self) {
+    /// `remember_root` gates [`launch::save_last_root`] on success: `true` for a real,
+    /// user-driven open (the normal path here), `false` for [`Self::open_sample_vault`] —
+    /// the demo directory under `target/` is not somewhere the start page should default to
+    /// on the next launch.
+    fn submit_open_or_create(&mut self, remember_root: bool) {
         let creating = self.auth_mode == AuthMode::Create;
         if creating && !self.writable {
             self.auth_error =
@@ -1732,12 +1741,16 @@ impl GuiApp {
 
         match result {
             Ok(v) => {
-                // Nothing about WHICH vault was opened is written down. Remembering it would
-                // mean a file outside the vault root — the one place this app writes — and
-                // that file cannot live inside the root it would be naming. The root comes
-                // from the command line or the working directory instead (`lib.rs` prefs
-                // comment; `launch::initial_root_and_name`).
-                //
+                // Remember the ROOT (not which vault within it) so the next bare launch
+                // starts here — see `launch::save_last_root` and the `lib.rs` prefs comment
+                // for why this one pointer lives in the OS data dir while everything else
+                // stays inside `<vault_root>/prefs.json`. Skipped for the one-click sample
+                // vault: that directory lives under `target/` and is not a real vault
+                // location worth defaulting future launches to.
+                if remember_root {
+                    crate::launch::save_last_root(records::unquote_path(&self.vault_root));
+                }
+
                 // If the live vault.pmv was unreadable and we recovered from an
                 // in-place redundant copy (§12.8), that notice takes priority — the
                 // user needs to know a roll-forward/rollback happened.
@@ -1826,7 +1839,7 @@ impl GuiApp {
         self.vault_scan_warning = scan.warning;
     }
 
-    /// Adopt `<vault_root>/prefs.conf` after the root changed, and apply it immediately.
+    /// Adopt `<vault_root>/prefs.json` after the root changed, and apply it immediately.
     ///
     /// Preferences live in the root, but the root is chosen ON the lock screen — so at boot
     /// there is often no root yet (a bare launch starts empty) and the built-in defaults are
@@ -1835,7 +1848,7 @@ impl GuiApp {
     ///
     /// The three look settings are applied to the context DIRECTLY here, and `applied_*` is
     /// set to match, rather than letting `render`'s "changed since applied" path do it. That
-    /// path also SAVES, which would write a `prefs.conf` into any folder the user merely
+    /// path also SAVES, which would write a `prefs.json` into any folder the user merely
     /// browsed to — the file must appear only when a setting is deliberately changed.
     fn adopt_root_prefs(&mut self, ctx: &egui::Context) {
         let root = self.vault_root.clone();
@@ -1901,7 +1914,7 @@ impl GuiApp {
 
         self.pw1.push_str(crate::launch::SAMPLE_PW1);
         self.pw2.push_str(crate::launch::SAMPLE_PW2);
-        self.submit_open_or_create();
+        self.submit_open_or_create(false);
     }
 
     /// Clear every piece of PER-VAULT UI state to its fresh-launch default. Called on each
@@ -2108,7 +2121,7 @@ impl GuiApp {
                 ui.horizontal(|ui| {
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut self.vault_name)
-                            .hint_text("vault folder name")
+                            .hint_text("vault name")
                             .desired_width(fit(ui, 244.0)),
                     );
                     name_changed = resp.changed();
@@ -2135,7 +2148,7 @@ impl GuiApp {
                 // unlocked (the Config backup field is freely editable afterwards).
                 self.backup_dest = records::unquote_path(&self.vault_root).to_string();
                 // Preferences live in the root, so a new root means a new (or absent)
-                // prefs.conf — adopt it now rather than at the next launch.
+                // prefs.json — adopt it now rather than at the next launch.
                 self.adopt_root_prefs(ui.ctx());
             }
             if name_changed {
@@ -2466,7 +2479,7 @@ impl GuiApp {
             });
             // Interface scale: the second styling axis. Applied and saved by `render`
             // the moment the selection changes, so the effect is immediate and survives
-            // the next launch — like the theme, it is a preference in <vault_root>/prefs.conf
+            // the next launch — like the theme, it is a preference in <vault_root>/prefs.json
             // and holds no vault data, so it works in read-only mode too.
             egui::ComboBox::from_label("Interface size")
                 .selected_text(self.ui_scale.label())
@@ -2500,13 +2513,13 @@ impl GuiApp {
             );
             ui.add_space(14.0);
 
-            // View defaults: cosmetic UI preferences (`<vault_root>/prefs.conf`), not vault
+            // View defaults: cosmetic UI preferences (`<vault_root>/prefs.json`), not vault
             // content — so they work in read-only mode too and persist to the next launch.
             // Each checkbox binds to the saved-default field, saves on change, and applies to
             // the live view state so the effect is immediate; the saved value re-seeds these
             // on the next vault open (see `GuiApp::new` and the tab-switch reset).
             //
-            // "Reveal all passwords by default" deliberately is NOT here. prefs.conf sits
+            // "Reveal all passwords by default" deliberately is NOT here. prefs.json sits
             // unencrypted beside the vault folders, so anyone who can write to the media
             // without knowing the passwords authors it — and a persisted reveal-all would let
             // that tampering unmask every password on open. Reveal stays a per-session toggle
@@ -2825,7 +2838,7 @@ impl GuiApp {
         if set_export {
             // Held for THIS SESSION only, never written to disk. It names where cleartext
             // exports land — the CSV carries every password in the clear — and the only file
-            // this app writes is `<vault_root>/prefs.conf`, which anyone with write access to
+            // this app writes is `<vault_root>/prefs.json`, which anyone with write access to
             // the vault media (but not the passwords) can edit. Persisting it there would let
             // tampering redirect those secrets; see the prefs comment in `lib.rs`. Normalize
             // the value: trimmed, with a pasted "Copy as path" quote pair stripped.
@@ -6822,18 +6835,18 @@ mod tests {
         cleanup(&path);
     }
 
-    /// Preferences live in `<vault_root>/prefs.conf`, but the root is chosen ON the lock
+    /// Preferences live in `<vault_root>/prefs.json`, but the root is chosen ON the lock
     /// screen — so at boot there is usually no root and the built-in defaults apply. Pointing
     /// at a root that carries its own look must adopt it immediately, not at the next launch.
     ///
     /// The second half matters just as much: merely BROWSING to a folder must not write a
-    /// `prefs.conf` into it. The file appears only when a setting is deliberately changed.
+    /// `prefs.json` into it. The file appears only when a setting is deliberately changed.
     #[test]
     fn adopting_a_root_applies_its_look_without_creating_a_prefs_file() {
         let path = tmp("adopt-prefs");
         let root = path.parent().unwrap().to_path_buf();
         std::fs::write(
-            root.join("prefs.conf"),
+            root.join("prefs.json"),
             br#"{"theme":"nord","ui_scale":"large","font":"monospace","group_assets_default":true}"#,
         )
         .unwrap();
@@ -6857,13 +6870,13 @@ mod tests {
         assert_eq!(app.applied_ui_scale, app.ui_scale);
         assert_eq!(app.applied_font, app.font);
 
-        // Browsing to a root with NO prefs.conf falls back to the defaults and creates nothing.
+        // Browsing to a root with NO prefs.json falls back to the defaults and creates nothing.
         let bare = root.join("bare");
         std::fs::create_dir_all(&bare).unwrap();
         app.vault_root = bare.display().to_string();
         app.adopt_root_prefs(&ctx);
-        assert_eq!(app.theme, Theme::CatppuccinMocha, "no prefs.conf -> built-in default");
-        assert!(!bare.join("prefs.conf").exists(), "browsing a folder must not create prefs.conf in it");
+        assert_eq!(app.theme, Theme::CatppuccinMocha, "no prefs.json -> built-in default");
+        assert!(!bare.join("prefs.json").exists(), "browsing a folder must not create prefs.json in it");
 
         cleanup(&path);
     }
@@ -7119,13 +7132,13 @@ mod tests {
     }
 
     /// The scale preference persists next to the theme WITHOUT clobbering it — both live
-    /// in the same prefs.conf, so a naive write of one would drop the other.
+    /// in the same prefs.json, so a naive write of one would drop the other.
     #[test]
     fn saving_ui_scale_preserves_the_theme_and_vice_versa() {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let dir = std::env::temp_dir().join(format!("vaultis-prefs-{nanos}"));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("prefs.conf");
+        let path = dir.join("prefs.json");
 
         save_theme_to(&path, Theme::Nord);
         save_ui_scale_to(&path, UiScale::Larger);

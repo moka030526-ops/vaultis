@@ -160,10 +160,13 @@ pub(crate) const TOPICS: &[Topic] = &[
                  manager works even if the path has quotation marks around it, see “Typing file \
                  and folder paths”. vaultis then looks one level inside that folder for anything \
                  that looks like a vault (technically: any subfolder that contains a vault.pmv \
-                 file) and lists what it finds in the dropdown below. vaultis does NOT remember \
-                 this folder between launches — it writes nothing outside the folder you point it \
-                 at. To skip typing it, start the program from inside your vaults folder, or pass \
-                 the folder on the command line.",
+                 file) and lists what it finds in the dropdown below. vaultis remembers this \
+                 folder once you actually open a vault from it, so the next bare launch starts \
+                 here again — that one path is the only thing it keeps outside a vaults folder; \
+                 everything else (theme, sizing, and so on) still lives in that folder's own \
+                 prefs.json. Opening a vault from a different folder — by typing a new path here, \
+                 starting the program from inside that folder, or passing it on the command line \
+                 — simply updates which folder is remembered.",
             ),
             Block::Sub("Step 2 — pick a vault, or name a new one"),
             Block::P(
@@ -332,7 +335,7 @@ pub(crate) const TOPICS: &[Topic] = &[
                  exported file with exactly the same care you would the passwords themselves.",
                 "Make a backup copy of the still-encrypted vault.",
                 "Change the color theme, the interface size, the typeface, and which tabs open \
-                 grouped — these are saved in a small prefs.conf in your vaults folder, not inside \
+                 grouped — these are saved in a small prefs.json in your vaults folder, not inside \
                  the encrypted vault, so changing them does not need write access.",
                 "Set where exports go. This one is remembered only for the current session: you \
                  set it again next time you open the app.",
@@ -1002,7 +1005,7 @@ pub(crate) const TOPICS: &[Topic] = &[
             Block::Note(
                 "There is deliberately no \u{201c}reveal all passwords by default\u{201d} setting. Passwords always \
                  start hidden, and revealing them is a per-session choice you make each time. \
-                 Because prefs.conf sits in your vaults folder rather than inside the encrypted \
+                 Because prefs.json sits in your vaults folder rather than inside the encrypted \
                  vault, anyone who could edit that folder without knowing your passwords could \
                  otherwise have switched masking off for you.",
             ),
@@ -2005,7 +2008,7 @@ fn paths_card(ui: &mut egui::Ui, ctx: &HelpContext) {
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(
-                    "prefs.conf holds only the theme, interface size, typeface and the two \
+                    "prefs.json holds only the theme, interface size, typeface and the two \
                      grouping defaults. It sits in your vaults folder, is created only when you \
                      change one of those settings, and contains no vault data and no secrets.",
                 )
