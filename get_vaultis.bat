@@ -74,6 +74,17 @@ $RepoFolder = "vaultis"
 $ScriptPath = ".\scripts\build.bat"
 $ScriptArgs = @("--release", "--install-rust")
 
+# Who the downloaded Git installer must be Authenticode-signed by, matched against the
+# signing certificate's Subject. Only used on the winget-less fallback path below.
+# Git for Windows is released and signed by its maintainer, Johannes Schindelin.
+#
+# If a future release is signed under a different name this script FAILS CLOSED — it
+# refuses to run the installer and tells you the name it actually saw, so you can either
+# install Git yourself or, once you have satisfied yourself the new signer is genuine,
+# update this line. That is the intended failure mode: refusing a good installer is a
+# minor inconvenience, running a bad one is not.
+$ExpectedGitSigner = "Johannes Schindelin"
+
 # ==========================================
 # Ensure Git is installed
 # ==========================================
@@ -81,8 +92,10 @@ $ScriptArgs = @("--release", "--install-rust")
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host "Git not found. Installing Git..."
 
-    # Prefer winget where it exists: it resolves the current version itself and
-    # verifies the package hash, so nothing unverified is executed here.
+    # Prefer winget where it exists: it resolves the current version itself and verifies
+    # the package hash against its manifest, so this path needs no verification of its
+    # own. The fallback below has to do that work explicitly -- see the signature check
+    # there, which is what keeps "no winget" from meaning "no verification".
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     if ($winget) {
         Write-Host "Installing Git with winget..."
@@ -101,7 +114,13 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         # the machines it exists to set up: a fresh Windows box with no Git.
         Write-Host "winget not available; downloading the Git installer..."
 
-        $Installer = Join-Path $env:TEMP "GitInstaller.exe"
+        # Download into a FRESH randomly-named directory rather than a fixed
+        # %TEMP%\GitInstaller.exe. A predictable path in a world-writable-ish location is
+        # something another process on this machine can pre-create, and the verify-then-run
+        # sequence below is only meaningful if nothing can swap the file underneath it.
+        $DownloadDir = Join-Path $env:TEMP ("vaultis-git-" + [Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Path $DownloadDir -Force | Out-Null
+        $Installer = Join-Path $DownloadDir "Git-64-bit.exe"
 
         $Release = Invoke-RestMethod `
             -Uri "https://api.github.com/repos/git-for-windows/git/releases/latest" `
@@ -118,14 +137,57 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         }
 
         Write-Host "Downloading $($Asset.name)..."
-        Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $Installer
 
-        Start-Process `
-            -FilePath $Installer `
-            -ArgumentList "/VERYSILENT", "/NORESTART" `
-            -Wait
+        try {
+            Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $Installer
 
-        Remove-Item -LiteralPath $Installer -Force -ErrorAction SilentlyContinue
+            # Verify the installer BEFORE running it. HTTPS proves only that the bytes came
+            # from github.com; it says nothing about a compromised release, a corporate
+            # TLS-intercepting proxy with its root CA installed on this machine, or a
+            # truncated download. Authenticode is the check that actually binds these bytes
+            # to a publisher, and it is the difference between "we fetched an .exe and ran
+            # it silently as the user" and a verified install.
+            Write-Host "Verifying the installer's signature..."
+
+            $Signature = Get-AuthenticodeSignature -LiteralPath $Installer
+
+            if ($Signature.Status -ne "Valid") {
+                throw ("The downloaded Git installer is not validly signed " +
+                    "(signature status: $($Signature.Status)). Refusing to run it. " +
+                    "Install Git yourself: https://git-scm.com/download/win")
+            }
+
+            $Signer = $Signature.SignerCertificate.Subject
+
+            # Substring match on the Subject, which is a full DN
+            # (CN=..., O=..., L=..., C=...) -- not just the common name.
+            if ($Signer -notlike "*$ExpectedGitSigner*") {
+                throw ("The downloaded Git installer is signed by an unexpected publisher. " +
+                    "Expected '$ExpectedGitSigner', got: $Signer. Refusing to run it. " +
+                    "Install Git yourself: https://git-scm.com/download/win")
+            }
+
+            Write-Host "Signature OK ($ExpectedGitSigner). Installing Git..."
+
+            # -PassThru to actually READ the exit code: without it a silent install that
+            # failed would be indistinguishable from one that worked, and the failure would
+            # only surface later as the confusing "installed, but not on PATH" error.
+            $Proc = Start-Process `
+                -FilePath $Installer `
+                -ArgumentList "/VERYSILENT", "/NORESTART" `
+                -Wait `
+                -PassThru
+
+            if ($Proc.ExitCode -ne 0) {
+                throw ("The Git installer failed with exit code $($Proc.ExitCode). " +
+                    "Install Git yourself: https://git-scm.com/download/win")
+            }
+        }
+        finally {
+            # `finally` so a rejected or failed installer is never left behind in %TEMP%
+            # for something else to find and run.
+            Remove-Item -LiteralPath $DownloadDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     # Add Git to PATH for the current PowerShell session.
