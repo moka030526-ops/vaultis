@@ -1520,9 +1520,55 @@ impl GuiApp {
         };
         if let Some(ov) = self.vault.as_ref() {
             match ov.export_document_into(id, &dir) {
-                Ok(p) => self.status = format!("Exported to {}", p.display()),
+                Ok(p) => {
+                    self.status = format!("Exported to {} — this copy is NOT encrypted.", p.display())
+                }
                 Err(e) => self.fail(format!("Export failed: {e}")),
             }
+        }
+    }
+
+    /// Whether the record currently open in the form on `self.tab` has changes that
+    /// would be lost by navigating away without saving — either it differs from the
+    /// saved copy with the same id, or (a brand-new record started with ➕ New) it
+    /// has no saved copy at all yet. Read by the footer to turn the old "save before
+    /// you click away" help-text warning into a live indicator instead: see
+    /// `ui_top_level` around the status panel.
+    fn has_unsaved_edits(&self) -> bool {
+        let Some(ov) = self.vault.as_ref() else { return false };
+        let v = &ov.vault;
+        match self.tab {
+            Tab::Urgent => {
+                self.edit_urgent.as_ref().is_some_and(|r| v.urgent.iter().find(|s| s.id == r.id) != Some(r))
+            }
+            Tab::Instructions => self
+                .edit_instruction
+                .as_ref()
+                .is_some_and(|r| v.instructions.iter().find(|s| s.id == r.id) != Some(r)),
+            Tab::TrustWill => self
+                .edit_trustwill
+                .as_ref()
+                .is_some_and(|r| v.trust_wills.iter().find(|s| s.id == r.id) != Some(r)),
+            Tab::Assets => {
+                self.edit_asset.as_ref().is_some_and(|r| v.assets.iter().find(|s| s.id == r.id) != Some(r))
+            }
+            Tab::Accounts => {
+                self.edit_account.as_ref().is_some_and(|r| v.accounts.iter().find(|s| s.id == r.id) != Some(r))
+            }
+            Tab::RealEstate => self
+                .edit_realestate
+                .as_ref()
+                .is_some_and(|r| v.real_estate.iter().find(|s| s.id == r.id) != Some(r)),
+            Tab::Taxes => self
+                .edit_taxfiling
+                .as_ref()
+                .is_some_and(|r| v.tax_filings.iter().find(|s| s.id == r.id) != Some(r)),
+            Tab::GeneralDocuments => self
+                .edit_general
+                .as_ref()
+                .is_some_and(|r| v.general_documents.iter().find(|s| s.id == r.id) != Some(r)),
+            // Summary is a read-only computed view; it has no edit buffer to lose.
+            Tab::Summary => false,
         }
     }
 
@@ -5241,6 +5287,20 @@ impl GuiApp {
                     }
                 },
                 |ui| {
+                    // A live, hard-to-miss stand-in for what used to be only a line in the
+                    // Help manual ("selecting another record discards unsaved edits"): the
+                    // footer is where the eye already looks for state, so an unsaved edit is
+                    // shown right where the user is about to click away from it, not just
+                    // documented somewhere they may never open.
+                    if self.has_unsaved_edits() {
+                        ui.label(
+                            egui::RichText::new("⚠ unsaved changes — click 💾 Save first")
+                                .small()
+                                .strong()
+                                .color(egui::Color32::from_rgb(200, 90, 20)),
+                        );
+                        ui.add_space(10.0);
+                    }
                     // The clipboard's auto-clear state belongs where the eye already looks
                     // for state — otherwise a copied password's lifetime is invisible.
                     if self.clipboard_dirty {

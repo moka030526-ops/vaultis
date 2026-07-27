@@ -13,6 +13,15 @@
 //!
 //! Nothing here reads or writes the vault: the manual is static text plus the
 //! three on-disk paths handed in via [`HelpContext`].
+//!
+//! Voice: this manual is written for someone who has never used encryption
+//! software, and who may be reading it under stress (a new user setting things
+//! up for the first time, or an heir opening this cold). Every article says
+//! plainly what a thing is, exactly what to click, and what happens next —
+//! jargon is explained the first time it appears rather than assumed. The one
+//! deliberate exception is the last article in Reference, written for a reader
+//! who wants the cryptographic detail behind the plain-language claims made
+//! everywhere else.
 
 use eframe::egui;
 
@@ -65,31 +74,69 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "overview",
         section: "Getting started",
         title: "What vaultis is",
-        blurb: "An offline, two-password encrypted vault for everything an executor or heir will need.",
+        blurb: "One locked folder on your own computer, holding everything an executor or heir will need. Never connected to the internet.",
         body: &[
             Block::P(
-                "vaultis keeps the records an estate's executor or heirs need in a single \
-                 encrypted vault: account logins, written instructions, trust and will documents, \
-                 assets and liabilities, real estate, tax filings, and any other document you want \
-                 to leave behind.",
+                "Imagine gathering every password, every account, every important paper your \
+                 family would need if something happened to you — bank logins, the will, the \
+                 deed to the house, tax returns, instructions for who to call — and putting all \
+                 of it in one locked box. That locked box is what vaultis is. It is a program \
+                 that stores this information in a single encrypted vault, so it is organised, \
+                 findable, and protected by two passwords instead of scattered across sticky \
+                 notes, old emails, and a filing cabinet only you understand.",
             ),
             Block::P(
-                "It is completely offline. There is no network code anywhere in the program: \
-                 nothing is uploaded, nothing is synced, and no part of your data leaves this \
-                 machine unless you explicitly export it.",
+                "\"Encrypted\" means the information is scrambled into unreadable gibberish \
+                 whenever the vault is closed. Nobody — not someone who steals your laptop, not \
+                 someone who copies the files, not the people who wrote this program — can make \
+                 sense of it without the two passwords you choose. There is more detail on \
+                 exactly how in “How your data is protected”, and a full technical account in \
+                 “For the technically curious: why this is safe”.",
             ),
-            Block::Sub("What a vault is on disk"),
+            Block::Sub("Why it is completely offline"),
             Block::P(
-                "A vault is a folder, not a single file. It holds the encrypted record file \
-                 (vault.pmv), an encrypted index of your documents (manifest/), and the encrypted \
-                 document archive itself (volume/). Back up the whole folder — the parts are of no \
-                 use to each other separately.",
+                "There is no network code anywhere in this program — not a hidden setting, a \
+                 missing feature. The people who built it simply never wrote the code that would \
+                 let it connect to the internet, so there is nothing to switch off and nothing \
+                 that could be turned on by a future update. Concretely, this means: nothing you \
+                 type is ever uploaded anywhere, the app cannot \"phone home\" to check for \
+                 updates or report usage, it cannot sync between devices on its own, and it \
+                 cannot be reached or tampered with by anyone over a network, because it is never \
+                 listening on one. The only way your information leaves this computer is if you \
+                 deliberately export it yourself. That is a deliberate trade: no convenient \
+                 cloud sync, in exchange for nothing to ever leak from a server you do not \
+                 control, because there is no server.",
             ),
-            Block::Sub("The two front-ends"),
+            Block::Sub("What a vault looks like on your computer"),
             Block::P(
-                "This window is the graphical app (vaultis-gui). The same vault can be opened \
-                 with a terminal interface (vaultis --tui) and with command-line tools for \
-                 backup, export, and maintenance. See “Command line” in the Reference section.",
+                "A vault is not a single file you can double-click, the way a photo or a Word \
+                 document is. It is a folder — think of it as a locked drawer — that holds three \
+                 things inside it: the record file (vault.pmv, a small file holding all your text \
+                 entries — logins, notes, the asset list, and so on), an encrypted index of your \
+                 uploaded documents (the manifest/ folder, like a table of contents), and the \
+                 documents themselves (the volume/ folder, the actual scanned deeds, PDFs, and \
+                 photos you attached). These three parts only make sense together: back up the \
+                 WHOLE folder, never just one piece of it, or you will end up with, say, a list \
+                 of documents and no documents.",
+            ),
+            Block::Sub("You can have more than one vault"),
+            Block::P(
+                "Nothing limits you to a single vault. Many people keep separate vaults for \
+                 separate purposes — one for themselves, a second one they are helping a parent \
+                 set up, a third for a small business — each completely private from the others, \
+                 each with its own two passwords. See “Opening or creating a vault” for exactly \
+                 how that works and what to click.",
+            ),
+            Block::Sub("Three ways to open the same vault"),
+            Block::P(
+                "This window — the one you are reading Help in right now — is the point-and-click \
+                 version (vaultis-gui): the one intended for everyday use, and the one an heir \
+                 with no technical background should reach for. The very same vault can also be \
+                 opened with a text-based, keyboard-driven interface (vaultis --tui) by someone \
+                 who prefers not to use a mouse, and there are separate command-line tools for \
+                 bulk jobs like backups and exports that a technical executor might use. You will \
+                 almost certainly only ever need this window; the others are covered in \
+                 “Command line” under Reference, for completeness.",
             ),
         ],
     },
@@ -97,44 +144,99 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "opening",
         section: "Getting started",
         title: "Opening or creating a vault",
-        blurb: "The start page: pick a folder, pick a vault, enter both passwords.",
+        blurb: "A plain-English, click-by-click walkthrough of the very first screen: opening a vault you already made, starting a brand-new one, and why you can keep more than one.",
         body: &[
             Block::P(
-                "The start page is where you choose which vault to open. It has two parts: the \
-                 folder that holds your vaults, and the vault inside it.",
+                "This is the very first screen vaultis shows you, before it will let you see any \
+                 of your information. Its only job is to answer one question: which vault do you \
+                 want, and what are its two passwords? Nothing on this screen is your data yet — \
+                 it is just how you get to it.",
+            ),
+            Block::Sub("Picture a filing cabinet"),
+            Block::P(
+                "The easiest way to understand this screen is a filing cabinet standing in the \
+                 corner of a room. The cabinet itself is an ordinary folder on your computer — \
+                 you get to choose which one, and vaultis calls it the \"Vaults folder\". Inside \
+                 that cabinet, every vault is one locked drawer. You are not limited to a single \
+                 drawer: you could keep a drawer for yourself, a second drawer for a parent you \
+                 are helping get organised, a third for a small business — as many drawers as you \
+                 like, sitting side by side in the same cabinet. Each drawer has its own lock (its \
+                 own two passwords, chosen separately) and none of them can see what is inside \
+                 any other. Creating a second vault does not touch the first one in any way.",
+            ),
+            Block::Sub("Step 1 — point at the cabinet"),
+            Block::P(
+                "The top box, \"Vaults folder\", is where you tell vaultis which folder to treat \
+                 as the cabinet. Type or paste a folder path into it — pasting straight from your \
+                 file manager works even if the path has quotation marks around it, see “Typing \
+                 file and folder paths”. vaultis then looks one level inside that folder for \
+                 anything that looks like a vault (technically: any subfolder that contains a \
+                 vault.pmv file) and lists what it finds in the dropdown below. This folder choice \
+                 is remembered, so you will not have to type it again next time you open the app.",
+            ),
+            Block::Sub("Step 2 — pick a drawer, or name a new one"),
+            Block::P(
+                "The second box, \"Vault\", is the drawer itself — the vault's own folder name \
+                 inside the cabinet. If you already have a vault, click the dropdown and choose \
+                 its name from the list; that is opening a drawer you already filled. If you want \
+                 to start completely fresh, type a name that is not already in the list — \
+                 something like MyVault or Mom2026 — and vaultis will build a brand-new, empty \
+                 drawer with that name the moment you finish the next two steps.",
+            ),
+            Block::Sub("Step 3 — type the two passwords"),
+            Block::P(
+                "Every vault, new or existing, is locked with two separate passwords typed one \
+                 after another. The order you type them in matters — see “The two passwords” for \
+                 why — and for a brand-new vault you will be asked to type each one twice, once to \
+                 set it and once to confirm you typed what you meant to, because there is no way \
+                 to recover a mistyped password later.",
+            ),
+            Block::Sub("The button tells you which one is about to happen"),
+            Block::P(
+                "One button does both jobs, and its label changes so you always know which thing \
+                 is about to happen before you click:",
             ),
             Block::Rows(&[
                 (
-                    "Vaults folder",
-                    "The directory that is scanned (one level deep) for vaults. Every subfolder \
-                     containing a vault.pmv is offered in the dropdown below. This is remembered \
-                     for next time. You can paste a path straight from your file manager, quotes \
-                     and all — see “Typing file and folder paths”.",
+                    "Button says Unlock",
+                    "vaultis found an existing vault under the name you picked. Clicking Unlock \
+                     OPENS it with the two passwords you typed — nothing is created, nothing is \
+                     changed, you are simply looking at what is already there. This is what you \
+                     will click almost every time you come back to look at or edit something you \
+                     already saved.",
                 ),
                 (
-                    "Vault",
-                    "The vault's own folder name inside that directory. Choose one from the \
-                     dropdown, or type a name that does not exist yet to create a new vault there.",
+                    "Button says Create",
+                    "The name you typed does not exist yet, or the folder is empty. Clicking \
+                     Create BUILDS a brand-new, empty vault with that name and those two \
+                     passwords, then opens it. This is the one-time step you do only when \
+                     starting something new — after that, the exact same vault always reopens \
+                     with Unlock.",
                 ),
-                ("Password 1 / Password 2", "Both are required, and the order matters. See “The two passwords”."),
             ]),
-            Block::Sub("Unlock vs. Create"),
-            Block::P(
-                "The button changes to match what is on disk. If the chosen folder already holds a \
-                 vault, it reads Unlock and asks for the two passwords once. If the folder is empty \
-                 or new, it reads Create and asks for each password twice, to catch typos — a typo \
-                 in a password you then forget is unrecoverable.",
-            ),
             Block::Note(
-                "Creating is only offered in write mode. A read-only session can open existing \
-                 vaults but never make one.",
+                "Creating is only offered when the app was started in write mode (see “Read-only \
+                 vs. write mode”). A read-only session — the mode an heir should normally use — \
+                 can open and read any existing vault, but it will never offer to build a new one.",
+            ),
+            Block::Sub("Why creating asks for every password twice"),
+            Block::P(
+                "There is no \"forgot password\" link anywhere in this program, on purpose — see \
+                 “The two passwords” for why. A typo you do not catch while creating a vault would \
+                 mean permanently losing access to everything you later put in it. Asking for each \
+                 password twice, side by side, when the vault is new is the one safety net vaultis \
+                 can offer against that: if the two boxes for a password do not match, it tells you \
+                 immediately, before anything is written to disk, rather than weeks later when you \
+                 have forgotten which version you typed.",
             ),
             Block::Sub("One window per vault"),
             Block::P(
-                "Launching the app again for a vault that is already open raises the existing \
-                 window instead of opening a second one. In write mode the vault also takes a \
-                 single-writer lock, so a second writable session fails fast rather than letting \
-                 two windows overwrite each other.",
+                "If you try to open a vault that is already open in another window, vaultis does \
+                 not open a second copy — it simply brings the existing window to the front, as if \
+                 you had clicked back to it yourself. And if that existing session is in write \
+                 mode, a second attempt to open the same vault for writing is refused outright \
+                 rather than allowed to proceed, because two windows both saving changes to the \
+                 same vault at the same time could overwrite each other's work.",
             ),
         ],
     },
@@ -142,39 +244,64 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "passwords",
         section: "Getting started",
         title: "The two passwords",
-        blurb: "Both are needed, the order matters, and there is no recovery.",
+        blurb: "Why there are two, why the order matters, and why nobody — including the people who wrote this program — can ever recover a lost one.",
         body: &[
             Block::P(
-                "The vault is locked with two passwords entered in sequence. They are chained \
-                 through Argon2id key derivation into a single encryption key: the first password's \
-                 derived key is an input to deriving the second. Neither password alone reveals \
-                 anything, and swapping their order is simply a wrong pair.",
+                "Every vault is locked with two separate passwords, typed one after the other, \
+                 rather than the single password you might expect from other programs. Think of \
+                 it like a bank safe-deposit box that needs two different keys turned together: \
+                 the bank holds one, you hold the other, and neither key alone opens anything. \
+                 Here, both keys are passwords you choose, and the point is the same — the vault \
+                 cannot be opened with only half of what it takes.",
             ),
             Block::P(
-                "The intent is that the two can be held separately — for example one with you and \
-                 one with a lawyer or in a safe — so that no single place holds everything.",
+                "This is meant to let the two passwords be kept apart from each other on purpose \
+                 — for example, you might remember one yourself while a lawyer, a trusted \
+                 relative, or a safe holds the other — so that no single place, and no single \
+                 person other than you, ever holds everything needed to open the vault.",
+            ),
+            Block::P(
+                "The ORDER you type them in is not interchangeable. Behind the scenes vaultis \
+                 combines the two passwords into the vault's real encryption key through a \
+                 deliberately slow scrambling process (a technique called Argon2id — explained \
+                 fully in “For the technically curious: why this is safe”), where the result of \
+                 scrambling the first password feeds into the process for the second. Typing them \
+                 in the opposite order does not \"also work\" — it is simply a different, wrong \
+                 pair, and the vault will refuse it exactly like any other incorrect guess.",
             ),
             Block::Warn(
-                "There is NO recovery, no reset, no backdoor, and no hint. If either password is \
-                 lost the data is unrecoverable — by design, not by omission. Write them down and \
-                 store them where your executor will actually find them.",
+                "There is NO \"forgot password\" option, no reset link, no support line that can \
+                 help, and no secret backdoor built in for emergencies. If either password is \
+                 lost, the data inside is gone for good — this is deliberate, not an oversight, \
+                 because any way to recover a forgotten password would also be a way for someone \
+                 else to break in without one. Write both passwords down, on paper or in a \
+                 password manager you trust, and store them somewhere your executor will actually \
+                 find when the time comes — a password only you know is of no use to the people \
+                 you are leaving this vault for.",
             ),
-            Block::Sub("Changing them"),
+            Block::Sub("Changing the two passwords later"),
             Block::Steps(&[
-                "Click 🔑 Passwords in the top bar (write mode only).",
-                "Enter the current pair, then the new pair twice each.",
-                "The vault is re-encrypted with a fresh key. The old passwords stop working immediately.",
+                "Click 🔑 Passwords in the top bar (only shown in write mode).",
+                "Type the CURRENT pair of passwords first, to prove you are allowed to change them.",
+                "Type each NEW password twice — once to set it, once to confirm there is no typo.",
+                "Click the button to confirm. The vault is re-scrambled with a brand-new key; the old passwords stop working the instant this finishes.",
             ]),
             Block::Note(
-                "Changing passwords rewrites the vault file, not the document archive: your \
-                 existing documents stay attached and readable under the new pair.",
+                "Changing your passwords only re-locks the small record file — it does not touch \
+                 the documents you have already uploaded. Everything you attached stays exactly \
+                 where it was and opens normally under the new pair of passwords.",
             ),
-            Block::Sub("Why a wrong password looks like corruption"),
+            Block::Sub("Why a wrong password looks exactly like a damaged vault"),
             Block::P(
-                "A wrong password and a damaged or tampered-with vault produce the same failure \
-                 message. That is intentional: distinguishing them would tell an attacker holding \
-                 a copy of your vault whether a guessed password was “close”, turning the file into \
-                 a password oracle they could grind against offline.",
+                "If you type the wrong passwords, or if the vault file has somehow been damaged \
+                 or tampered with, vaultis shows you the identical error message either way — it \
+                 will not tell you which one happened. That is not a missing feature; it is \
+                 deliberate. If vaultis told an attacker \"that password was close, but not quite \
+                 right\" versus \"that password was completely wrong\", it would be handing them a \
+                 way to slowly narrow down your password by trial and error from outside — the \
+                 same trick a thief uses on a bike-lock combination by feeling for the click. \
+                 Showing one plain, unhelpful error for both cases denies them that feedback \
+                 entirely.",
             ),
         ],
     },
@@ -182,97 +309,134 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "readonly",
         section: "Getting started",
         title: "Read-only vs. write mode",
-        blurb: "Why the app opens read-only, and exactly what each mode allows.",
+        blurb: "Why the app opens looking rather than editing by default, and the exact, complete list of what each mode does and does not let you do.",
         body: &[
             Block::P(
-                "The app opens READ-ONLY unless it was launched with --write. A read-only session \
-                 writes nothing to the vault at all, so it cannot damage anything — it is the safe \
-                 default, and the mode an heir should use.",
+                "vaultis opens READ-ONLY — meaning it can look at your vault but cannot change a \
+                 single byte of it — unless it is deliberately started with an extra flag \
+                 (--write). Think of read-only mode like a photocopy of a document: you can read \
+                 every word of it, even mark it up in your head, but there is no way to \
+                 accidentally alter the original. Because a read-only session is physically \
+                 incapable of writing to the vault, it cannot break anything — which is exactly \
+                 why it is the safe default, and the mode an heir who has never used this program \
+                 before should use.",
             ),
             Block::P(
-                "When read-only, an orange 🔒 READ-ONLY badge sits in the top bar and the controls \
-                 that would change the vault are hidden.",
+                "Whenever the app is in this mode, an orange 🔒 READ-ONLY badge is shown in the \
+                 top bar the whole time, and every button or box that would change something is \
+                 simply not drawn — there is nothing tempting to click by mistake.",
             ),
-            Block::Sub("What still works read-only"),
+            Block::Sub("What you CAN still do in read-only mode"),
             Block::Bullets(&[
-                "Reading every record on every tab. The forms become a view: the text cannot be \
-                 edited, but it can still be selected and copied.",
-                "Revealing and copying passwords.",
-                "Exporting documents to the export directory.",
-                "Exporting a tab to CSV. Note the file is UNENCRYPTED and an Accounts or Real \
-                 Estate CSV contains every password in plain text — treat it exactly as you would \
-                 the passwords themselves.",
-                "Running a backup of the encrypted vault.",
-                "Changing the color theme, the view defaults, and the export directory — these are \
-                 local preferences on this machine, not vault content.",
+                "Read every record on every tab. The form still shows all the text, but it \
+                 cannot be typed into — it can, however, still be selected and copied with \
+                 Ctrl+C, exactly like a normal read-only document.",
+                "Reveal and copy passwords, for logging into an account you need.",
+                "Export attached documents (deeds, PDFs, scans) to a folder on this computer.",
+                "Export an entire tab to a spreadsheet-friendly CSV file. Be aware this file is \
+                 written in PLAIN TEXT with no encryption at all, and on the Accounts or Real \
+                 Estate tabs it contains every password spelled out in the clear — handle that \
+                 exported file with exactly the same care you would the passwords themselves.",
+                "Make a backup copy of the still-encrypted vault.",
+                "Change the color theme, which tabs open grouped by default, and where exports go \
+                 — these are preferences remembered on this computer, not part of the vault's \
+                 actual data, so changing them does not need write access.",
             ]),
-            Block::Sub("What needs write mode"),
+            Block::Sub("What you CANNOT do — write mode is required"),
             Block::Bullets(&[
-                "Creating, editing, and deleting records.",
-                "Attaching and detaching documents.",
-                "Changing the passwords.",
-                "Editing the type and subtype lists, the volume size, and the redundancy setting.",
-                "Updating from another vault.",
+                "Create, edit, or delete any record.",
+                "Attach a new document to a record, or remove one that is already attached.",
+                "Change the vault's two passwords.",
+                "Edit the dropdown lists of types and subtypes, the document-volume size, or the redundancy setting.",
+                "Pull in newer records from a second copy of this vault (\"Update from another vault\").",
             ]),
-            Block::Note("To switch modes, close the window and relaunch with the --write flag."),
+            Block::Note(
+                "To switch from read-only to write mode, close this window and start the program \
+                 again with the --write flag added. There is no in-app button to switch — closing \
+                 and relaunching is the only way, which is itself a small safeguard against \
+                 flipping into write mode by accident.",
+            ),
         ],
     },
     Topic {
         id: "window",
         section: "Getting started",
         title: "Finding your way around",
-        blurb: "The top bar, the two-pane tabs, the status line, and the error banner.",
+        blurb: "A guided tour of every button and area on screen: the top bar, the row of tabs, the strip along the bottom, and the red banner that appears when something goes wrong.",
         body: &[
             Block::Sub("The top bar"),
             Block::P(
-                "The first row names the open vault and holds the actions that apply everywhere. \
-                 The second row is the tab strip — one tab per kind of record.",
+                "The very top of the window has two rows. The first row names the vault that is \
+                 open and holds the handful of actions that apply everywhere, no matter which tab \
+                 you are on. The second row is the strip of tabs — one tab per kind of record, \
+                 like folders in a filing cabinet drawer.",
             ),
             Block::Rows(&[
                 (
                     "🗄 vault name",
-                    "Which vault is open. Hover it to see the full folder path — two windows onto \
-                     two vaults look identical without this.",
+                    "Shows which vault is currently open. If you keep more than one vault, hover \
+                     your mouse over this to see the FULL folder path — handy, because two \
+                     windows onto two different vaults can otherwise look identical at a glance.",
                 ),
                 (
                     "WRITE / 🔒 READ-ONLY",
-                    "The session's mode. The orange read-only badge explains why the editing \
-                     controls are absent.",
+                    "Tells you the session's mode at a glance. The orange read-only badge is your \
+                     reminder for why the editing controls you might expect are simply not there \
+                     — see “Read-only vs. write mode”.",
                 ),
-                ("🔑 Passwords", "Change the vault's two passwords (write mode)."),
-                ("⚙ Config", "Settings: appearance, view defaults, type lists, export directory, backup, storage."),
-                ("❓ Help", "This manual."),
-                ("Quit", "Close the window. In-memory secrets are wiped and the clipboard is cleared on exit."),
+                ("🔑 Passwords", "Opens the screen to change the vault's two passwords (write mode only)."),
+                (
+                    "⚙ Config",
+                    "Opens Settings: appearance/color theme, what each tab looks like by default, \
+                     the dropdown lists of types, where exports are written, backups, and storage.",
+                ),
+                ("❓ Help", "Opens this manual — the screen you are reading right now."),
+                (
+                    "Quit",
+                    "Closes the window. Every secret held in memory is overwritten before the app \
+                     exits, and the clipboard is cleared too, so nothing sensitive lingers after \
+                     you leave.",
+                ),
             ]),
-            Block::Sub("The tab strip on a narrow window"),
+            Block::Sub("When the window is narrow, the tab strip wraps — it never hides a tab"),
             Block::P(
-                "The strip never scrolls and never hides a tab. When the window is too narrow to \
-                 fit all nine tabs on one line, the strip wraps onto a second (or third) line and \
-                 the rest of the window moves down to make room. Every tab therefore stays visible \
-                 and clickable at any window size, however small.",
+                "The strip of tabs never scrolls sideways and never hides a tab behind the edge of \
+                 the window. If the window is too narrow to fit all nine tabs on a single line, \
+                 the strip simply wraps onto a second (or third) line, and everything below moves \
+                 down slightly to make room. Every tab therefore stays fully visible and clickable \
+                 no matter how small you make the window.",
             ),
             Block::Note(
-                "Earlier versions put the strip in a sideways scrolling area, where the last tabs \
-                 sat off the right edge behind a scrollbar you had to notice. If you remember \
-                 hunting for the Summary tab, that is what changed.",
+                "Earlier versions of this app put the tab strip in a sideways-scrolling area, \
+                 where the last few tabs sat hidden off the right edge behind a scrollbar you had \
+                 to notice and drag. If you remember ever having to hunt for the Summary tab, that \
+                 is the exact problem this wrapping behaviour fixed.",
             ),
-            Block::Sub("Inside a tab"),
+            Block::Sub("What is inside a tab"),
             Block::P(
-                "Every record tab is split down the middle: the list of records on the left, the \
-                 form for the selected record on the right. Clicking a row in the list opens it in \
-                 the form; ➕ New starts a blank one. Nothing is stored until you click 💾 Save.",
+                "Every record tab is split down the middle into two halves: the LIST of records \
+                 on the left, and the FORM for whichever one is selected on the right. Click a row \
+                 in the list to load it into the form on the right; click ➕ New to start a blank \
+                 one instead. Nothing you type is actually stored anywhere until you click 💾 \
+                 Save — up until then, it only exists on your screen.",
             ),
-            Block::Warn(
-                "Selecting a different record discards unsaved edits to the one you were on. Save \
-                 before you click away.",
+            Block::Note(
+                "Typed something and then clicked away without saving it? vaultis now warns you \
+                 about that live, right in the strip along the very bottom of the window, the \
+                 moment it happens — look for “⚠ unsaved changes” there whenever you have edits \
+                 that have not been saved yet. See “Creating, editing, and deleting” for the full \
+                 save/discard behaviour.",
             ),
-            Block::Sub("Status line and error banner"),
+            Block::Sub("The thin status line, and the red banner"),
             Block::P(
-                "The thin line along the bottom reports the result of the last action (“Saved.”, \
-                 “Exported to …”). A genuine failure — a save that did not land, an upload that \
-                 failed — additionally raises a red banner across the top of the window, so a \
-                 failure can never be missed by looking away from the status line. Dismiss it with \
-                 the button, or simply do something that succeeds.",
+                "A thin strip along the very bottom of the window reports the result of whatever \
+                 you just did — “Saved.”, “Exported to …”, and so on — and it is also where the \
+                 unsaved-changes and clipboard-timer notices described above appear. A genuine \
+                 FAILURE — a save that did not actually land, an upload that could not complete — \
+                 additionally raises a red banner all the way across the TOP of the window, so a \
+                 failure can never be missed just because your eyes happened to be somewhere else \
+                 on screen. Dismiss the banner with its button, or simply do something that \
+                 succeeds and it clears on its own.",
             ),
         ],
     },
@@ -281,37 +445,43 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "tab-urgent",
         section: "The tabs",
         title: "URGENT",
-        blurb: "Free-text notes that must be read first. Deliberately the leftmost tab.",
+        blurb: "The handful of things someone must read within hours of opening this vault. Deliberately the very first, leftmost tab.",
         body: &[
             Block::P(
-                "The URGENT tab is for the handful of things someone must know within hours: where \
-                 the will is, who to phone, which bill is on auto-pay and must be stopped, the \
-                 safe's combination.",
+                "Think of URGENT as the note you would tape to the front door: the small number \
+                 of things a person needs to know immediately, not eventually — where the will \
+                 physically is, who to phone first, which bill is on autopay and needs to be \
+                 stopped, the combination to a safe. Nothing that can wait a week belongs here.",
             ),
             Block::P(
-                "Each entry is a title and a free-form body — no categories, no required structure. \
-                 It sits first so that whoever opens this vault under stress reads it before \
-                 anything else.",
+                "Each entry is simply a title and a free-form block of text — there are no \
+                 categories to pick and no required structure to follow, so you can write it the \
+                 way you would explain it out loud to someone standing in front of you.",
             ),
-            Block::Note("Keep it short. Anything that is not genuinely urgent belongs on the Instructions tab."),
+            Block::Note(
+                "URGENT is deliberately the FIRST tab, on the far left, so it is the first thing \
+                 anyone opening this vault under stress sees. Keep it genuinely short — anything \
+                 that is important but not time-critical belongs on the Instructions tab instead."
+            ),
         ],
     },
     Topic {
         id: "tab-instructions",
         section: "The tabs",
         title: "Instructions",
-        blurb: "Longer written guidance: what to do, in what order, and who to contact.",
+        blurb: "The longer written guidance that does not fit on a single URGENT note: what to do, in what order, and who to call.",
         body: &[
             Block::P(
-                "Instructions hold your written wishes and procedures — funeral arrangements, how to \
-                 close accounts, which professionals to contact, what to do with the house, notes \
-                 for specific people.",
+                "Instructions is where your fuller written wishes and step-by-step guidance live \
+                 — funeral arrangements, how to go about closing out each account, which \
+                 professionals (accountant, lawyer, financial advisor) to contact and why, what \
+                 you would like done with the house, or a private note for a specific person.",
             ),
-            Block::P("Each instruction is a title plus a body of text, and can have documents attached."),
+            Block::P("Each instruction has a title, a body of text you write freely, and can have documents attached to it, just like the other tabs."),
             Block::Note(
-                "Instructions are prose, not legal instruments. Nothing here substitutes for a will \
-                 or trust — use it to explain and point at those, and store copies on the Trust & \
-                 Will tab.",
+                "Instructions are your own words, not a legal document. Nothing written here \
+                 replaces an actual will or trust — use this tab to explain your intentions and \
+                 point the reader at the real documents, which belong on the Trust and Will tab.",
             ),
         ],
     },
@@ -319,17 +489,18 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "tab-trustwill",
         section: "The tabs",
         title: "Trust and Will",
-        blurb: "The estate instruments themselves, plus scans of the signed originals.",
+        blurb: "Your estate's legal instruments, and scans of the signed paper originals — plus, importantly, where those originals physically are.",
         body: &[
             Block::P(
-                "This tab holds your estate instruments: the will, trusts, powers of attorney, \
-                 healthcare directives, and the details of who drafted them and where the signed \
-                 originals physically live.",
+                "This tab is for your estate's actual legal instruments: the will itself, any \
+                 trusts, powers of attorney, healthcare directives, plus who drew them up and — \
+                 crucially — where the signed paper originals are physically kept.",
             ),
             Block::P(
-                "Attach scans with the Documents section of the form. The scan in the vault is a \
-                 convenience copy — record where the signed original is kept, because that is \
-                 usually the document that has legal force.",
+                "Use the Documents section of the form to attach a scan of each one. The copy \
+                 kept in the vault is a convenience, so the contents are never lost — but write \
+                 down where the SIGNED original lives, because in most cases that paper original, \
+                 not the scan, is the one that actually carries legal force.",
             ),
         ],
     },
@@ -337,30 +508,34 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "tab-assets",
         section: "The tabs",
         title: "Assets and Liabilities",
-        blurb: "What is owned and what is owed, optionally linked to the account that holds it.",
+        blurb: "Everything owned, and everything owed — with an optional link to the login that manages each one.",
         body: &[
             Block::P(
-                "One record per asset or liability: property, brokerage and retirement holdings, \
-                 vehicles, valuables, loans, mortgages, and credit lines. Each carries its owner, \
-                 its type, a value, and free-form detail.",
+                "One entry per thing you own or owe: real estate, brokerage and retirement \
+                 accounts, vehicles, valuables, loans, mortgages, and lines of credit. Each entry \
+                 records who owns it, what kind of thing it is, roughly what it is worth, and any \
+                 free-form notes you want to keep with it.",
             ),
-            Block::Sub("Grouped view"),
+            Block::Sub("Viewing it as a tree instead of a flat list"),
             Block::P(
-                "The grouped checkbox switches the list from a flat list to a tree of \
-                 owner > asset or liability > type, so a large estate stays navigable. Groups \
-                 expand and collapse independently and remember their state.",
+                "Tick the \"grouped\" checkbox to switch the list from one long flat list into a \
+                 tree — owner, then asset or liability, then type — which keeps a large estate \
+                 navigable instead of an endless scroll. Each branch of the tree expands and \
+                 collapses on its own, and vaultis remembers which branches you had open.",
             ),
-            Block::Sub("Linking to accounts"),
+            Block::Sub("Linking to the account that manages it"),
             Block::P(
-                "An asset can be linked to the accounts that hold or service it — the brokerage \
-                 login for a portfolio, the servicer login for a mortgage. Links are managed from \
-                 the asset side; the Accounts form shows the reverse (“linked from”) and offers a \
-                 jump back. See “Linking assets and accounts”.",
+                "An asset can be tied to the login that holds or services it — for example, the \
+                 brokerage login behind a portfolio, or the mortgage servicer's login behind a \
+                 house. Links are added from the asset's side of the connection; the matching \
+                 Account's form shows the reverse view (\"linked from\") with a button that jumps \
+                 straight back. Full walkthrough at “Linking assets and accounts”.",
             ),
-            Block::Sub("Review filter"),
+            Block::Sub("Narrowing to what needs another look"),
             Block::P(
-                "“review only” narrows the list to records flagged as needing another look — useful \
-                 for working through a backlog of half-finished entries.",
+                "Tick \"review only\" to shrink the list down to just the entries you have flagged \
+                 as needing a second pass — useful when you are working your way through a \
+                 backlog of half-finished entries a little at a time.",
             ),
         ],
     },
@@ -368,39 +543,48 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "tab-accounts",
         section: "The tabs",
         title: "Accounts",
-        blurb: "Logins and credentials, with faceted filters, search, and a grouped tree.",
+        blurb: "Every login and password you keep here, with filters, a forgiving search box, and an optional grouped view.",
         body: &[
             Block::P(
-                "The Accounts tab holds logins: bank and brokerage, utilities, insurance, email, \
-                 subscriptions, and anything else with a username and password. Title and Owner are \
-                 required on every account; everything else is optional.",
+                "Accounts is the tab for logins: bank and brokerage, utilities, insurance, email, \
+                 subscriptions, and anything else that has a username and a password. Every \
+                 account needs at minimum a Title and an Owner — everything else on the form is \
+                 optional, fill in only what you have.",
             ),
-            Block::Sub("Filters"),
+            Block::Sub("Narrowing a long list with the filter row"),
             Block::P(
-                "The filter row narrows the list by type, subtype, owner, and title. The filters are \
-                 faceted and cross-narrowing: each dropdown offers only values that actually occur \
-                 among the accounts matching the other active filters, so you can never reach an \
-                 inexplicably empty list. If a filter you had chosen stops being a valid option, it \
-                 clears itself.",
+                "The row of filters above the list narrows it by type, subtype, owner, and title. \
+                 These filters are smart about each other: each dropdown only ever offers choices \
+                 that actually exist among the accounts still matching your OTHER active filters, \
+                 so you can never end up staring at a filter combination that produces an \
+                 inexplicably empty list. If a filter you had picked stops making sense given the \
+                 others, it quietly clears itself rather than leaving you confused.",
             ),
             Block::Rows(&[
-                ("type / subtype / owner / title", "Faceted dropdowns; blank means no filter."),
-                ("review only", "Show only accounts flagged for review."),
-                ("reveal all", "Unmask every password on this screen. See “Passwords: reveal, generate, copy”."),
-                ("grouped", "Switch between a flat list and an owner > type > subtype > title tree."),
+                ("type / subtype / owner / title", "Dropdowns that narrow the list; leaving one blank means \"don't filter by this\"."),
+                ("review only", "Shows only the accounts you have flagged as needing another look."),
+                ("reveal all", "Unmasks every password on this screen at once. See “Passwords: reveal, generate, copy”."),
+                ("grouped", "Switches between one flat list and a tree organised owner, then type, then subtype, then title."),
                 (
                     "🔍 search",
-                    "The outlined box in the filter row: free text matched against the username OR \
-                     the title, ignoring case, matching anywhere in the value, and forgiving of \
-                     spelling. It glows and gains a × while it is filtering. See “Searching”.",
+                    "The outlined, pill-shaped box in the filter row — you can tell it apart from \
+                     the plain dropdowns next to it. Type into it and the list narrows as you go, \
+                     with no button to press. It matches free text against the username OR the \
+                     title, ignores upper/lower case, matches anywhere in the value (not only the \
+                     start), and is forgiving of spelling. See “Searching” for exactly how.",
                 ),
-                ("Clear", "Reset every filter, the review flag, and the search box at once."),
-                ("Trim all fields", "One-off maintenance: strip leading/trailing whitespace from every field of every record in the whole vault (write mode; recorded in history)."),
+                ("Clear", "Resets every filter, the review flag, and the search box at once, back to a clean slate."),
+                (
+                    "Trim all fields",
+                    "A one-off cleanup button: it strips stray leading and trailing spaces from \
+                     every field of every record in the WHOLE vault, not just this tab (write \
+                     mode only; the change is recorded in each record's history).",
+                ),
             ]),
             Block::Note(
-                "Starting a new account while filters are active pre-fills the new record with \
-                 those filter values — filter to a type and owner first, and the new record starts \
-                 half-written.",
+                "Starting a brand-new account while a filter is active pre-fills the blank form \
+                 with those same filter values — so if you filter to a specific type and owner \
+                 first, the new record you create already starts half filled-in for you.",
             ),
         ],
     },
@@ -408,32 +592,35 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "tab-realestate",
         section: "The tabs",
         title: "Real Estate",
-        blurb: "Property records with four portal logins each.",
+        blurb: "One record per property, each carrying four separate portal logins — the four accounts anyone settling an estate always ends up needing.",
         body: &[
             Block::P(
-                "One record per property: address, ownership, purchase and valuation details, and \
-                 whatever notes matter. Documents — deeds, surveys, policies, closing statements — \
-                 attach to the property.",
+                "One record per property you own: its address, who owns it, purchase and \
+                 valuation details, and whatever notes matter. Documents that belong to the \
+                 property — deeds, surveys, insurance policies, closing statements — attach \
+                 directly to it.",
             ),
-            Block::Sub("The four portals"),
+            Block::Sub("Why four separate logins"),
             Block::P(
-                "A property carries four separate logins, because these are the four accounts \
-                 someone settling an estate always ends up needing:",
+                "Every property record carries four SEPARATE logins, because these are the four \
+                 accounts that someone settling an estate almost always ends up needing to find:",
             ),
             Block::Bullets(&[
                 "Property management",
                 "Insurance",
-                "HOA",
-                "Tax",
+                "HOA (homeowners' association)",
+                "Tax (the property-tax authority or its payment portal)",
             ]),
             Block::P(
-                "Each portal has a URL, a username, a password, and a free-form comment for the \
-                 things that never fit a field — the security question, the account number, who to \
-                 ask for.",
+                "Each of the four has its own web address, username, password, and a free-form \
+                 comment box for the odd details that never fit a labelled field — a security \
+                 question's answer, an account number, or who specifically to ask for when you \
+                 call.",
             ),
             Block::Note(
-                "This tab has its own “reveal all” toggle, separate from the one on Accounts, so \
-                 revealing on one screen never unmasks the other.",
+                "Real Estate has its own \"reveal all\" switch, kept completely separate from the \
+                 one on the Accounts tab, so unmasking passwords on one screen never accidentally \
+                 unmasks them on the other.",
             ),
         ],
     },
@@ -441,71 +628,79 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "tab-taxes",
         section: "The tabs",
         title: "Taxes",
-        blurb: "Filings by year, each with its own set of attached documents.",
+        blurb: "One entry per year's tax filing, each able to hold several attached documents at once.",
         body: &[
             Block::P(
-                "One record per filing: the year, the jurisdiction, the preparer, and the details of \
-                 what was filed. Returns, schedules, K-1s, and correspondence attach to the filing \
+                "One record per filing: which year it covers, which jurisdiction (federal, state, \
+                 etc.), who prepared it, and any notes about what was filed. Returns, schedules, \
+                 K-1s, and any correspondence with the tax authority attach to the specific year \
                  they belong to.",
             ),
             Block::P(
-                "Unlike most tabs, a tax filing holds a numbered LIST of documents, and the export \
-                 and remove buttons act on the entry you pick from that list.",
+                "Unlike most other tabs, a single tax filing holds a numbered LIST of several \
+                 documents rather than just one — the export and remove buttons act on whichever \
+                 entry you pick from that list.",
             ),
-            Block::Note("A few prior years of returns are usually the first thing an estate's accountant asks for."),
+            Block::Note("A few years of past returns are usually the very first thing an estate's accountant will ask for."),
         ],
     },
     Topic {
         id: "tab-general",
         section: "The tabs",
         title: "General Documents",
-        blurb: "The catch-all: anything worth keeping that fits no other tab.",
+        blurb: "The catch-all tab: anything worth keeping safe that does not belong to an account, a property, or a tax year.",
         body: &[
             Block::P(
-                "Passports, birth and marriage certificates, military records, diplomas, warranties, \
-                 vehicle titles, membership records — anything that should survive with the estate \
-                 but does not belong to an account, a property, or a filing.",
+                "Passports, birth and marriage certificates, military records, diplomas, \
+                 warranties, vehicle titles, membership records — anything that ought to survive \
+                 along with the rest of the estate, but has no natural home on any of the other \
+                 tabs.",
             ),
-            Block::P("Each record is a title, a description, and its attached files."),
+            Block::P("Each entry is simply a title, a short description, and its one attached file."),
         ],
     },
     Topic {
         id: "tab-summary",
         section: "The tabs",
         title: "Summary",
-        blurb: "A read-only overview of assets and liabilities per owner.",
+        blurb: "A calculated, read-only overview: what each owner has, and what they owe, added up automatically.",
         body: &[
             Block::P(
-                "Summary is a calculated view, not a record type: nothing on it can be edited. It \
-                 totals the Assets and Liabilities tab per owner, splitting assets into buckets \
-                 (real estate, cash, before-tax, after-tax) against a single liability column.",
+                "Summary is not a record type you fill in yourself — nothing on this tab can be \
+                 typed into or edited. It is calculated automatically from the Assets and \
+                 Liabilities tab, totalled per owner, with assets split into buckets (real \
+                 estate, cash, before-tax, after-tax) set against a single liability column.",
             ),
-            Block::Sub("Which bucket a record lands in"),
+            Block::Sub("How vaultis decides which bucket an asset lands in"),
             Block::P(
-                "The bucket is inferred from the record's TYPE and INSTITUTION text, so it follows \
-                 the words you already use rather than asking for another field:",
+                "You never have to pick a bucket yourself — vaultis reads the words you already \
+                 typed into the record's TYPE and INSTITUTION fields and infers it:",
             ),
             Block::Rows(&[
-                ("Real estate", "Type or institution mentions real estate, property, or rental (assets only)."),
+                ("Real estate", "The type or institution mentions real estate, property, or rental (assets only — never liabilities)."),
                 ("Before tax", "Mentions retirement, pension, annuity, IRA, Roth, 401/403/457, TSP, or HSA."),
                 ("Cash", "Mentions cash, savings, checking, or money market."),
-                ("After tax", "Everything else — a plain brokerage account, a vehicle, a valuable."),
+                ("After tax", "Everything else — an ordinary brokerage account, a vehicle, a valuable item."),
             ]),
             Block::Note(
-                "A retirement word wins over a cash word, so a “Roth savings” is counted as \
-                 before-tax, not cash. Liabilities are never put in the real-estate bucket — a \
-                 mortgage is a debt, and the view does not tax-split debts.",
+                "A retirement-sounding word always wins over a cash-sounding one, so \"Roth \
+                 savings\" is counted as before-tax, not cash. Liabilities are never placed in the \
+                 real-estate bucket — a mortgage is treated as a plain debt, and this view does not \
+                 try to split debts by tax treatment.",
             ),
-            Block::Sub("How the values are read"),
+            Block::Sub("How the dollar values are read"),
             Block::Bullets(&[
-                "The value field is free text: a currency symbol, thousands separators, and a k/m/b \
-                 suffix are all understood (1.2m is 1,200,000).",
-                "Anything that is not a number at all counts as zero rather than breaking the total.",
-                "Totals are shown rounded to whole currency units, so the columns stay readable.",
-                "Records with an empty owner are totalled under their own blank-owner row, which is \
-                 usually the sign of a record left half-filled.",
+                "The value field is ordinary free text: a currency symbol, thousand-separating \
+                 commas, and a k/m/b suffix are all understood automatically (1.2m is read as \
+                 1,200,000).",
+                "Anything typed that is not recognisable as a number at all is counted as zero \
+                 rather than breaking the whole total.",
+                "Totals shown are rounded to whole currency units, so the columns stay easy to read.",
+                "Any record left with a blank owner is totalled under its own blank-owner row — \
+                 which is usually a useful sign that the record was left half-filled and needs a \
+                 second look.",
             ]),
-            Block::P("Its numbers are only as good as the values on the individual records — it adds up what is there, nothing more."),
+            Block::P("Its numbers are only ever as good as the values typed into the individual records — it adds up what is there, and nothing more."),
         ],
     },
     // --- Working with records ------------------------------------------------
@@ -513,51 +708,61 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "editing",
         section: "Working with records",
         title: "Creating, editing, and deleting",
-        blurb: "The save/delete cycle shared by every tab.",
+        blurb: "The same three-step save cycle on every single tab: click, fill in, save — plus exactly what happens if you forget the last step.",
         body: &[
             Block::Steps(&[
-                "Click ➕ New for a blank record, or click an existing row to load it into the form.",
-                "Fill in the fields. Dropdowns come from the type lists in Config; a record's existing value stays selectable even if it is no longer on the list.",
-                "Click 💾 Save. The vault file is rewritten and the change is logged to the record's history.",
+                "Click ➕ New for a blank record, or click an existing row in the list to load it into the form.",
+                "Fill in the fields. Dropdown fields are drawn from the type lists set up in Config; a record's existing value stays selectable there even if it has since been removed from that list.",
+                "Click 💾 Save. The vault file is rewritten on disk, and the change is added to that record's own history log.",
             ]),
             Block::Warn(
-                "Edits live only in the form until you save. Selecting another record, switching \
-                 tabs, or quitting discards them without a prompt.",
+                "Nothing you type is stored anywhere until you click Save. Selecting a different \
+                 record, switching to another tab, or closing the app all discard whatever you \
+                 were typing, with no confirmation prompt. vaultis now warns you about this LIVE \
+                 — look for “⚠ unsaved changes” in the strip along the bottom of the window \
+                 whenever you have edits sitting unsaved on screen.",
             ),
-            Block::Sub("What a record must have"),
+            Block::Sub("What a record is required to have"),
             Block::P(
-                "Every record needs a Title, and an Account needs an Owner as well; blank or \
-                 whitespace-only does not count. A save that is missing one says which field it \
-                 wants instead of saving something unfindable.",
+                "Every record needs at least a Title, and an Account additionally needs an Owner — \
+                 typing only blank space does not count as filling either in. If you try to save \
+                 something missing one of these, vaultis tells you exactly which field it still \
+                 needs, rather than silently saving a record nobody could ever find again.",
             ),
             Block::Note(
-                "Starting a new record while filters or a search are active pre-fills it from them, \
-                 and saving relaxes any filter that would have hidden the record you just saved — so \
-                 a new entry never vanishes the moment you store it.",
+                "Starting a new record while a filter or a search is active pre-fills the blank \
+                 form from them, and saving automatically relaxes any filter that would otherwise \
+                 have hidden the record you just created — so a brand-new entry never seems to \
+                 vanish the instant you save it.",
             ),
             Block::Sub("Trim all fields"),
             Block::P(
-                "A one-off maintenance button on the Accounts tab (write mode): it strips leading \
-                 and trailing whitespace from every field of every record in the WHOLE vault, not \
-                 just this tab, and records the change in each record's history. Useful after \
-                 importing or pasting data in bulk, where stray spaces make two identical-looking \
-                 owners sort and group as two different people.",
+                "A one-off cleanup button, on the Accounts tab, available in write mode: it strips \
+                 stray leading and trailing spaces from every field of every record in the WHOLE \
+                 vault, not only this tab, and records the change in each record's history. Handy \
+                 after importing or pasting in data in bulk, where an invisible extra space can \
+                 make two identical-looking owner names sort and group as if they were two \
+                 different people.",
             ),
-            Block::Sub("Deleting"),
+            Block::Sub("Deleting a record"),
             Block::P(
-                "🗑 Delete removes the selected record and reclaims the space used by any documents \
-                 attached to it. Deleting an account that assets still link to asks for \
-                 confirmation first, and tells you how many records link to it.",
+                "🗑 Delete removes the selected record and reclaims the storage space used by any \
+                 documents that were attached to it. If you try to delete an account that other \
+                 assets are still linked to, vaultis asks you to confirm first and tells you \
+                 exactly how many other records point at it.",
             ),
             Block::Note(
-                "Those links are deliberately NOT cascaded — deleting the account leaves the asset's \
-                 link showing as an unresolved id rather than silently editing a record you did not \
-                 open. Nothing in this app deletes data you did not ask it to delete.",
+                "Those links are deliberately NOT deleted along with the account — deleting the \
+                 account leaves the linked asset's link showing as an unresolved id rather than \
+                 silently rewriting a record you never opened. Nothing in this app ever deletes \
+                 data you did not directly ask it to delete.",
             ),
-            Block::Sub("Saves are crash-safe"),
+            Block::Sub("Saves cannot be interrupted into a half-written mess"),
             Block::P(
-                "A save writes a new copy and swaps it into place atomically. Losing power in the \
-                 middle leaves either the old vault or the new one, never a half-written mixture.",
+                "Every save first writes a complete new copy of the file, then swaps it into place \
+                 in one instant step. Losing power or the app crashing in the middle of that leaves \
+                 you with either the OLD complete vault or the NEW complete vault — never a \
+                 corrupted mixture of the two.",
             ),
         ],
     },
@@ -565,35 +770,40 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "secrets",
         section: "Working with records",
         title: "Passwords: reveal, generate, copy",
-        blurb: "How secrets are shown, made, and put on the clipboard.",
+        blurb: "How the passwords stored inside your vault are shown on screen, generated for you, and safely put on the clipboard.",
         body: &[
-            Block::Sub("Reveal"),
+            Block::Sub("Revealing a masked password"),
             Block::P(
-                "Reveal is a single screen-wide toggle — “reveal all” — on Accounts and on Real \
-                 Estate. There is no per-record reveal, so there is no ambiguity about what is \
-                 currently visible on screen.",
+                "Passwords are masked (shown as dots) by default. There is a single screen-wide \
+                 \"reveal all\" switch for this — on the Accounts tab and, separately, on the Real \
+                 Estate tab — rather than a toggle on each individual field, so there is never any \
+                 ambiguity about which passwords are currently visible on your screen.",
             ),
             Block::P(
-                "Switching tabs resets reveal to whatever “Reveal all passwords by default” is set \
-                 to in Config. With that preference off (the default) every tab re-masks when you \
-                 leave it, so a revealed password cannot linger on screen for a bystander.",
+                "Switching to a different tab resets reveal back to whatever \"Reveal all \
+                 passwords by default\" is set to in Config. With that preference left off (the \
+                 default), every tab re-masks itself the moment you leave it, so a password you \
+                 revealed cannot linger visible on screen for someone glancing over your shoulder \
+                 later.",
             ),
-            Block::Sub("Generate"),
+            Block::Sub("Generating a new, strong password"),
             Block::P(
-                "🎲 fills the field with a strong random password and turns reveal on so you can \
-                 see and record what was generated. It replaces whatever was in the field — copy \
-                 the old value first if you still need it.",
+                "Clicking 🎲 fills the field with a strong, randomly generated password and turns \
+                 reveal on automatically so you can actually see and, if you like, write down what \
+                 it generated. It REPLACES whatever was already typed in that field — copy the old \
+                 value first if you might still need it.",
             ),
-            Block::Sub("Copy"),
+            Block::Sub("Copying a password to the clipboard"),
             Block::P(
-                "📋 copies the password to the clipboard through a path flagged to keep it out of \
-                 clipboard-manager history.",
+                "Clicking 📋 copies the password to your clipboard, flagged along the way to be \
+                 kept out of any clipboard-history tool running on your computer.",
             ),
             Block::Bullets(&[
-                "The clipboard is cleared automatically 15 seconds after a copy.",
-                "It is cleared again when the app exits.",
-                "A clipboard manager that ignores the exclusion flag may still keep a copy — the \
-                 15-second clear only overwrites the live clipboard, not somebody else's log of it.",
+                "The clipboard clears itself automatically 15 seconds after a copy.",
+                "It is cleared again the moment the app exits, just to be sure.",
+                "A clipboard-history tool that ignores that exclusion flag may still keep its own \
+                 record of what was copied — the 15-second auto-clear only overwrites the live \
+                 clipboard, it cannot reach into somebody else's separate log of it.",
             ]),
         ],
     },
@@ -601,55 +811,65 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "searching",
         section: "Working with records",
         title: "Searching",
-        blurb: "How the highlighted search box matches — anywhere in the value, and by how a name sounds.",
+        blurb: "How the highlighted search box matches — anywhere inside the text, and even by how a name SOUNDS if you are not sure how to spell it.",
         body: &[
             Block::P(
-                "The Accounts tab's filter row carries a search box, drawn as an outlined pill with \
-                 a magnifier so it stands out from the dropdowns around it. Type into it and the \
-                 list narrows as you type; there is no button to press.",
+                "The Accounts tab's filter row has a search box, drawn as an outlined pill shape \
+                 with a magnifying glass so it visually stands apart from the plain dropdowns \
+                 beside it. Type into it and the list narrows as you go — there is no button to \
+                 press and nothing to submit.",
             ),
-            Block::Sub("How to tell it is on"),
+            Block::Sub("How to tell whether a search is currently active"),
             Block::P(
-                "While a search is active the box is tinted, its outline thickens, and a × appears \
-                 inside it to clear the query. A “filtered” badge also shows in the filter row \
-                 whenever anything — a search or a dropdown — is hiding rows. A short list with no \
-                 visible reason is the most common “where did my records go” moment, so the state is \
-                 made obvious rather than left for you to remember.",
+                "While a search is filtering the list, the box itself is tinted, its outline gets \
+                 thicker, and a × appears inside it so you can clear it with one click. A \
+                 \"filtered\" badge also appears in the filter row whenever anything at all — a \
+                 search, or a dropdown — is hiding some rows from view. An unexpectedly short list \
+                 with no obvious reason is the single most common \"where did my records go\" \
+                 moment, so this state is made deliberately hard to miss rather than left for you \
+                 to remember on your own.",
             ),
-            Block::Sub("What it matches"),
+            Block::Sub("What the search box actually matches"),
             Block::Bullets(&[
-                "The account's USERNAME or its TITLE — a hit in either keeps the record.",
-                "Case is ignored: alice, Alice, and ALICE are the same query.",
-                "The letters may appear ANYWHERE in the value, not only at its start. “elit” finds \
-                 “Fidelity”, and “heck” finds “Checking”.",
-                "Sound-alike spellings match too: “jonson” finds Johnson, “catherine” finds \
-                 Katherine, “smith” finds Smyth. The words inside an email address or handle are \
-                 heard separately, so “smith” also finds alice.smyth@example.com.",
-                "Several words narrow rather than widen: EVERY word you type must be satisfied, so \
-                 “catherine smith” finds Katherine Smyth but not Katherine Jones.",
+                "The account's USERNAME or its TITLE — a match in either one keeps that record on \
+                 screen.",
+                "Case is ignored entirely: alice, Alice, and ALICE are treated as the same query.",
+                "The letters you type may appear ANYWHERE inside the value, not only at its very \
+                 start. \"elit\" finds \"Fidelity\"; \"heck\" finds \"Checking\".",
+                "Sound-alike spellings match too: typing \"jonson\" finds Johnson, \"catherine\" \
+                 finds Katherine, \"smith\" finds Smyth. The separate words inside an email address \
+                 or handle are heard individually, so \"smith\" also finds alice.smyth@example.com.",
+                "Typing several words NARROWS the results rather than widening them: EVERY word \
+                 you type must be satisfied somewhere, so \"catherine smith\" finds Katherine \
+                 Smyth, but not Katherine Jones.",
             ]),
-            Block::Sub("Where sound-alike stops"),
+            Block::Sub("Where the sound-alike matching deliberately stops"),
             Block::P(
-                "Sound-alike matching is only applied to words of three letters or more, and never \
-                 to digits. A short query like “u2” or a number like “2024” must therefore appear \
-                 literally — which is what you want, since “u1” and “u2” are two different logins \
-                 and no number sounds like another.",
+                "Sound-alike matching only kicks in for words of three letters or more, and it \
+                 never applies to digits at all. A short query like \"u2\", or a number like \
+                 \"2024\", must therefore be typed exactly as it appears — which is what you want, \
+                 since \"u1\" and \"u2\" are two entirely different logins, and no number \"sounds \
+                 like\" another one.",
             ),
             Block::Note(
-                "The matching is deliberately generous: it is built to find a name you cannot spell, \
-                 so it will occasionally offer a record you were not looking for. The type, subtype, \
-                 owner, and title dropdowns are the exact tools — combine one with the search to \
-                 narrow hard. The dropdowns stay consistent with whatever the search shows, so they \
-                 never offer a value that would produce an empty list.",
+                "This matching is deliberately generous: it exists to help you find a name you \
+                 cannot quite spell, so every so often it will offer up a record you were not \
+                 actually looking for. The type, subtype, owner, and title dropdowns next to it \
+                 are the exact, no-guessing tools — combine one of those with the search box to \
+                 narrow things down hard. The dropdowns always stay in step with whatever the \
+                 search is currently showing, so they will never offer you a choice that would \
+                 leave the list empty.",
             ),
-            Block::Sub("Elsewhere in the app"),
+            Block::Sub("This same search box shows up elsewhere in the app"),
             Block::Bullets(&[
-                "The “Link an account…” dropdown on an asset has the same search box in its popup — \
-                 see “Linking assets and accounts”.",
-                "This manual's own search (top right of the Help screen) matches topic titles and \
-                 body text, and also requires every word you type.",
-                "The terminal interface has the same account search: press / to type a query, Enter \
-                 to keep it, Esc to clear it. It is shown in the header as find~\"…\".",
+                "The \"Link an account…\" dropdown on an asset has this identical search box \
+                 inside its popup — see “Linking assets and accounts”.",
+                "This manual's own search box, in the top-right corner of the Help screen, matches \
+                 topic titles and article text the same way, and also requires every word you \
+                 type to be found.",
+                "The keyboard-driven terminal interface has the same account search: press / to \
+                 type a query, Enter to keep it, Esc to clear it. It shows up in the header there \
+                 as find~\"…\".",
             ]),
         ],
     },
@@ -657,47 +877,61 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "documents",
         section: "Working with records",
         title: "Documents: attaching and exporting",
-        blurb: "Getting files into the encrypted archive, and decrypted copies back out.",
+        blurb: "How to get a file from your computer INTO the encrypted archive, and how to get a plain, readable copy back OUT of it again.",
         body: &[
-            Block::Sub("Attaching"),
+            Block::Sub("Attaching a file"),
             Block::Steps(&[
-                "Put the file's path in “Upload from”. Paste it straight from your file manager — a \
-                 path wrapped in double quotes is accepted as-is (see “Typing file and folder paths”).",
-                "Optionally add a subfolder to organise it inside the vault.",
-                "Optionally set a filename. Leave it blank to keep the source file's own name.",
-                "Click the upload button. The file is encrypted into the vault's document archive.",
+                "Put the file's location on your computer into the \"Upload from\" box. Pasting it \
+                 straight from your file manager works even if it comes wrapped in double quotes — \
+                 see “Typing file and folder paths”.",
+                "Optionally, type a subfolder name to help organise it once it is inside the vault.",
+                "Optionally, set a different filename for it. Leave this blank to simply keep the \
+                 original file's own name.",
+                "Click the upload button. vaultis reads the file, encrypts it, and stores that \
+                 encrypted copy inside the vault's document archive.",
             ]),
             Block::P(
-                "The original file is not moved or deleted — the vault takes an encrypted copy. If \
-                 the original was the only copy of something sensitive, delete it yourself \
-                 afterwards.",
+                "The ORIGINAL file on your computer is left exactly where it was — it is not moved \
+                 or deleted, the vault simply takes an encrypted copy of it. If that original was \
+                 the only copy of something sensitive, it is up to you to delete it yourself \
+                 afterwards if you want it gone.",
             ),
-            Block::Sub("Where documents are stored"),
+            Block::Sub("Where your documents actually end up being stored"),
             Block::P(
-                "Storage paths are derived automatically, owner-first, with the upload time folded \
-                 into the filename:",
+                "You do not have to think about folder structure — vaultis works it out for you \
+                 automatically, owner-first, with the exact time of upload folded into the \
+                 filename so nothing ever collides:",
             ),
             Block::Rows(&[(
                 "Layout",
                 "[<owner initials>/]<record type>[/<group>][/<your subfolder>]/<timestamp>_<filename>",
             )]),
             Block::P(
-                "You control only the optional subfolder and the filename; the rest keeps documents \
-                 from different owners and record types from colliding.",
+                "You only ever control the optional subfolder name and the filename; everything \
+                 else in that path is handled for you, and exists specifically to stop documents \
+                 belonging to different owners or different kinds of record from ever mixing \
+                 together.",
             ),
-            Block::Sub("Exporting"),
+            Block::Sub("Getting a document back out again"),
             Block::P(
-                "Export writes a DECRYPTED copy of the document to the export directory set in \
-                 Config, recreating its folder structure underneath. You are not asked for a path \
-                 each time — set it once in Config.",
+                "Exporting writes a fully DECRYPTED, ordinary copy of the document into the export \
+                 directory set once in Config, rebuilding its folder structure underneath that \
+                 directory. You are never asked to pick a location each time you export — you set \
+                 it once, in Config, and every Export button from then on writes there.",
             ),
             Block::Bullets(&[
-                "An export never overwrites an existing file; it adds a _2, _3, … suffix instead.",
-                "Export works in read-only mode, which is how an heir gets documents out.",
+                "An export never silently overwrites a file that is already there; it adds a _2, \
+                 _3, and so on to the filename instead.",
+                "Exporting works even in a read-only session — this is deliberately how an heir, \
+                 who may never use write mode at all, actually gets documents out onto their own \
+                 computer.",
             ]),
             Block::Warn(
-                "Exported files are plain, unencrypted copies sitting in an ordinary folder. Put \
-                 them somewhere you trust and delete them when you are done.",
+                "Every exported file is a plain, unencrypted copy sitting in an ordinary folder on \
+                 your disk, just like any other document — the protection the vault gave it is \
+                 gone the moment it is exported. Put exported files somewhere you trust, and \
+                 delete them again once you are done with them. vaultis reminds you of this right \
+                 in the status line the moment an export finishes, not only here.",
             ),
         ],
     },
@@ -705,47 +939,53 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "links",
         section: "Working with records",
         title: "Linking assets and accounts",
-        blurb: "Tying an asset to the login that manages it, and navigating between them.",
+        blurb: "Tying an asset or liability to the login that actually manages it, and jumping straight between the two later.",
         body: &[
             Block::P(
-                "An asset or liability can name the accounts that hold or service it: the brokerage \
-                 login behind a portfolio, the servicer login behind a mortgage, the bank login \
-                 behind a cash balance.",
+                "An asset or liability can name the account (or accounts) that hold or service it \
+                 — the brokerage login behind a portfolio, the mortgage servicer's login behind a \
+                 house, the bank login behind a cash balance. This is purely a convenience for \
+                 finding your way around later; it does not change either record's own data.",
             ),
             Block::Steps(&[
                 "Open the asset on the Assets and Liabilities tab.",
-                "In its 🔗 Linked accounts section, open the “➕ Link an account…” dropdown.",
-                "Type a few letters in the search box at the top of the popup to find the account, \
-                 then click it.",
-                "Save the asset. Links live on the asset record, so they are stored when it is saved.",
+                "In its 🔗 Linked accounts section, click open the \"➕ Link an account…\" dropdown.",
+                "Type a few letters into the search box at the top of the popup to find the \
+                 account you want, then click it.",
+                "Save the asset. Links are stored ON the asset record itself, so they only take \
+                 effect once you save it.",
             ]),
-            Block::Sub("Finding the right account in the dropdown"),
+            Block::Sub("Finding the right account inside the dropdown"),
             Block::P(
-                "The popup opens with its search box already focused, so you can start typing \
-                 immediately. The list below narrows to the matching accounts and scrolls the best \
-                 match into view as you type. Matching is the same as the Accounts search box: the \
-                 letters may appear anywhere in the entry, not only at its beginning, and a \
-                 sound-alike spelling still finds it (see “Searching”).",
+                "The popup opens with its search box already focused, so you can simply start \
+                 typing the moment it appears — no extra click needed. The list underneath it \
+                 narrows to matching accounts as you type, and automatically scrolls the best \
+                 match into view. It matches exactly the same way the Accounts search box does: \
+                 the letters can appear anywhere in the entry, not only at the very start, and a \
+                 sound-alike spelling still finds it — see “Searching” for the full rules.",
             ),
             Block::Bullets(&[
-                "Only accounts that are NOT already linked to this asset are offered, so a link \
-                 cannot be added twice.",
-                "The query is forgotten when the popup closes — the next time you open it, the full \
-                 list is back rather than a stale filter you have to notice.",
-                "If nothing matches, the popup says so instead of appearing empty.",
+                "Only accounts that are NOT already linked to this particular asset are offered, \
+                 so it is impossible to add the same link twice by accident.",
+                "Whatever you typed is forgotten the moment the popup closes — the next time you \
+                 open it, you get the full list again rather than a stale, half-remembered filter.",
+                "If nothing matches what you typed, the popup says so plainly rather than simply \
+                 appearing empty and leaving you unsure whether it is broken.",
             ]),
-            Block::Sub("The other direction"),
+            Block::Sub("Looking the other way — from the account back to its assets"),
             Block::P(
-                "The Accounts form shows every asset that links to the account you are looking at, \
-                 with a button to jump straight to it. Jumping switches tabs and clears any filter \
-                 that would have hidden the target, so the record you asked for is always the one \
-                 you land on. Links are edited on the asset side only, which is why that view is \
-                 read-only.",
+                "The Accounts form shows every asset that links back to whichever account you are \
+                 currently looking at, each with a button that jumps you straight to it. Jumping \
+                 switches tabs for you and clears any filter that would have hidden the asset you \
+                 asked for, so you always land on exactly the record you clicked, not on an empty \
+                 filtered list. Links can only be added or removed from the ASSET's side — which \
+                 is exactly why this reverse view on the account is read-only.",
             ),
             Block::Note(
-                "Links are stored by record id, so renaming either side keeps the link intact. \
-                 Deleting a linked account leaves the link showing as a raw id rather than editing \
-                 the asset behind your back.",
+                "Links are stored using the record's internal id, not its name, so renaming either \
+                 side of a link leaves the link itself perfectly intact. Deleting a linked account \
+                 leaves the link on the asset showing as a raw, unresolved id rather than silently \
+                 rewriting the asset record behind your back.",
             ),
         ],
     },
@@ -753,21 +993,24 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "history",
         section: "Working with records",
         title: "Record history",
-        blurb: "Every record keeps a log of what changed and when.",
+        blurb: "Every single record quietly keeps its own log of exactly what changed, and when — worth a glance before trusting an old entry.",
         body: &[
             Block::P(
-                "Each record carries its own change history, shown at the bottom of its form: what \
-                 was created, what fields were edited, and when. It is written automatically on \
-                 every save.",
+                "Every record carries its own private change history, shown at the very bottom of \
+                 its form: what was created, which fields were edited, and exactly when each of \
+                 those things happened. It is written automatically every time you save — there is \
+                 nothing you need to turn on.",
             ),
             Block::P(
-                "History is what tells you whether the login you are looking at was checked last \
-                 month or last decade — worth a glance before trusting an old credential.",
+                "History is what tells you whether the login you are looking at was checked and \
+                 confirmed working last month, or has not been touched in a decade — worth a quick \
+                 glance before you trust an old credential enough to actually use it.",
             ),
             Block::Note(
-                "History accumulates and makes the vault file grow. The `compact` command-line tool \
-                 can trim it (all of it, or everything before a date) when that matters; the \
-                 vault-level audit log is always kept.",
+                "History accumulates over time and slowly makes the vault file larger. The \
+                 command-line `compact` tool can trim it — either all of it, or everything before a \
+                 date you choose — once that starts to matter; the vault-level audit log itself is \
+                 always kept regardless. See “Keeping the vault small”.",
             ),
         ],
     },
@@ -776,64 +1019,72 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "config",
         section: "Settings & maintenance",
         title: "Config: every setting explained",
-        blurb: "Appearance, view defaults, type lists, export directory, storage, redundancy.",
+        blurb: "A plain-language walkthrough of every single option in Settings: appearance, what tabs look like by default, type lists, exports, storage, and redundancy.",
         body: &[
             Block::Sub("Appearance"),
             Block::P(
-                "Ten color themes: Light, Dark, High contrast, Solarized, Sepia, Nord, Dracula, \
-                 Gruvbox Dark, Gruvbox Light, and Rosé Pine. The choice applies instantly and is \
-                 remembered for the next launch.",
+                "Ten color themes to choose from: Light, Dark, High contrast, Solarized, Sepia, \
+                 Nord, Dracula, Gruvbox Dark, Gruvbox Light, and Rosé Pine. Your choice applies \
+                 immediately and is remembered the next time you open the app.",
             ),
             Block::Sub("View defaults"),
-            Block::P("Three preferences that decide how each tab looks when you arrive on it:"),
+            Block::P("Three small preferences that decide how each tab looks the moment you first arrive on it:"),
             Block::Rows(&[
-                ("Reveal all passwords by default", "Whether password fields start revealed rather than masked."),
-                ("Group assets by default", "Whether the Assets tab opens as a tree."),
-                ("Group accounts by default", "Whether the Accounts tab opens as a tree."),
+                ("Reveal all passwords by default", "Whether password fields start out already unmasked instead of hidden as dots."),
+                ("Group assets by default", "Whether the Assets tab opens already showing its tree view."),
+                ("Group accounts by default", "Whether the Accounts tab opens already showing its tree view."),
             ]),
             Block::Sub("Asset / Liability types · Account types & subtypes"),
             Block::P(
-                "The dropdown lists used by the record forms. Add a type or subtype with the boxes \
-                 provided; delete one with its × button. A type in use cannot be deleted, and an \
-                 account type with subtypes must have its subtypes removed first — the entries that \
-                 are safe to remove are marked “unused”.",
+                "These are the dropdown lists used throughout the record forms. Add a new type or \
+                 subtype using the boxes provided; remove one with its × button. A type currently \
+                 in use by a record cannot be deleted, and an account type that still has subtypes \
+                 under it must have those subtypes removed first — anything that IS safe to remove \
+                 right now is marked \"unused\" for you.",
             ),
-            Block::Note("These lists live inside the encrypted vault. There are no external configuration files to lose."),
+            Block::Note("These lists live INSIDE the encrypted vault itself — there are no separate configuration files sitting elsewhere that could get lost."),
             Block::Sub("Export directory"),
             Block::P(
-                "Where every Export button writes its decrypted copy. Stored as a local preference \
-                 rather than in the vault, so it can be set even in a read-only session. Paste the \
-                 folder path in and press its Set button; a path in double quotes is accepted and \
-                 stored without them (see “Typing file and folder paths”). Clearing the box and \
-                 setting it empty turns exporting off again.",
+                "This is the one folder every Export button writes its decrypted copy into. It is \
+                 stored as a preference on this computer rather than inside the vault, which is \
+                 why it can be set even during a read-only session. Paste the folder's path in and \
+                 click its Set button — a path wrapped in double quotes is accepted and stored \
+                 without them automatically, see “Typing file and folder paths”. Clearing the box \
+                 and setting it to empty turns exporting off again entirely.",
             ),
             Block::Sub("Backup"),
             Block::P(
-                "Copies the encrypted vault and its document archive into a timestamped folder \
-                 under the destination you give — the destination folder box takes a quoted path \
-                 too. Nothing is decrypted. See “Backups and recovery”.",
+                "Copies the whole encrypted vault and its document archive into a new, \
+                 timestamped folder under whichever destination you give it — that destination box \
+                 also accepts a quoted, pasted path. Nothing is decrypted in the process. See \
+                 “Backups and recovery” for the full picture.",
             ),
             Block::Sub("Storage — volume size"),
             Block::P(
-                "Documents are packed into fixed-size encrypted volumes; a new one starts once the \
-                 current one passes this size. Changing it affects only where future documents \
-                 land, never what is already stored.",
+                "Your uploaded documents are packed together into fixed-size encrypted blocks \
+                 called volumes; once the current one fills past this size, a new one starts \
+                 automatically. Changing this setting only affects where FUTURE documents get \
+                 packed — it never touches anything already stored.",
             ),
             Block::Sub("Vault file redundancy (advanced)"),
             Block::P(
-                "Keeps extra encrypted copies of the small vault file in place: a same-generation \
-                 mirror plus N previous generations — which doubles as an undo of the last save if \
-                 a save goes wrong. 0 turns it off.",
+                "Keeps extra encrypted backup copies of the small vault file sitting right beside \
+                 it: one same-generation mirror, plus a number of previous generations you choose \
+                 — which doubles as a built-in \"undo\" for your very last save if something goes \
+                 wrong with it. Set it to 0 to turn this off entirely.",
             ),
             Block::Warn(
-                "Redundancy protects against a damaged file, not against a lost, stolen, or burned \
-                 disk. It is not a substitute for backups kept somewhere else.",
+                "Redundancy only protects you against a single DAMAGED file — it does nothing at \
+                 all if the disk itself is lost, stolen, or destroyed in a fire. It is a safety net \
+                 for corruption, not a substitute for keeping real backups stored somewhere else \
+                 entirely. See “Backups and recovery”.",
             ),
             Block::Sub("Sync types from records"),
             Block::P(
-                "Scans every record and adds any type or subtype it uses that is missing from the \
-                 lists above. Useful after pulling records in from another vault whose type lists \
-                 differ from this one's.",
+                "Scans every single record in the vault and adds any type or subtype word it finds \
+                 in use that is missing from the dropdown lists above. Useful after pulling records \
+                 in from a second vault whose type lists were set up slightly differently from this \
+                 one's.",
             ),
         ],
     },
@@ -841,32 +1092,36 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "merge",
         section: "Settings & maintenance",
         title: "Updating from another vault",
-        blurb: "Pull newer records — and their documents — from a second vault. One-way and additive.",
+        blurb: "Pull newer records — and the documents attached to them — in from a second copy of this vault. Always one-way, and never deletes anything.",
         body: &[
             Block::P(
-                "If you keep a vault on more than one machine, this brings changes from another \
-                 copy into this one. It pulls records that are newer (or entirely new) in the other \
-                 vault, together with the documents those records reference.",
+                "If you keep a copy of this vault on more than one computer, this feature brings \
+                 changes made on the OTHER copy into the one you have open now. It looks at every \
+                 record that is newer, or entirely new, in the other vault, and pulls it in — along \
+                 with whichever documents that record needs.",
             ),
             Block::Bullets(&[
-                "One-way: the other vault is opened read-only and is never modified.",
-                "Additive: nothing in this vault is ever deleted by a merge.",
-                "Previewed: the exact list of changes is shown before anything is applied.",
+                "One-way only: the OTHER vault is only ever opened read-only during this process, and is never itself changed.",
+                "Additive only: nothing already in THIS vault is ever deleted by an update.",
+                "Previewed first: the exact list of every change is shown to you before anything is actually applied.",
             ]),
             Block::Steps(&[
-                "In Config, click “Update from another vault…” (write mode only).",
-                "Choose the other vault's folder — pasting a quoted path is fine — and enter ITS two passwords.",
-                "Read the preview: every record to be added or updated, plus the documents that come with them.",
-                "Apply, or go back and change nothing.",
+                "In Config, click \"Update from another vault…\" (write mode only).",
+                "Choose the other vault's folder — pasting a quoted path is fine — and type ITS \
+                 own two passwords, not this vault's.",
+                "Read through the preview carefully: every record about to be added or updated, \
+                 plus whichever documents come along with them.",
+                "Click Apply, or simply go back without changing anything if you are not ready.",
             ]),
             Block::Note(
-                "Back this vault up before applying a merge. The command-line equivalent is \
-                 `vaultis update-from OTHER [DIR] --dry-run`, which prints the same preview without \
-                 changing anything.",
+                "Back this vault up before applying an update, just in case. The equivalent \
+                 command-line tool is `vaultis update-from OTHER [DIR] --dry-run`, which prints the \
+                 exact same preview without actually changing anything.",
             ),
             Block::P(
-                "After a merge, run “Sync types from records” in Config if the incoming records use \
-                 types this vault's lists do not have yet.",
+                "After an update finishes, run \"Sync types from records\" in Config if the \
+                 records that came in use type or subtype words your own vault's lists do not have \
+                 yet.",
             ),
         ],
     },
@@ -874,30 +1129,33 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "backups",
         section: "Settings & maintenance",
         title: "Backups and recovery",
-        blurb: "What to copy, how often, and what will not save you.",
+        blurb: "What to actually copy, how often, and — importantly — the one thing no backup in the world can save you from.",
         body: &[
             Block::P(
-                "The Backup button in Config copies the whole encrypted vault — record file, \
-                 manifest, and document archive — into a timestamped folder. Nothing is decrypted, \
-                 so a backup is exactly as safe to store as the vault itself.",
+                "The Backup button in Config copies the ENTIRE encrypted vault — the record file, \
+                 the manifest, and the whole document archive — into a new, timestamped folder. \
+                 Nothing is decrypted along the way, so a backup is exactly as safe to store \
+                 anywhere as the vault itself already is.",
             ),
-            Block::Sub("What to do"),
+            Block::Sub("A simple routine worth actually following"),
             Block::Bullets(&[
-                "Back up after any session where you changed something.",
-                "Keep at least one copy on different physical media, and ideally one off-site.",
-                "Back up the whole vault FOLDER. A vault.pmv without its volume/ folder has records but no documents.",
-                "Test a backup occasionally by opening it read-only. An untested backup is a hope, not a backup.",
+                "Back the vault up after any session where you changed something.",
+                "Keep at least one copy on separate physical media from your computer, and ideally one copy off-site entirely (a different building, a safe-deposit box, a trusted relative's house).",
+                "Always back up the whole vault FOLDER, not pieces of it. A vault.pmv file without its matching volume/ folder has your records but none of your actual documents.",
+                "Test a backup every so often by opening it read-only, just to confirm it actually works. A backup you have never tested opening is a hope, not a real backup.",
             ]),
             Block::Warn(
-                "Your two passwords are not in the backup. A perfect backup plus a forgotten \
-                 password is unrecoverable — store the passwords with the same care as the data, \
-                 and somewhere your executor will find them.",
+                "Your two passwords are NOT stored inside the backup — they never are, anywhere. A \
+                 perfect backup paired with a forgotten password is exactly as unrecoverable as a \
+                 lost vault with no backup at all. Store the passwords with the same care you give \
+                 the data itself, somewhere your executor will genuinely be able to find them.",
             ),
-            Block::Sub("Recovering"),
+            Block::Sub("Recovering from a backup"),
             Block::P(
-                "To restore, copy a backup folder back and open it like any other vault. If \
-                 redundancy is enabled, a damaged vault.pmv can also be recovered in place from the \
-                 mirrored copies without going to a backup at all.",
+                "To restore, simply copy a backup folder back to wherever you keep vaults and open \
+                 it exactly like any other vault. If redundancy is turned on (see “Config: every \
+                 setting explained”), a damaged vault.pmv can sometimes even be repaired IN PLACE \
+                 from its mirrored copies, without needing to reach for a backup at all.",
             ),
         ],
     },
@@ -905,25 +1163,28 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "maintenance",
         section: "Settings & maintenance",
         title: "Keeping the vault small",
-        blurb: "Why it grows, and the command-line tools that shrink it.",
+        blurb: "Two reasons the vault file slowly grows over time, and the command-line tool that shrinks it back down.",
         body: &[
-            Block::P("Two things make a vault grow beyond the size of what it holds:"),
+            Block::P("Two things make the vault grow larger than what it actually holds, over time:"),
             Block::Bullets(&[
-                "Edit history — every save appends to the edited record's log.",
-                "Dead document blocks — replacing or detaching a document leaves its old encrypted \
-                 blocks in the archive rather than rewriting the whole volume on the spot.",
+                "Edit history — every single save appends one more entry to that record's log, forever, by default.",
+                "Leftover document blocks — replacing or detaching a document leaves its old \
+                 encrypted blocks sitting inside the archive rather than instantly rewriting the \
+                 whole volume just for that one change.",
             ]),
-            Block::P("The `compact` command reclaims both. It is a command-line operation because it rewrites the whole vault:"),
+            Block::P("The `compact` command reclaims both of these. It is a command-line-only operation because it has to rewrite the entire vault:"),
             Block::Rows(&[
-                ("vaultis compact [DIR] --volume", "Re-pack the document archive, dropping dead blocks."),
-                ("vaultis compact [DIR] --json --history-all", "Drop all record edit history."),
-                ("vaultis compact [DIR] --json --history-before YYYY-MM-DD", "Keep history from that date onward."),
-                ("--dry-run", "Report what would be reclaimed, change nothing."),
+                ("vaultis compact [DIR] --volume", "Re-packs the document archive from scratch, dropping the leftover blocks."),
+                ("vaultis compact [DIR] --json --history-all", "Drops ALL recorded edit history, for every record."),
+                ("vaultis compact [DIR] --json --history-before YYYY-MM-DD", "Keeps history from that date onward only, discarding anything older."),
+                ("--dry-run", "Reports exactly what would be reclaimed, without actually changing anything."),
             ]),
             Block::Note(
-                "Compaction backs up first by default and is crash-safe: an interruption leaves \
-                 either the old vault or the compacted one. The vault-level audit log is always \
-                 preserved.",
+                "Compaction backs the vault up first automatically by default, and is crash-safe \
+                 the same way saves are: an interruption partway through leaves you with either \
+                 the old vault or the fully compacted one, never a half-finished mixture. The \
+                 vault-level audit log itself is always preserved regardless of any of these \
+                 options.",
             ),
         ],
     },
@@ -932,34 +1193,50 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "security",
         section: "Reference",
         title: "How your data is protected",
-        blurb: "The cryptography, the memory handling, and the limits of both.",
+        blurb: "A plain-language summary of the encryption, how secrets are handled in memory, and — just as important — what none of this can protect you from.",
         body: &[
-            Block::Sub("Encryption"),
+            Block::Sub("The encryption, in plain terms"),
             Block::Bullets(&[
-                "Two passwords chained through Argon2id (a memory-hard key derivation function, \
-                 chosen to make brute-force guessing expensive) into one key.",
-                "XChaCha20-Poly1305 authenticated encryption for the vault, the manifest, and the \
-                 document volumes.",
-                "The file header is authenticated too, so tampering with the parameters is detected \
-                 rather than obeyed.",
-                "Decryption of tampered data fails outright — the app never shows you data it could \
-                 not verify.",
+                "Your two passwords are combined through a deliberately slow, memory-hungry \
+                 scrambling process called Argon2id, specifically chosen to make guessing \
+                 passwords by brute force extremely expensive — full detail in “For the \
+                 technically curious: why this is safe”.",
+                "The vault, its document index, and every document volume are all sealed with a \
+                 strong, modern cipher (XChaCha20-Poly1305) that both scrambles the data AND \
+                 detects any tampering with it.",
+                "Even the small header at the start of the file — which holds the technical \
+                 parameters used to lock it — is protected against tampering, so nobody can quietly \
+                 weaken the lock on a vault file and hand it back to you.",
+                "Reading data that has been damaged or tampered with FAILS outright rather than \
+                 showing you something wrong — the app never displays data it could not first \
+                 verify as genuine and untouched.",
             ]),
-            Block::Sub("In memory"),
+            Block::Sub("How secrets are handled while the app is running"),
             Block::Bullets(&[
-                "Passwords and decrypted secrets are overwritten with zeros as soon as they are no longer needed.",
-                "On desktop, secret memory is locked so the operating system will not page it out to disk.",
-                "The clipboard is cleared 15 seconds after a copy and again on exit.",
+                "Passwords and any decrypted secret are overwritten with zeros in memory the \
+                 instant they are no longer needed.",
+                "On desktop, the memory holding secrets is locked so the operating system is \
+                 not allowed to write it out to the disk's swap space.",
+                "The clipboard clears itself automatically 15 seconds after any copy, and again \
+                 when the app exits.",
             ]),
-            Block::Sub("What it does not protect against"),
+            Block::Sub("What none of this can protect you from"),
             Block::P(
-                "Encryption protects the vault at rest. It cannot protect a machine that is already \
-                 compromised: malware running as you, with the vault unlocked on screen, sees what \
-                 you see. Nor does it protect plaintext you have chosen to export.",
+                "Encryption protects the vault while it is sitting at rest, closed. It cannot \
+                 protect a computer that is already compromised: malware running as you, with the \
+                 vault unlocked on screen, sees exactly what you see — the same way it would with \
+                 any other program open. It also, obviously, cannot protect plaintext that you \
+                 yourself have chosen to export out onto the disk.",
             ),
             Block::Warn(
-                "The weakest link is almost never the cryptography. It is a password written \
-                 somewhere careless, or an exported folder of decrypted documents left behind.",
+                "In practice, the weakest point is almost never the cryptography itself. It is a \
+                 password written down somewhere careless, or a folder of exported, decrypted \
+                 documents left behind and forgotten about.",
+            ),
+            Block::Note(
+                "This is the plain-language version. For the actual algorithms, the reasoning \
+                 behind them, and specifically how this holds up against a future quantum \
+                 computer, see “For the technically curious: why this is safe”.",
             ),
         ],
     },
@@ -967,48 +1244,56 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "paths",
         section: "Reference",
         title: "Typing file and folder paths",
-        blurb: "Every path box accepts a pasted, quoted path — and what a path box will not do.",
+        blurb: "Every path box in the app accepts a pasted, quoted path exactly as your file manager gives it to you — and the couple of things a path box will not do.",
         body: &[
             Block::P(
-                "Several boxes in the app take a location on your disk rather than vault content. \
-                 They all behave the same way, so what you learn on one applies to the others:",
+                "Several boxes throughout the app ask for a location on your disk rather than \
+                 vault content — a folder, or a specific file. They all behave the same way, so \
+                 whatever you learn about one applies equally to all the others:",
             ),
             Block::Rows(&[
-                ("Vaults folder", "The start page's folder of vaults."),
-                ("Upload from", "The file to attach to a record."),
-                ("Export directory", "Where Export buttons write decrypted copies (Config)."),
-                ("Backup destination", "Where a backup folder is created (Config)."),
-                ("Other vault's folder", "The source of an update from another vault (Config)."),
+                ("Vaults folder", "The start page's folder that vaultis scans for your vaults."),
+                ("Upload from", "The specific file you want to attach to a record."),
+                ("Export directory", "Where every Export button writes its decrypted copies (set in Config)."),
+                ("Backup destination", "Where a new backup folder gets created (set in Config)."),
+                ("Other vault's folder", "The source vault when updating from another vault (set in Config)."),
             ]),
-            Block::Sub("Pasting a path with quotes"),
+            Block::Sub("Pasting a path that came wrapped in quotes"),
             Block::P(
-                "File managers and shells hand you a path wrapped in double quotes when it contains \
-                 spaces — Windows Explorer's right-click “Copy as path” always adds them. Paste it \
-                 in as it came: a matching pair of quotes around the whole path is recognised and \
-                 removed, so \"C:\\Users\\me\\My Vaults\" opens the folder it names. Spaces inside \
-                 the path are kept exactly as they are.",
+                "File managers and shells often hand you a path already wrapped in double quotes \
+                 whenever it contains spaces — Windows Explorer's right-click \"Copy as path\" \
+                 always does this, for example. Paste it in exactly as it came: a single matching \
+                 PAIR of quotes around the whole path is recognised and removed automatically, so \
+                 pasting \"C:\\Users\\me\\My Vaults\" opens the folder it names, spaces and all — the \
+                 spaces inside the path are always kept exactly as they are, never touched.",
             ),
             Block::Bullets(&[
-                "Surrounding blank space is trimmed as well, so a stray space from a copy-paste is harmless.",
-                "The stripped, clean value is what gets remembered — a quoted path you set once does \
-                 not come back quoted next launch.",
-                "A single quote at only one end is left alone: it is a legal character in a file name \
-                 on Linux and macOS, so a folder genuinely called \"weird is still reachable.",
-                "Single quotes ('like this') are NOT stripped — they are ordinary filename characters, \
-                 not a convention any file manager produces.",
+                "Any stray blank space around the outside is trimmed too, so an accidental extra \
+                 space from copy-pasting is harmless.",
+                "The cleaned-up value — quotes and outer spaces removed — is what actually gets \
+                 remembered, so a quoted path you paste in once does not come back still wrapped \
+                 in quotes the next time you open the app.",
+                "A single quote mark at only ONE end is left completely alone, because it is a \
+                 perfectly legal character inside a filename on Linux and macOS — so a folder \
+                 genuinely named \"weird is still reachable exactly as typed.",
+                "Ordinary single quotes ('like this') are never stripped — they are treated as \
+                 plain, ordinary characters in a filename, not a quoting convention any file \
+                 manager actually uses.",
             ]),
-            Block::Sub("What a path box will not do"),
+            Block::Sub("What a path box will NOT do for you"),
             Block::Bullets(&[
-                "It does not expand ~ or environment variables such as %USERPROFILE% or $HOME. Give \
-                 the full path.",
-                "A relative path is resolved against the folder the program was launched from, which \
-                 is rarely what you meant — prefer an absolute path.",
-                "“Upload from” needs the path to a FILE, including its name; a folder will not do.",
+                "It will not expand shortcuts like ~ or environment variables such as \
+                 %USERPROFILE% or $HOME — type or paste the FULL path instead.",
+                "A relative path (one that does not start from the very top of your drive) is \
+                 resolved against whatever folder the program happened to be launched from, which \
+                 is rarely what you actually meant — an absolute, full path is always safer.",
+                "\"Upload from\" needs the path to an actual FILE, including its filename at the \
+                 end — pointing it at just a folder will not work.",
             ]),
             Block::Note(
-                "The command-line tools take paths as ordinary arguments, where your shell removes \
-                 the quotes before the program ever sees them — quote paths with spaces there as \
-                 usual.",
+                "The separate command-line tools take paths as ordinary typed arguments instead, \
+                 where your own shell strips the quotes before the program ever even sees them — \
+                 quote any path containing spaces there the normal way your shell expects.",
             ),
         ],
     },
@@ -1016,31 +1301,32 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "keys",
         section: "Reference",
         title: "Keyboard and mouse",
-        blurb: "The shortcuts this window understands.",
+        blurb: "Every keyboard shortcut and mouse behaviour this window recognises, in one place.",
         body: &[
             Block::Rows(&[
-                ("Up / Down arrow", "Move to the previous/next record in a flat list, scrolling it into view."),
-                ("Click a row", "Open that record in the form."),
-                ("Click a group header", "Expand or collapse it in a grouped tree."),
-                ("Tab / Shift+Tab", "Move between fields."),
-                ("Enter", "Submit on the unlock screen."),
-                ("Ctrl+C", "Copy selected text — including from read-only fields."),
-                ("Ctrl+V", "Paste — how a copied file or folder path gets into a path box."),
+                ("Up / Down arrow", "Moves to the previous or next record in a flat (non-grouped) list, scrolling it into view automatically."),
+                ("Click a row", "Opens that record into the form on the right."),
+                ("Click a group header", "Expands or collapses that branch, when viewing a grouped tree."),
+                ("Tab / Shift+Tab", "Moves the cursor between fields in the form."),
+                ("Enter", "Submits the unlock screen — the same as clicking Unlock or Create."),
+                ("Ctrl+C", "Copies whatever text is selected — this works even inside a read-only field."),
+                ("Ctrl+V", "Pastes — this is how a path copied from your file manager gets into a path box."),
                 (
                     "Just start typing",
-                    "In the “Link an account…” dropdown: its search box takes focus as the popup \
-                     opens, so your first keystroke filters the list.",
+                    "Inside the \"Link an account…\" dropdown: its search box already has focus \
+                     the instant the popup opens, so your very first keystroke starts filtering \
+                     the list immediately.",
                 ),
-                ("Esc", "Close an open dropdown popup without choosing anything."),
-                ("Click away from a popup", "Also closes it; a link search box forgets its query when it closes."),
-                ("Hover a button", "Show a tooltip explaining what it does."),
-                ("Hover the vault name", "Show the full path of the open vault."),
+                ("Esc", "Closes an open dropdown popup without choosing anything from it."),
+                ("Click away from a popup", "Also closes it; a link search box forgets whatever you typed once it closes."),
+                ("Hover over a button", "Shows a small tooltip explaining exactly what that button does."),
+                ("Hover over the vault name", "Shows the full folder path of the vault that is currently open."),
             ]),
             Block::Note(
-                "The graphical app is mouse-first by design. The terminal interface \
-                 (`vaultis --tui`) is the keyboard-driven one: there, digits 1–9 jump between \
-                 tabs, n/d create and delete, g toggles grouping, r reveals, / searches, and Ctrl+S \
-                 saves.",
+                "This graphical window is built mouse-first, on purpose. The separate terminal \
+                 interface (`vaultis --tui`) is the keyboard-driven one instead: there, the number \
+                 keys 1–9 jump between tabs, n and d create and delete a record, g toggles grouped \
+                 view, r reveals passwords, / starts a search, and Ctrl+S saves.",
             ),
         ],
     },
@@ -1048,34 +1334,37 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "cli",
         section: "Reference",
         title: "Command line",
-        blurb: "Everything the console binary can do that this window cannot.",
+        blurb: "Everything the console version of the program can do that this graphical window cannot — mainly bulk, one-off jobs.",
         body: &[
             Block::P(
-                "The console binary (`vaultis`) opens the same vaults and adds the bulk operations. \
-                 DIR is the vault folder; leaving it out uses the default one. Every command prompts \
-                 for the two passwords.",
+                "The console program (`vaultis`) opens the exact same vaults as this window, and \
+                 adds a handful of bulk operations on top. DIR means the vault's folder; leaving it \
+                 out simply uses your default one. Every single command prompts you for the two \
+                 passwords before doing anything.",
             ),
             Block::Rows(&[
-                ("vaultis [DIR]", "Launch this graphical app (read-only)."),
-                ("vaultis --write [DIR]", "Launch it able to make changes."),
-                ("vaultis --tui [DIR]", "Launch the terminal interface instead."),
-                ("vaultis decrypt [DIR]", "Print the whole decrypted vault as JSON — every secret in plain text."),
-                ("vaultis manifest [DIR]", "Print the decrypted document index."),
-                ("vaultis extract [DIR] OUT", "Decrypt every stored document into OUT."),
-                ("vaultis backup [DIR] DEST", "Copy the encrypted vault into a timestamped folder under DEST."),
-                ("vaultis export-tree [DIR] OUT", "Write a fully decrypted mirror of the vault."),
-                ("vaultis import-tree SRC [DIR]", "Build a NEW encrypted vault, with new passwords, from such a mirror."),
-                ("vaultis update-from OTHER [DIR]", "Pull newer records from another vault; add --dry-run to preview."),
-                ("vaultis compact [DIR] …", "Reclaim space. See “Keeping the vault small”."),
-                ("vaultis --help", "The full, authoritative list of options."),
+                ("vaultis [DIR]", "Launches this same graphical app, in read-only mode."),
+                ("vaultis --write [DIR]", "Launches it able to make changes instead."),
+                ("vaultis --tui [DIR]", "Launches the keyboard-driven terminal interface instead of this window."),
+                ("vaultis decrypt [DIR]", "Prints the ENTIRE decrypted vault as JSON text — every secret, in plain readable text."),
+                ("vaultis manifest [DIR]", "Prints the decrypted index of your uploaded documents."),
+                ("vaultis extract [DIR] OUT", "Decrypts every single stored document out into the folder OUT."),
+                ("vaultis backup [DIR] DEST", "Copies the still-encrypted vault into a new, timestamped folder under DEST."),
+                ("vaultis export-tree [DIR] OUT", "Writes a complete, fully decrypted mirror of the whole vault."),
+                ("vaultis import-tree SRC [DIR]", "Builds a BRAND-NEW encrypted vault, with new passwords you choose, out of such a mirror."),
+                ("vaultis update-from OTHER [DIR]", "Pulls newer records in from another vault; add --dry-run to preview it first without changing anything."),
+                ("vaultis compact [DIR] …", "Reclaims wasted space. See “Keeping the vault small”."),
+                ("vaultis --help", "The full, authoritative list of every option this tool supports."),
             ]),
             Block::Warn(
-                "decrypt, extract, and export-tree write or print your data with no encryption at \
-                 all. Redirecting decrypt into a file puts every password on disk in the clear.",
+                "decrypt, extract, and export-tree all write or print your data with absolutely no \
+                 encryption at all. Redirecting decrypt's output into a file, for example, puts \
+                 every single password onto your disk in plain, readable text.",
             ),
             Block::Note(
-                "export-tree and import-tree round-trip, which makes them the escape hatch: your \
-                 data can always be taken out of this program's format entirely.",
+                "export-tree and import-tree round-trip with each other, which is deliberately the \
+                 \"escape hatch\": your data can always be taken completely out of this program's \
+                 format, in full, if you ever needed to.",
             ),
         ],
     },
@@ -1083,59 +1372,67 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "demo-vault",
         section: "Reference",
         title: "Trying it out on a sample vault",
-        blurb: "A throwaway vault full of fake data, built by the build script, for learning and demos.",
+        blurb: "A throwaway practice vault full of invented, fake data, built by the build script — a safe place to click around and learn without touching your real information.",
         body: &[
             Block::P(
-                "If you built the program from source, one command builds it AND leaves you a \
-                 fully populated practice vault to click around in — scripts/build.sh on \
-                 Linux or macOS, scripts\\build.bat on Windows. The two are twins: same \
-                 flags, same defaults, same demo passwords.",
+                "If you built the program yourself from source, one single command builds it AND \
+                 leaves you with a fully filled-in practice vault to click around in — \
+                 scripts/build.sh on Linux or macOS, scripts\\build.bat on Windows. The two are \
+                 identical twins of each other: same flags, same defaults, same demo passwords.",
             ),
             Block::Rows(&[
-                ("(no flags)", "Build, then create the sample vault if it is not there yet."),
-                ("--release", "The same, using the optimized build."),
-                ("--fresh", "Throw the existing sample vault away and build a new one."),
-                ("--sample-dir DIR", "Put the sample vault somewhere else."),
-                ("--no-sample", "Just build; skip the sample vault."),
-                ("--install-rust", "Install the Rust toolchain without asking, if it is missing."),
-                ("-- <cargo args>", "Everything after a bare -- is passed on to cargo build."),
-                ("--help", "Print this list."),
+                ("(no flags)", "Builds the program, then creates the sample vault too, if it is not already there."),
+                ("--release", "The same thing, using the faster, optimised build."),
+                ("--fresh", "Throws away any existing sample vault and builds a brand-new one from scratch."),
+                ("--sample-dir DIR", "Puts the sample vault somewhere else on disk instead of the default location."),
+                ("--no-sample", "Just builds the program; skips creating the sample vault."),
+                ("--install-rust", "Installs the Rust programming toolchain automatically if it is missing, without asking first."),
+                ("-- <cargo args>", "Everything typed after a bare -- is passed straight on to cargo build."),
+                ("--help", "Prints this same list of options."),
             ]),
             Block::Note(
-                "No Rust on the machine? The script checks before it builds, and offers to install \
-                 the toolchain with the official rustup installer — it asks first, and the default \
-                 answer is no. A toolchain that is present but too old is reported plainly rather \
-                 than failing later with a confusing compiler error.",
+                "No Rust toolchain on your computer yet? The script checks for one before it \
+                 builds anything, and offers to install it for you using the official rustup \
+                 installer — it always asks first, and the default answer if you just press Enter \
+                 is no. A toolchain that IS present but too old is reported plainly, rather than \
+                 failing later with a confusing compiler error that does not explain the real \
+                 problem.",
             ),
             Block::P(
-                "When it finishes it prints, as the last thing after all the build output, where the \
-                 sample vault is and the two passwords that open it. By default that is the \
-                 sample-vault folder under target/, with the passwords sample1 and sample2.",
+                "When it finishes, it prints — as the very last thing, after all the build output — \
+                 exactly where the sample vault ended up and the two passwords that open it. By \
+                 default that is a sample-vault folder under target/, unlocked with the two \
+                 passwords sample1 and sample2.",
             ),
-            Block::Sub("What is in it"),
+            Block::Sub("What is actually inside it"),
             Block::P(
-                "Every tab is filled in — urgent notes, instructions, trust and will entries, assets \
-                 and liabilities linked to accounts, accounts with types and subtypes, a property \
-                 with its portal logins, tax filings, and general documents — including real attached \
-                 documents, so the encrypted archive, exporting, and the Summary totals all have \
-                 something to show.",
+                "Every single tab is filled in — urgent notes, instructions, trust and will \
+                 entries, assets and liabilities linked to accounts, accounts with types and \
+                 subtypes, a property with all four of its portal logins, tax filings, and general \
+                 documents — including real attached documents, so the encrypted archive, \
+                 exporting, and the Summary tab's totals all have something real to show you.",
             ),
             Block::Bullets(&[
-                "Everything in it is fiction: invented people, invented institutions, and visibly \
-                 fake placeholder “passwords”. Nothing in it is a working credential for anything.",
-                "Its two master passwords are deliberately trivial because it is a demo, which is \
-                 exactly why it must never hold anything real.",
-                "It lives under target/, so `cargo clean` removes it along with the build.",
-                "Re-running the script leaves an existing sample vault untouched, so edits you made \
-                 while exploring survive. Use --fresh when you want a clean one.",
+                "Everything inside it is fiction: invented people, invented institutions, and \
+                 obviously fake placeholder \"passwords\". Nothing in it is a working login for \
+                 anything real, anywhere.",
+                "Its two master passwords are deliberately trivial to guess, because it is only a \
+                 demo — which is exactly why it must never be used to hold anything real.",
+                "It lives under the target/ build folder, so running `cargo clean` removes it along \
+                 with the rest of the build output.",
+                "Running the script again leaves an EXISTING sample vault untouched, so any edits \
+                 you made while exploring it survive between runs. Use --fresh specifically when \
+                 you want a brand-new, clean one instead.",
             ]),
             Block::Warn(
-                "Never put real data in the sample vault, and never reuse sample1 / sample2 for a \
-                 vault of your own. Treat the whole folder as disposable.",
+                "Never put real information into the sample vault, and never reuse sample1 or \
+                 sample2 as passwords on a vault of your own. Treat the whole sample-vault folder \
+                 as disposable, throwaway practice material.",
             ),
             Block::Note(
-                "This is also the fastest way to show someone else what the program does, or to \
-                 practise a restore, without exposing any of your own records.",
+                "This is also the fastest way to show somebody else what the program actually does, \
+                 or to practise doing a restore from backup, without ever exposing any of your own \
+                 real records to them.",
             ),
         ],
     },
@@ -1143,77 +1440,91 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "troubleshooting",
         section: "Reference",
         title: "Troubleshooting",
-        blurb: "Common messages and what they actually mean.",
+        blurb: "The messages people actually run into, in plain English, and exactly what each one really means.",
         body: &[
             Block::Rows(&[
                 (
                     "The passwords are rejected but you are sure they are right",
-                    "Check the order — they are not interchangeable. Check the keyboard layout and \
-                     Caps Lock. Confirm you are opening the vault folder you think you are. The same \
-                     message also appears for a damaged file, deliberately.",
+                    "Double-check the ORDER you typed them in — they are not interchangeable, see \
+                     “The two passwords”. Check your keyboard layout and whether Caps Lock is on. \
+                     Confirm you are actually opening the vault folder you think you are. Note that \
+                     this exact same message also appears for a damaged file, on purpose.",
                 ),
                 (
-                    "“already open” on launch",
-                    "A window for this vault is open; it has been raised instead. Look for it on \
-                     another workspace or minimised.",
+                    "\"already open\" when you launch the app",
+                    "A window for this vault is already open somewhere; vaultis has simply brought \
+                     it to the front instead of opening a second copy. Look for it on another \
+                     desktop/workspace, or minimised in your taskbar.",
                 ),
                 (
-                    "A writable session refuses to start",
-                    "Another writable session holds the single-writer lock. Close it. If none is \
-                     running, the vault was left locked by a crash — the lock clears on its own once \
-                     the stale process is gone.",
+                    "A writable (--write) session refuses to start",
+                    "Another writable session already holds the single-writer lock on this vault. \
+                     Close that other window. If nothing is actually running, the lock was probably \
+                     left behind by a crash — it clears itself automatically once the app confirms \
+                     that stale process is really gone.",
                 ),
                 (
-                    "Nothing is editable",
-                    "The session is read-only. Look for the 🔒 badge; relaunch with --write.",
+                    "Nothing on screen seems to be editable",
+                    "The session is read-only. Look for the orange 🔒 badge in the top bar; if you \
+                     need to make changes, close the window and relaunch with --write. See \
+                     “Read-only vs. write mode”.",
                 ),
                 (
-                    "A save or upload failed",
-                    "Read the red banner. Usually a full disk or a permissions problem on the vault \
-                     folder. The vault is intact — saves are atomic, so a failed save changed nothing.",
+                    "A save or an upload failed",
+                    "Read the red banner across the top of the window — it carries the real reason. \
+                     Usually this is a full disk, or a permissions problem on the vault's folder. \
+                     The vault itself is intact either way: saves are all-or-nothing, so a failed \
+                     save changed absolutely nothing.",
                 ),
                 (
-                    "Export did nothing visible",
-                    "Check the export directory in Config; that is where the file went. An existing \
-                     file is never overwritten, so look for a _2 suffix.",
+                    "Export seemed to do nothing visible",
+                    "Check the export directory set in Config — that is exactly where the file went, \
+                     silently and successfully. An existing file there is never overwritten, so also \
+                     look for one with a _2 suffix added to its name.",
                 ),
                 (
-                    "An upload cannot find the file",
-                    "The whole path is needed, not just the filename — and it must point at a file, \
-                     not a folder. A pasted quoted path is fine; ~ and %USERPROFILE% are not \
-                     expanded. See “Typing file and folder paths”.",
+                    "An upload says it cannot find the file",
+                    "The box needs the WHOLE path, not just the filename by itself — and it has to \
+                     point directly at a file, not at a folder. A pasted, quoted path is fine; ~ and \
+                     %USERPROFILE% are not expanded automatically. See “Typing file and folder \
+                     paths”.",
                 ),
                 (
-                    "A folder box does not find the folder",
-                    "Check for a stray character from the copy: a matching PAIR of double quotes is \
-                     removed for you, but a single leftover quote is treated as part of the name. \
-                     Absolute paths are safest — a relative one is resolved against wherever the \
-                     program was started.",
+                    "A folder box cannot seem to find the folder you typed",
+                    "Look for a stray leftover character from copying it: a matching PAIR of double \
+                     quotes is stripped for you automatically, but a single leftover quote at only \
+                     one end is treated as a real part of the folder's name. An absolute (full) path \
+                     is always the safest bet — a relative one gets resolved against wherever the \
+                     program happened to be started from.",
                 ),
                 (
-                    "The list is unexpectedly empty",
-                    "A filter or the search box is still active — look for the “filtered” badge and \
-                     the tinted search box. Click Clear, or the × inside the search box.",
+                    "The list on screen is unexpectedly, mysteriously empty",
+                    "A filter or the search box is almost certainly still active somewhere — look \
+                     for the \"filtered\" badge and the tinted search box. Click Clear, or the × \
+                     sitting inside the search box itself.",
                 ),
                 (
-                    "The search shows a record you did not ask for",
-                    "The search also matches names that SOUND like what you typed, so a different \
-                     spelling can appear. Add more letters, or narrow with the type/owner dropdowns. \
-                     See “Searching”.",
+                    "The search turned up a record you did not ask for",
+                    "The search box also matches names that merely SOUND like what you typed, so a \
+                     different spelling can legitimately show up. Type a few more letters, or narrow \
+                     things down with the type/owner dropdowns instead. See “Searching”.",
                 ),
                 (
-                    "The search cannot find a short username",
-                    "Words shorter than three letters are matched literally, never by sound — “u2” \
-                     finds only u2. Try searching the title instead.",
+                    "The search cannot seem to find a short username",
+                    "Words shorter than three letters are only ever matched literally, never by \
+                     sound — searching \"u2\" finds only an exact \"u2\". Try searching the title \
+                     instead if the username itself is short.",
                 ),
                 (
-                    "The tabs are on two lines",
-                    "The window is too narrow to fit them on one, so the strip wrapped rather than \
-                     hiding any tab. Widen the window to bring them back onto a single line.",
+                    "The row of tabs is sitting on two lines instead of one",
+                    "The window is simply too narrow to fit all of them on a single line, so the \
+                     strip wrapped onto a second line rather than hiding any tab from you. Widen the \
+                     window to bring them back onto one single line.",
                 ),
                 (
-                    "A link shows a raw id",
-                    "The account it pointed at was deleted. Edit the asset to remove or re-point the link.",
+                    "A link is showing as a raw, meaningless id instead of a name",
+                    "The account it used to point at has been deleted. Edit the asset to either \
+                     remove that stale link, or point it at a different account instead.",
                 ),
             ]),
         ],
@@ -1222,52 +1533,189 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "faq",
         section: "Reference",
         title: "Questions people ask",
-        blurb: "Short answers about recovery, sharing, trust, and what happens next.",
+        blurb: "Short, direct answers about recovery, sharing this vault, trusting the cloud, and what to do next.",
         body: &[
-            Block::Sub("Can a lost password be recovered?"),
-            Block::P("No. Not by you, not by anyone. There is no reset, no backdoor, and no support channel that can help."),
-            Block::Sub("Does anything leave this machine?"),
+            Block::Sub("Can a lost password ever be recovered?"),
+            Block::P("No. Not by you, not by anyone else, ever. There is no reset link, no hidden backdoor, and no support channel anywhere that can help — see “The two passwords” for exactly why that is deliberate."),
+            Block::Sub("Does anything ever leave this computer on its own?"),
             Block::P(
-                "Only what you export yourself. The program contains no network code — it cannot \
-                 phone home, sync, or update itself.",
+                "Only whatever YOU explicitly choose to export yourself. This program contains no \
+                 network code whatsoever — it is physically incapable of phoning home, syncing, or \
+                 updating itself, because that code was simply never written into it.",
             ),
-            Block::Sub("Is it safe to put the vault in cloud storage?"),
+            Block::Sub("Is it safe to keep the vault in cloud storage (Dropbox, iCloud, etc.)?"),
             Block::P(
-                "The files are encrypted, so a cloud copy is a reasonable off-site backup. Do not \
-                 let two machines write to the same synced copy at once, and never put the passwords \
-                 in the same place.",
+                "The files themselves are strongly encrypted, so a copy sitting in ordinary cloud \
+                 storage is a reasonable form of off-site backup. Just do not let two different \
+                 computers both actively write to that same synced copy at the same moment, and \
+                 never, ever store the two passwords in that same cloud location.",
             ),
-            Block::Sub("How should this be handed over?"),
+            Block::Sub("How should I actually hand this over to my executor?"),
             Block::P(
-                "Tell your executor that the vault exists, where the folder is, where each password \
-                 is kept, and that they should open it read-only. The URGENT tab is the first thing \
-                 they should read.",
+                "Tell them plainly, ahead of time: that this vault exists, exactly where its folder \
+                 is, where each of the two passwords is kept, and that they should open it \
+                 READ-ONLY rather than in write mode. Point them straight at the URGENT tab — it \
+                 should be the very first thing they read.",
             ),
-            Block::Sub("What if this program is gone by then?"),
+            Block::Sub("What if this program itself no longer exists by the time it's needed?"),
             Block::P(
-                "Keep a copy of the program with the backup. Failing that, `export-tree` turns a \
-                 vault into an ordinary folder of files and JSON that any future tool can read — the \
-                 data is never trapped in this format.",
+                "Keep a copy of the program itself stored alongside your backup, just in case. \
+                 Failing that, `export-tree` turns any vault into an ordinary folder of plain files \
+                 and JSON text that essentially any future tool could read — your data is never \
+                 permanently trapped inside this one program's format.",
             ),
-            Block::Sub("Why does the search find a name I did not type?"),
+            Block::Sub("Why does the search sometimes find a name I did not even type?"),
             Block::P(
-                "Because it also matches names that sound like your query — that is deliberate, so \
-                 an heir who has only ever heard a name spoken can still find it. Type more letters \
-                 or use the exact dropdowns to narrow. See “Searching”.",
+                "Because it also deliberately matches names that merely SOUND like your query — \
+                 that is on purpose, so that an heir who has only ever heard a name spoken out loud \
+                 can still find it without knowing the spelling. Type more letters, or use the exact \
+                 dropdowns instead, to narrow it down. See “Searching”.",
             ),
-            Block::Sub("Can I practise without touching my real vault?"),
+            Block::Sub("Can I practise using this without touching my real vault?"),
             Block::P(
-                "Yes. If you built from source, scripts/build.sh leaves a sample vault full of \
-                 invented data, and prints its location and its two demo passwords when it finishes. \
-                 See “Trying it out on a sample vault”.",
+                "Yes. If you built the program from source, scripts/build.sh leaves you a sample \
+                 vault full of entirely invented data, and prints both its location and its two demo \
+                 passwords once it finishes. See “Trying it out on a sample vault”.",
             ),
-            Block::Sub("What is the recommended routine?"),
+            Block::Sub("What is actually a sensible routine to follow?"),
             Block::Bullets(&[
-                "Open read-only unless you intend to change something.",
-                "Review the URGENT and Instructions tabs once a year.",
-                "Back up after any session that changed anything, and keep a copy off-site.",
-                "Check that your executor still knows where the passwords are.",
+                "Open the vault read-only by default, and only in write mode when you genuinely intend to change something.",
+                "Re-read the URGENT and Instructions tabs about once a year, so they stay accurate.",
+                "Back up after any session where you changed anything, and keep at least one copy off-site.",
+                "Check every so often that your executor still actually knows where the two passwords are kept.",
             ]),
+        ],
+    },
+    Topic {
+        id: "technical-safety",
+        section: "Reference",
+        title: "For the technically curious: why this is safe",
+        blurb: "The actual cryptography behind the plain-language claims made everywhere else in this manual — the algorithms, the numbers, why it holds up against a future quantum computer, and precisely why the whole program is offline.",
+        body: &[
+            Block::P(
+                "Everywhere else, this manual deliberately avoids jargon. This one article is the \
+                 exception: it is written for a reader who wants the real technical detail behind \
+                 “How your data is protected”, and who would rather be told exactly why something \
+                 is safe than simply be reassured that it is.",
+            ),
+            Block::Sub("The two passwords, turned into one key"),
+            Block::P(
+                "Both of your passwords are run through Argon2id, a \"memory-hard\" key-derivation \
+                 function: rather than being fast (which is what you want for logging in, but \
+                 exactly what an attacker guessing millions of passwords wants too), it is \
+                 deliberately slow and, more importantly, forces a large chunk of RAM to be used \
+                 for every single attempt. By default this is 64 MiB of memory and 3 passes over \
+                 it, run TWICE — once per password, with the first password's derived key chained \
+                 into the derivation of the second, which is why the two are not interchangeable. \
+                 Memory-hardness matters because it is expensive to parallelise: building a \
+                 thousand machines to guess passwords in parallel means buying a thousand times the \
+                 RAM as well, not just a thousand times the raw speed, which is far more costly than \
+                 speeding up a purely computational hash.",
+            ),
+            Block::Note(
+                "This cost is fixed into a vault when it is CREATED and cannot be changed \
+                 afterwards without rebuilding the vault from scratch. It can be raised at creation \
+                 time (VAULTIS_KDF_MCOST_MIB / VAULTIS_KDF_TCOST environment variables, 1–512 MiB \
+                 and 1–16 passes), but think hard before doing so: that cost is paid on every \
+                 single open, forever, on every device — including whatever an executor may be \
+                 using years from now. Extra password length is free at open time and buys far more \
+                 real security than raising this knob does; \"my executor could not open it\" is a \
+                 far more likely failure than a brute-force attack.",
+            ),
+            Block::Sub("Locking the contents: XChaCha20-Poly1305"),
+            Block::P(
+                "The single key produced above locks the vault, its document index (manifest), and \
+                 every document volume using XChaCha20-Poly1305 — an AEAD cipher, meaning \
+                 \"Authenticated Encryption with Associated Data\". In plain terms: it does not just \
+                 scramble your data, it also seals it with a cryptographic checksum that can only \
+                 be produced by someone holding the correct key. Flip even a single bit anywhere in \
+                 an encrypted file and decryption fails outright rather than quietly handing back \
+                 corrupted or subtly altered data — this is tested directly, by a check that flips \
+                 every single bit of a valid vault file in turn and confirms every one of those is \
+                 rejected. The file's header — the parameters, salt, and nonce needed to even begin \
+                 decrypting it — is authenticated too, so nobody can quietly weaken those settings \
+                 on a copy of your vault and hand it back to you unnoticed. And a wrong password \
+                 produces the exact same failure as a genuinely corrupted file, which specifically \
+                 stops the app from ever being used as a password-guessing oracle.",
+            ),
+            Block::Sub("Encryption strength: what \"256-bit\" actually buys you"),
+            Block::P(
+                "XChaCha20-Poly1305 uses a full 256-bit key. To put that in perspective: correctly \
+                 guessing a random 256-bit key by brute force would take dramatically longer than \
+                 the current age of the universe, even for an attacker with every computer on Earth \
+                 working together. In real life, nobody attacks a key like that directly — they \
+                 attack the weaker of the two things standing in front of it, which is almost always \
+                 the passwords chosen by the person who set the vault up, not the cipher itself.",
+            ),
+            Block::Sub("Quantum computers: the honest answer"),
+            Block::P(
+                "This is a fair question for anything meant to stay secret for decades, since a \
+                 file copied today could simply be kept until a more powerful computer exists — \
+                 known as \"harvest now, decrypt later\". The short answer here is that this design \
+                 holds up well, and for a fairly unglamorous, structural reason rather than a clever \
+                 trick.",
+            ),
+            Block::Bullets(&[
+                "Shor's algorithm — the quantum algorithm that actually breaks encryption used \
+                 across the internet today — only breaks PUBLIC-KEY cryptography (things like RSA, \
+                 Diffie-Hellman, and elliptic curves), which is what secures things like recorded \
+                 web traffic and encrypted messengers. vaultis contains NO public-key cryptography \
+                 at all — there is no key exchange and nothing here for Shor's algorithm to target.",
+                "Grover's algorithm is the one that DOES apply to a cipher like this one, but it \
+                 only offers a quadratic speed-up — in effect, roughly HALVING the key strength, not \
+                 breaking it outright. Applied to a 256-bit key, that still leaves about 128 bits of \
+                 effective security, which is precisely the target researchers already consider \
+                 \"quantum-safe\" for a symmetric cipher (it is exactly why standards bodies point at \
+                 256-bit keys specifically). There is nothing to \"upgrade\" here: the newer \
+                 post-quantum algorithms you may have read about (ML-KEM/Kyber, ML-DSA/Dilithium) \
+                 replace public-key exchange and signatures, neither of which this program uses in \
+                 the first place.",
+                "Argon2id's memory-hardness helps here too, in a second, independent way: running \
+                 Grover's algorithm against a memory-hard function would require an attacker to hold \
+                 that entire chunk of memory in quantum superposition throughout the whole search — \
+                 quantum memory at that scale is far beyond anything remotely on the horizon, which \
+                 makes memory-hard password hashing one of the worst realistic targets for a \
+                 quantum speed-up.",
+            ]),
+            Block::P(
+                "The honest bottom line: the realistic way a vault harvested today eventually gets \
+                 read is not a quantum computer arriving decades from now — it is that the two \
+                 passwords were guessable, or that the plaintext leaked from a device while the \
+                 vault happened to be unlocked. The single strongest thing you can personally do \
+                 about \"harvest now, decrypt later\" is simply not letting a copy be harvested in \
+                 the first place: keep backups on media you physically control, and choose two long, \
+                 genuinely unique passwords.",
+            ),
+            Block::Sub("Why the whole program is offline — and why that specifically matters"),
+            Block::P(
+                "There is no network code anywhere in this codebase — not a setting you can find \
+                 and switch off, but code that was simply never written. Concretely: the program \
+                 never opens a network connection, never listens for one, cannot check for updates \
+                 on its own, and on Android does not even request the INTERNET permission at all — \
+                 so the operating system itself would refuse a connection attempt even if the app \
+                 somehow tried to make one.",
+            ),
+            Block::P(
+                "This matters because encryption only protects data that is AT REST (sitting \
+                 encrypted on disk) or IN TRANSIT (moving between two places). It cannot protect \
+                 data that is actively being USED on a device that has already been compromised by \
+                 other means — if malware is already running as you, with the vault unlocked and \
+                 the plaintext visible on screen, it can read exactly what you can see, the same as \
+                 it could with any other program. Being offline does not fix that specific problem, \
+                 but it removes an entire, very common CATEGORY of problem: a server this data could \
+                 be stolen from, a cloud account that could be breached, a company that could be \
+                 hacked or subpoenaed, and an automatic update mechanism that could ever be hijacked \
+                 to push malicious code onto your machine. Every one of those exists in a typical \
+                 cloud-based password manager. None of them exist here, because there is no server, \
+                 no account, and no update channel to attack in the first place — there is only the \
+                 file sitting on your own disk.",
+            ),
+            Block::P(
+                "Put simply: the vault is exactly as trustworthy as the device you choose to unlock \
+                 it on, and no more. Being offline is what guarantees that statement stays true — it \
+                 removes every path by which trust in this program could ever depend on trusting \
+                 someone else's server as well.",
+            ),
         ],
     },
 ];

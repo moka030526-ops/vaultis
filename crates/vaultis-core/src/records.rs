@@ -1017,7 +1017,7 @@ fn trim_histories<R: Record>(list: &mut [R], cutoff: Option<i64>, drop_all: bool
 //   Clone -> can be deep-copied, Debug -> printable for debugging,
 //   Default -> has a zero/empty default value,
 //   Zeroize/ZeroizeOnDrop -> wipes its memory (and does so automatically on drop).
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Zeroize, ZeroizeOnDrop)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct Change {
     pub at: i64,        // unix-seconds timestamp of the change
     pub action: String, // e.g. "created", "updated", "deleted"
@@ -1204,7 +1204,7 @@ pub fn remove<R: Record>(list: &mut Vec<R>, id: &str, audit: &mut Vec<Change>, k
 /// things an executor must know (whom to call, where the safe key is, an in-flight
 /// crisis) are the first thing seen on unlock. Same shape as [`Instruction`]
 /// (title + free-text body) — a separate, prominent collection, not a subtype.
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Zeroize, ZeroizeOnDrop)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct Urgent {
     pub id: String,
     pub title: String,
@@ -1215,7 +1215,7 @@ pub struct Urgent {
 }
 
 /// Tab 1 — free-form instruction note.
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Zeroize, ZeroizeOnDrop)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct Instruction {
     pub id: String,
     pub title: String,
@@ -1226,7 +1226,7 @@ pub struct Instruction {
 }
 
 /// Tab 2 — a trust/will document with a usage note and an attached file.
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Zeroize, ZeroizeOnDrop)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct TrustWill {
     pub id: String,
     pub document: String,
@@ -1240,7 +1240,7 @@ pub struct TrustWill {
 }
 
 /// Tab 3 — an asset or liability.
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Zeroize, ZeroizeOnDrop)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct AssetLiability {
     pub id: String,
     /// "Asset" or "Liability".
@@ -1285,7 +1285,7 @@ pub struct AssetLiability {
 }
 
 /// Tab 4 — a login/account (the original password-manager record).
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Zeroize, ZeroizeOnDrop)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct Account {
     pub id: String,
     /// Short human title/name for this account entry. Shown in the list (when set)
@@ -1316,7 +1316,7 @@ pub struct Account {
 }
 
 /// Tab 5 — a real-estate holding.
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Zeroize, ZeroizeOnDrop)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct RealEstate {
     pub id: String,
     pub address: String,
@@ -1388,7 +1388,7 @@ pub struct RealEstate {
 /// Tab 6 — a tax filing for a given year, holding its uploaded documents.
 /// Every document attached to a filing is stored together under the
 /// `taxes/<year>/` virtual folder in the encrypted volume.
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Zeroize, ZeroizeOnDrop)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct TaxFiling {
     pub id: String,
     /// Who the filing is for (e.g. "Jane", "Joint"). `#[serde(default)]` keeps
@@ -1410,7 +1410,7 @@ pub struct TaxFiling {
 /// Tab 7 — a general document: a title, a free-form description, and a single
 /// uploaded file. Its file is stored under `general-documents/<title>/<timestamp>/
 /// [subfolder]/<filename>` in the encrypted volume.
-#[derive(Serialize, Deserialize, Clone, Debug, Default, Zeroize, ZeroizeOnDrop)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct GeneralDocument {
     pub id: String,
     pub title: String,
