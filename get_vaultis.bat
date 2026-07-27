@@ -1,3 +1,67 @@
+@echo off
+setlocal EnableExtensions
+
+REM ==========================================================================
+REM Self-contained Windows setup script for vaultis: double-click it.
+REM
+REM This file is both a batch script and a PowerShell script. cmd.exe runs the
+REM header below, which launches PowerShell on this same file with
+REM -ExecutionPolicy Bypass -- needed because the default Restricted /
+REM RemoteSigned policy blocks a downloaded script, and because Explorer will
+REM not run a .ps1 on double-click at all. The bypass applies to that one
+REM PowerShell process; it does not change the machine's execution policy.
+REM
+REM The PowerShell source is everything after the ":PSBEGIN:" marker near the
+REM bottom. cmd.exe never reads that far -- the header ends at "exit /b" -- so
+REM the two languages never collide. Edit the PowerShell part as an ordinary
+REM script; just keep the marker line intact.
+REM ==========================================================================
+
+REM Prefer the fixed System32 path: PATH is not always intact in a shell spawned
+REM by an installer or a locked-down profile. Fall back to a PATH lookup only if
+REM that is somehow missing.
+set "PSEXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%PSEXE%" set "PSEXE=powershell.exe"
+
+REM Handing the path over in an environment variable rather than inlining %~f0
+REM into the -Command string keeps quoting out of it, so a folder containing an
+REM apostrophe or an ampersand cannot break -- or reshape -- the command line.
+set "VAULTIS_SELF=%~f0"
+
+REM The script clones into a RELATIVE folder ("vaultis"), so the working directory
+REM decides where everything lands. Pin it to this file's folder: double-clicking
+REM already starts there, but "Run as administrator" starts in C:\Windows\System32.
+pushd "%~dp0"
+if errorlevel 1 (
+    echo ERROR: Could not enter "%~dp0".
+    set "RC=1"
+    goto :done
+)
+
+REM The marker is searched for as '#:PS' + 'BEGIN:' so that this line -- which has
+REM to mention it -- is not itself a match. Otherwise a file whose marker had been
+REM edited away would "find" it here and run the batch header as PowerShell. The
+REM match starts at the '#' so the marker line itself parses as a comment.
+"%PSEXE%" -NoProfile -ExecutionPolicy Bypass -Command "$src = [IO.File]::ReadAllText($env:VAULTIS_SELF); $i = $src.IndexOf('#:PS' + 'BEGIN:'); if ($i -lt 0) { Write-Error 'This file is damaged: the embedded PowerShell section is missing.'; exit 9 }; & ([scriptblock]::Create($src.Substring($i)))"
+set "RC=%ERRORLEVEL%"
+
+popd
+
+:done
+if not "%RC%"=="0" (
+    echo.
+    echo Setup failed with exit code %RC%.
+)
+
+REM Pause only when the console will vanish on exit -- i.e. when this was launched
+REM by double-clicking in Explorer, where an error would otherwise flash past too
+REM fast to read. cmd puts this file's name in cmdcmdline exactly in that case; when
+REM run from an existing prompt it does not.
+echo %cmdcmdline% | find /i "%~nx0" >nul && pause
+
+exit /b %RC%
+
+#:PSBEGIN:
 $ErrorActionPreference = "Stop"
 
 # ==========================================
