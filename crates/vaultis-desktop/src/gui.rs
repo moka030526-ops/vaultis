@@ -717,7 +717,10 @@ fn save_font_choice_to(path: &std::path::Path, font: FontChoice) {
     crate::write_prefs_obj(path, &obj);
 }
 
-/// The window's minimum inner size at 100% zoom.
+/// The window's minimum inner size, in points — the size the layout is designed against,
+/// independent of the interface scale (which the framework multiplies in; see
+/// [`min_inner_size`], the accessor everything should go through, which also clamps this
+/// to the display so a floor can never demand a window larger than the screen).
 ///
 /// **Height** is sized so the lock screen's tallest variant — Create, with the two
 /// confirm rows — fits whole, plus ~70 px for the Help footer beneath the card.
@@ -730,8 +733,8 @@ fn save_font_choice_to(path: &std::path::Path, font: FontChoice) {
 /// outside the window and clipped by `two_col`. 620 was chosen for the lock screen
 /// alone, before the two-pane tabs were measured against it.
 ///
-/// Both floors are backstops, not guarantees: the lock screen and the form panes are
-/// scrollable, so being wrong here is untidy rather than a trap.
+/// Neither floor is a guarantee, because it yields to the display: on a screen too small
+/// for it the lock screen tightens ([`auth_space_scale`]) and the form panes scroll.
 const MIN_INNER_SIZE: [f32; 2] = [900.0, 670.0];
 
 /// The window/taskbar icon, decoded from the committed 512×512 PNG that the desktop
@@ -771,20 +774,58 @@ fn apply_theme(ctx: &egui::Context, theme: Theme) {
     apply_style(ctx, theme);
 }
 
-/// Apply a UI scale, and grow the window's minimum size with it.
+/// How much of the monitor the window's minimum size may claim. The remainder absorbs
+/// the things a monitor's raw size does not account for: the title bar and borders the
+/// window manager adds OUTSIDE the inner size this floor describes, plus a taskbar,
+/// dock or panel. A floor that exactly equalled the monitor would leave a window that
+/// cannot be placed fully on screen.
+const MONITOR_FIT: f32 = 0.9;
+
+/// The window's minimum inner size, in the units [`egui::ViewportCommand::MinInnerSize`]
+/// takes, clamped so it always FITS the display.
 ///
-/// The minimum is scaled deliberately: it was chosen so the lock screen — which does
-/// not scroll — always fits, and that guarantee is in POINTS, so zooming to 150%
-/// without moving the floor would let the user shrink the window until the password
-/// fields were unreachable with no way to scroll to them. Scaling the floor keeps the
-/// original promise at every zoom level.
+/// Two things this gets right that a bare `MIN_INNER_SIZE` does not:
+///
+/// * **The zoom is applied by the framework, not here.** egui-winit turns this value into
+///   physical pixels by multiplying by `zoom_factor * native_pixels_per_point`, so passing
+///   an already-scaled floor applies the interface scale TWICE. At 150% that squared the
+///   floor to 2025×1507 points — larger than a 1080p display, so the window manager capped
+///   the window below its own stated minimum and the lock screen, laid out for the floor it
+///   was promised, overflowed into a scrollbar. `MIN_INNER_SIZE` is therefore passed as-is.
+/// * **A floor is never allowed to exceed the screen.** `monitor` (from
+///   [`egui::ViewportInfo::monitor_size`]) is in these same units — the winit backend derives
+///   it by dividing the physical monitor by that same `pixels_per_point` — so the two compare
+///   directly, and the comparison stays correct at every zoom level: raising the zoom shrinks
+///   the monitor's point size exactly as fast as it grows the floor's physical size. `None`
+///   (no monitor reported yet, e.g. before the first frame) keeps the unclamped floor.
+///
+/// Clamping DOWN is always safe: this is a floor, so lowering it only ever permits a smaller
+/// window than the layout would prefer. On a display too small for the content, that is the
+/// difference between a lock screen the user can scroll and a window they cannot fit on
+/// screen at all.
+fn min_inner_size(monitor: Option<egui::Vec2>) -> egui::Vec2 {
+    let want = egui::vec2(MIN_INNER_SIZE[0], MIN_INNER_SIZE[1]);
+    match monitor {
+        // `> 1.0` rejects the degenerate/unknown sizes a backend can report before the
+        // window is mapped, which would otherwise clamp the floor to nothing.
+        Some(m) if m.x > 1.0 && m.y > 1.0 => want.min(m * MONITOR_FIT),
+        _ => want,
+    }
+}
+
+/// The monitor size egui currently reports for this window, if any.
+fn monitor_size(ctx: &egui::Context) -> Option<egui::Vec2> {
+    ctx.input(|i| i.viewport().monitor_size)
+}
+
+/// Apply a UI scale, and re-assert the window's minimum size for it.
+///
+/// The floor exists so the lock screen — which is meant not to scroll — always fits. It is
+/// re-sent here rather than only at startup because [`min_inner_size`] clamps to the
+/// display, and a scale change moves the content's physical size against a fixed screen.
 fn apply_ui_scale(ctx: &egui::Context, scale: UiScale) {
-    let f = scale.factor();
-    ctx.set_zoom_factor(f);
-    ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
-        MIN_INNER_SIZE[0] * f,
-        MIN_INNER_SIZE[1] * f,
-    )));
+    ctx.set_zoom_factor(scale.factor());
+    ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min_inner_size(monitor_size(ctx))));
 }
 
 /// Load the saved UI scale (see [`load_theme`] — same prefs file, same best-effort rules).
@@ -912,15 +953,60 @@ fn two_col<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut [egui::Ui]) -> R) -> R {
     })
 }
 
+/// How much of the lock screen's discretionary vertical spacing to actually spend, given
+/// the height available to it. `1.0` is the designed, comfortable layout; the value tapers
+/// toward [`AUTH_SPACE_MIN`] as the window gets shorter.
+///
+/// This is what lets the lock screen keep its promise of not scrolling. The floor
+/// ([`min_inner_size`]) is clamped to the display, so on a short screen — or at 150%
+/// interface size, which costs the same content half as much screen again — the window can
+/// legitimately be shorter than the comfortable layout wants. Padding is the right thing to
+/// give up there: a tighter front door still shows every control, whereas the alternative is
+/// a scrollbar over the password fields.
+///
+/// Only the decorative gaps scale. Widget sizes, text and the card's own margins are left
+/// alone, so the screen gets tighter but never smaller or harder to hit.
+fn auth_space_scale(available_height: f32) -> f32 {
+    /// Above this the full, designed spacing is affordable.
+    const COMFORTABLE: f32 = 620.0;
+    /// At or below this, spacing has given up everything it can. Chosen from the shortest
+    /// window a display-clamped floor can actually produce — a 1366×768 laptop at 150%
+    /// interface size leaves about 460 points — so the collapse is complete before the
+    /// realistic worst case, not exactly at it.
+    const CRAMPED: f32 = 500.0;
+    if available_height >= COMFORTABLE {
+        return 1.0;
+    }
+    if available_height <= CRAMPED {
+        return AUTH_SPACE_MIN;
+    }
+    // Linear between the two, so resizing the window reads as continuous rather than
+    // snapping between a roomy and a cramped layout.
+    let t = (available_height - CRAMPED) / (COMFORTABLE - CRAMPED);
+    AUTH_SPACE_MIN + t * (1.0 - AUTH_SPACE_MIN)
+}
+
+/// The least discretionary spacing the lock screen will collapse to — not zero, because
+/// the card, the mode line and the footer still have to read as separate things, but low
+/// enough that the tallest variant (Create, both confirm rows) clears a ~460-point window.
+const AUTH_SPACE_MIN: f32 = 0.12;
+
 /// The Vaultis brand lockup shown at the top of the lock screen: a vault-door glyph
 /// drawn from egui shapes (no image asset — the icon scales crisply and the static/
 /// terminal build needs nothing extra) beside the letter-spaced "VAULTIS" wordmark,
 /// with the app descriptor beneath. Everything is tinted in the active theme's accent.
-fn vaultis_logo(ui: &mut egui::Ui, accent: egui::Color32) {
+///
+/// `scale` is [`auth_space_scale`]'s output: below 1.0 the glyph and wordmark shrink
+/// proportionally, and under half the tagline is dropped entirely. The mark is the most
+/// compressible thing on the screen — it identifies the app, it is not something the user
+/// has to read or click — so it yields height before any control does.
+fn vaultis_logo(ui: &mut egui::Ui, accent: egui::Color32, scale: f32) {
+    // Never below 0.6: past that the wordmark stops reading as a logotype.
+    let shrink = 0.6 + 0.4 * scale.clamp(0.0, 1.0);
     ui.vertical_centered(|ui| {
         // The icon + wordmark sit on one row; `vertical_centered` centers the row.
         ui.horizontal(|ui| {
-            let sz = 34.0_f32;
+            let sz = 34.0_f32 * shrink;
             let (rect, _) = ui.allocate_exact_size(egui::vec2(sz, sz), egui::Sense::hover());
             let stroke = egui::Stroke::new(2.2_f32, accent);
             let c = rect.center();
@@ -937,14 +1023,18 @@ fn vaultis_logo(ui: &mut egui::Ui, accent: egui::Color32) {
                     p.line_segment([c + dir * (sz * 0.10), c + dir * (sz * 0.26)], stroke);
                 }
             }
-            ui.add_space(12.0);
+            ui.add_space(12.0 * shrink);
             // Letter-spaced wordmark: thin spaces (U+2009) between the glyphs give the
             // tracked, "set" look of a logotype without needing a custom font.
             let word: String = "VAULTIS".chars().map(|ch| ch.to_string()).collect::<Vec<_>>().join("\u{2009}");
-            ui.label(egui::RichText::new(word).strong().size(26.0).color(accent));
+            ui.label(egui::RichText::new(word).strong().size(26.0 * shrink).color(accent));
         });
-        ui.add_space(2.0);
-        ui.label(egui::RichText::new("Offline, two-password estate vault").weak().small());
+        // The tagline is the first thing to go: it is the only line here that is pure
+        // description, repeated verbatim in the Help manual's opening section.
+        if scale > 0.5 {
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Offline, two-password estate vault").weak().small());
+        }
     });
 }
 
@@ -1267,6 +1357,13 @@ struct GuiApp {
     /// persisted) when the selection actually changes, not every frame.
     ui_scale: UiScale,
     applied_ui_scale: UiScale,
+    /// The window minimum last pushed to the viewport, so the command is only re-sent when
+    /// the value actually changes. It cannot be settled once at startup: the monitor size
+    /// [`min_inner_size`] clamps against is not reported until a frame has been drawn, and
+    /// it changes again if the window is dragged to a different display. `ZERO` is the
+    /// "nothing sent yet" marker — never a legitimate floor, so the first frame always
+    /// pushes one.
+    applied_min_inner: egui::Vec2,
     /// The selected typeface, and the one currently applied — same selected/applied
     /// pair as the theme and scale. `set_fonts` rebuilds the font atlas, so it must
     /// only run when the choice actually changes, never per frame.
@@ -1420,6 +1517,7 @@ impl GuiApp {
             applied_theme: theme,
             ui_scale,
             applied_ui_scale: ui_scale,
+            applied_min_inner: egui::Vec2::ZERO,
             font,
             applied_font: font,
             help: crate::gui_help::HelpState::default(),
@@ -1981,15 +2079,20 @@ impl GuiApp {
         // password fields a visible boundary. Purely presentational — `ui_auth_inner`
         // holds the entire flow unchanged.
         let accent = accent(self.theme);
-        ui.add_space(24.0);
-        vaultis_logo(ui, accent);
-        ui.add_space(14.0);
+        // Everything decorative on this screen is spent through `k`, so that a window too
+        // short for the comfortable layout gives up padding instead of putting the password
+        // fields behind a scrollbar. Sampled once, before anything is drawn, so every gap
+        // below is measured against the same height.
+        let k = auth_space_scale(ui.available_height());
+        ui.add_space(24.0 * k);
+        vaultis_logo(ui, accent, k);
+        ui.add_space(14.0 * k);
         ui.vertical_centered(|ui| {
             ui.set_max_width(560.0);
             card(ui, |ui| {
-                self.ui_auth_inner(ui);
+                self.ui_auth_inner(ui, k);
             });
-            ui.add_space(10.0);
+            ui.add_space(10.0 * k);
             // The mode the session will open in, stated before the password is typed
             // rather than discovered afterwards by a control that is missing.
             if self.writable {
@@ -2013,7 +2116,7 @@ impl GuiApp {
             if self.auth_mode != AuthMode::ChangePassword
                 && let Some(dir) = self.sample_vault.clone()
             {
-                ui.add_space(10.0);
+                ui.add_space(10.0 * k);
                 if ui
                     .button("Sample vault")
                     .on_hover_text(
@@ -2039,18 +2142,18 @@ impl GuiApp {
             // line above it. The question is asked before the link is offered, because
             // someone who needs it is looking for a sentence that describes their
             // situation, not a control they already know how to use.
-            ui.add_space(18.0);
+            ui.add_space(18.0 * k);
             // A hairline the width of the card, so the footer reads as part of the same
             // composition instead of floating text below it.
             ui.scope(|ui| {
                 ui.set_max_width(360.0);
                 ui.separator();
             });
-            ui.add_space(10.0);
+            ui.add_space(10.0 * k);
             ui.label(
                 egui::RichText::new("New to this, or settling an estate?").weak().small(),
             );
-            ui.add_space(2.0);
+            ui.add_space(2.0 * k);
             if ui
                 .link(egui::RichText::new("❓  Read the guide").color(accent))
                 .on_hover_text(
@@ -2073,16 +2176,21 @@ impl GuiApp {
                 self.help_return = Screen::Auth;
                 self.screen = Screen::Help;
             }
-            ui.add_space(6.0);
+            ui.add_space(6.0 * k);
         });
     }
 
     /// The unlock/create/change-password form itself (see [`Self::ui_auth`], which
     /// frames it).
-    fn ui_auth_inner(&mut self, ui: &mut egui::Ui) {
+    ///
+    /// `k` is the caller's [`auth_space_scale`], applied to this form's gaps for the same
+    /// reason it is applied outside the card: on a short window the screen tightens rather
+    /// than scrolls. Only the gaps — the fields, the button and the messages between them
+    /// keep their full size at every window height.
+    fn ui_auth_inner(&mut self, ui: &mut egui::Ui, k: f32) {
         // `match` used as an expression: it yields a `(heading, help)` pair which
         // we immediately destructure into two named bindings.
-        ui.add_space(4.0);
+        ui.add_space(4.0 * k);
         // On the start page (not the in-vault Change-password flow) the user picks the vault
         // by ROOT + a collapsed "Vault" box: an editable ROOT path scanned (one level deep)
         // for vaults, and a Vault box that the dropdown fills — pick an existing vault, or
@@ -2113,7 +2221,7 @@ impl GuiApp {
                         .desired_width(fit(ui, 360.0)),
                 );
                 root_changed = resp.changed();
-                ui.add_space(4.0);
+                ui.add_space(4.0 * k);
                 // The "Vault" control: an editable leaf-name box plus a dropdown of the
                 // vaults discovered under the root. Pick one to fill the box (→ Unlock), or
                 // type a new name (→ Create, in --write mode). Empty = the root itself.
@@ -2157,7 +2265,7 @@ impl GuiApp {
             if let Some(name) = picked {
                 self.select_vault(&name);
             }
-            ui.add_space(8.0);
+            ui.add_space(8.0 * k);
         }
 
         let (heading, help) = match self.auth_mode {
@@ -2173,15 +2281,26 @@ impl GuiApp {
             ui.heading(heading);
             ui.label(egui::RichText::new(format!("Vault: {}", self.path.display())).weak());
             ui.label(help);
-            // In read-only mode an empty directory can't be created — say so plainly.
-            if self.auth_mode == AuthMode::Create && !self.writable {
+            // In read-only mode an empty directory can't be created — say so plainly, but
+            // only once that is actually true. `auth_mode == Create` merely means nothing
+            // exists at the CURRENT `<root>/<name>` — which is also the state of a totally
+            // blank start page (nothing specified yet: not a real warning) and of a root
+            // that DOES hold vaults but has none picked yet (the dropdown is sitting right
+            // there — "no vault in this folder" would be actively wrong). So this is
+            // gated to the cases where it is true: a root was actually given, and either a
+            // specific (nonexistent) name was typed, or the root holds no vaults at all.
+            let create_blocked_by_read_only = self.auth_mode == AuthMode::Create
+                && !self.writable
+                && !self.vault_root.trim().is_empty()
+                && (!self.vault_name.trim().is_empty() || self.discovered_vaults.is_empty());
+            if create_blocked_by_read_only {
                 ui.colored_label(
                     egui::Color32::from_rgb(190, 120, 50),
                     "No vault in this folder. Read-only — relaunch with --write to create one.",
                 );
             }
         });
-        ui.add_space(16.0);
+        ui.add_space(16.0 * k);
 
         // Track whether the user requested submission; `|=` ORs in `true` if any
         // password field had Enter pressed (see `password_field`'s return value).
@@ -2213,12 +2332,12 @@ impl GuiApp {
             self.copy_to_clipboard(pw);
         }
 
-        ui.add_space(8.0);
+        ui.add_space(8.0 * k);
         // `&self.auth_error` borrows the Option so we can read the message
         // without moving it out; show it only when an error is present.
         if let Some(err) = &self.auth_error {
             ui.colored_label(egui::Color32::from_rgb(190, 50, 50), err);
-            ui.add_space(4.0);
+            ui.add_space(4.0 * k);
         }
 
         ui.horizontal(|ui| {
@@ -5390,6 +5509,16 @@ impl GuiApp {
             save_font_choice(&self.vault_root, self.font);
             self.applied_font = self.font;
         }
+        // The window's minimum size, re-asserted whenever the value it depends on moves.
+        // Unlike the three settings above this is not driven by a user choice: it is clamped
+        // to the DISPLAY, which is unknown until the first frame has been drawn and changes
+        // again when the window is dragged to another monitor. Comparing before sending keeps
+        // this to a real change rather than a viewport command every frame.
+        let want_min = min_inner_size(monitor_size(ui.ctx()));
+        if want_min != self.applied_min_inner {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::MinInnerSize(want_min));
+            self.applied_min_inner = want_min;
+        }
         // Clear the error banner once any later status message has replaced the failure
         // text it was showing (a success/info line means the problem is no longer current).
         if error_banner_is_stale(self.error.as_deref(), &self.status) {
@@ -5402,18 +5531,21 @@ impl GuiApp {
         // Rendered before the per-screen panels so it sits above all of them.
         show_error_banner(&mut self.error, ui);
         if self.screen == Screen::Auth {
-            // The lock screen is meant to read as one simple page, and `min_inner_size`
-            // is sized so the tallest variant (Create, with the two confirm rows, plus
-            // the Help footer) fits whole — so normally there is nothing to scroll and
-            // no scroll bar is drawn.
+            // The lock screen is meant to read as one simple page that does NOT scroll.
+            // Two things hold that up: `min_inner_size`, the floor the window cannot go
+            // below, and `auth_space_scale`, which spends this screen's decorative padding
+            // according to the height actually available — so a window shorter than the
+            // comfortable layout gets a tighter front door rather than a scrollbar over
+            // the password fields.
             //
-            // It is nonetheless wrapped in a ScrollArea as a SAFETY NET, because the
-            // "it always fits" invariant now has two ways to be wrong: the footer added
-            // height to a screen whose floor was computed before it existed, and the
-            // interface-size setting can scale this screen by 1.5×. Without a scroll
-            // area, being wrong by one row does not look untidy — it puts the password
-            // fields or the Unlock button permanently out of reach, with no way to get
-            // to them. `auto_shrink` keeps the layout identical whenever it does fit.
+            // The ScrollArea below is a SAFETY NET for the case neither can cover: a
+            // display so short that even the collapsed layout does not fit (the floor is
+            // clamped to the monitor, so on such a screen the window is legitimately
+            // smaller than the content). Being wrong there without it does not look
+            // untidy — it puts the password fields or the Unlock button permanently out of
+            // reach with no way to get to them. It draws no bar whenever the content fits,
+            // which after the above is the case on any ordinary display, and `auto_shrink`
+            // keeps the layout identical then.
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, true])
@@ -5507,8 +5639,13 @@ impl GuiApp {
         // outer horizontal bar appeared, took width away, forced a re-layout, and
         // disappeared again. On a window too small for the content that oscillation ran
         // every frame — the flicker.
+        // `Frame::new()` starts fully transparent (no fill), so a bare custom frame here
+        // left the in-vault tabs showing the raw window background — black, regardless of
+        // theme — while every other screen (which uses `CentralPanel::default()`'s own
+        // frame) tracked the theme correctly. `Frame::central_panel` supplies the same
+        // `panel_fill` those screens get; only the margin is customized on top of it.
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 8)))
+            .frame(egui::Frame::central_panel(ui.style()).inner_margin(egui::Margin::symmetric(10, 8)))
             .show_inside(ui, |ui| {
                 match self.tab {
                     Tab::Urgent => self.tab_urgent(ui),
@@ -6991,6 +7128,100 @@ mod tests {
             assert!(
                 h.query_all_by_label("Create vault").count() >= 1,
                 "the primary action stays reachable at {scale:?}"
+            );
+            cleanup(&path);
+        }
+    }
+
+    /// REGRESSION: the floor must not scale itself with the interface size.
+    ///
+    /// `ViewportCommand::MinInnerSize` is turned into physical pixels by egui-winit
+    /// multiplying by `zoom_factor * native_pixels_per_point`, so a floor that pre-multiplied
+    /// by the zoom applied it TWICE — squaring to 2025×1507 at 150%, larger than a 1080p
+    /// display. The window manager then capped the window below the minimum it had just been
+    /// given, and the lock screen (laid out for the floor it was promised) overflowed into
+    /// exactly the scrollbar the floor exists to prevent.
+    #[test]
+    fn min_inner_size_is_not_pre_scaled_by_the_interface_size() {
+        // A display with room to spare, so nothing here is the clamp's doing.
+        let roomy = Some(egui::vec2(3840.0, 2160.0));
+        assert_eq!(min_inner_size(roomy), egui::vec2(MIN_INNER_SIZE[0], MIN_INNER_SIZE[1]));
+        // Unknown monitor (before the first frame) keeps the same designed floor.
+        assert_eq!(min_inner_size(None), egui::vec2(MIN_INNER_SIZE[0], MIN_INNER_SIZE[1]));
+    }
+
+    /// A minimum size larger than the screen is not a minimum — it is a window that cannot be
+    /// placed. The floor therefore yields to the display, with room left over for the title
+    /// bar and a taskbar.
+    #[test]
+    fn min_inner_size_never_exceeds_the_display() {
+        // A short display: the height is clamped, the width is not.
+        let short = min_inner_size(Some(egui::vec2(1920.0, 720.0)));
+        assert_eq!(short.x, MIN_INNER_SIZE[0], "a wide display does not touch the width floor");
+        assert!(short.y < MIN_INNER_SIZE[1], "the height floor yields to a short display");
+        assert!(short.y <= 720.0 * MONITOR_FIT + 0.01, "and leaves room for the chrome around it");
+
+        // A small display clamps both axes.
+        let small = min_inner_size(Some(egui::vec2(1024.0, 600.0)));
+        assert!(small.x <= 1024.0 * MONITOR_FIT + 0.01 && small.y <= 600.0 * MONITOR_FIT + 0.01);
+
+        // A degenerate monitor size (reported by some backends before the window is mapped)
+        // must not clamp the floor to nothing.
+        assert_eq!(min_inner_size(Some(egui::vec2(0.0, 0.0))), egui::vec2(MIN_INNER_SIZE[0], MIN_INNER_SIZE[1]));
+    }
+
+    /// The lock screen's padding is what gives way on a short window, and it does so
+    /// continuously and within bounds — never negative, never larger than designed.
+    #[test]
+    fn auth_space_scale_tapers_between_comfortable_and_cramped() {
+        assert_eq!(auth_space_scale(1000.0), 1.0, "a tall window gets the designed layout");
+        assert_eq!(auth_space_scale(620.0), 1.0, "…right down to the comfortable height");
+        assert_eq!(auth_space_scale(300.0), AUTH_SPACE_MIN, "a tiny window collapses to the floor");
+        assert_eq!(auth_space_scale(0.0), AUTH_SPACE_MIN, "and cannot go below it");
+
+        // Monotonic in between, so resizing reads as continuous rather than snapping.
+        let mid = auth_space_scale(520.0);
+        assert!(AUTH_SPACE_MIN < mid && mid < 1.0, "tapers rather than switching, got {mid}");
+        assert!(auth_space_scale(450.0) < mid && mid < auth_space_scale(600.0), "monotonic");
+    }
+
+    /// THE guarantee the user actually sees: the lock screen does not scroll.
+    ///
+    /// The Help link is the LAST thing on the screen, so if its bottom edge is inside the
+    /// window then nothing is below the fold and no scrollbar is drawn. Checked at the real
+    /// floor and at a window deliberately shorter than the comfortable layout — the case a
+    /// display-clamped floor makes reachable — where the padding must give way instead.
+    #[test]
+    fn lock_screen_fits_without_scrolling_even_when_short() {
+        use egui_kittest::{kittest::NodeT as _, Harness};
+
+        // The last of these is the shortest window a display-clamped floor realistically
+        // produces (a 1366×768 laptop at 150% interface size).
+        for h_px in [MIN_INNER_SIZE[1], 560.0, 470.0, 460.0] {
+            let path = tmp("authfit");
+            // Create mode again: the tallest variant, with both confirm rows.
+            let app = std::cell::RefCell::new(GuiApp::new(path.clone(), false));
+            assert_eq!(app.borrow().auth_mode, AuthMode::Create, "tallest lock-screen variant");
+
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(MIN_INNER_SIZE[0], h_px))
+                .with_max_steps(64)
+                .build_ui(|ui| app.borrow_mut().render(ui));
+            h.try_run().unwrap_or_else(|e| panic!("lock screen never settled at height {h_px}: {e}"));
+
+            let bottom = h
+                .root()
+                .children_recursive()
+                .filter(|n| n.accesskit_node().label().as_deref() == Some("❓  Read the guide"))
+                .filter_map(|n| n.accesskit_node().bounding_box())
+                .map(|bb| bb.y1 as f32)
+                .next()
+                .unwrap_or_else(|| panic!("the Help link did not lay out at height {h_px}"));
+
+            assert!(
+                bottom <= h_px + 1.0,
+                "the lock screen runs past the bottom at height {h_px} (last element ends at \
+                 {bottom:.0}) — it must tighten its padding, not scroll"
             );
             cleanup(&path);
         }
