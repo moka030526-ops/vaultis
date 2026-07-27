@@ -77,13 +77,11 @@ pub(crate) const TOPICS: &[Topic] = &[
         blurb: "One locked folder on your own computer, holding everything an executor or heir will need. Never connected to the internet.",
         body: &[
             Block::P(
-                "Imagine gathering every password, every account, every important paper your \
-                 family would need if something happened to you — bank logins, the will, the \
-                 deed to the house, tax returns, instructions for who to call — and putting all \
-                 of it in one locked box. That locked box is what vaultis is. It is a program \
-                 that stores this information in a single encrypted vault, so it is organised, \
-                 findable, and protected by two passwords instead of scattered across sticky \
-                 notes, old emails, and a filing cabinet only you understand.",
+                "vaultis stores the information an executor or heir would need — account logins, \
+                 the will, property deeds, tax returns, instructions for who to call — in a \
+                 single encrypted vault, protected by two passwords. Instead of this information \
+                 being spread across sticky notes, old emails, and files only you understand, it \
+                 is kept in one place.",
             ),
             Block::P(
                 "\"Encrypted\" means the information is scrambled into unreadable gibberish \
@@ -103,9 +101,7 @@ pub(crate) const TOPICS: &[Topic] = &[
                  updates or report usage, it cannot sync between devices on its own, and it \
                  cannot be reached or tampered with by anyone over a network, because it is never \
                  listening on one. The only way your information leaves this computer is if you \
-                 deliberately export it yourself. That is a deliberate trade: no convenient \
-                 cloud sync, in exchange for nothing to ever leak from a server you do not \
-                 control, because there is no server.",
+                 export it yourself.",
             ),
             Block::Sub("What a vault looks like on your computer"),
             Block::P(
@@ -129,14 +125,11 @@ pub(crate) const TOPICS: &[Topic] = &[
             ),
             Block::Sub("Three ways to open the same vault"),
             Block::P(
-                "This window — the one you are reading Help in right now — is the point-and-click \
-                 version (vaultis-gui): the one intended for everyday use, and the one an heir \
-                 with no technical background should reach for. The very same vault can also be \
-                 opened with a text-based, keyboard-driven interface (vaultis --tui) by someone \
-                 who prefers not to use a mouse, and there are separate command-line tools for \
-                 bulk jobs like backups and exports that a technical executor might use. You will \
-                 almost certainly only ever need this window; the others are covered in \
-                 “Command line” under Reference, for completeness.",
+                "This window is the point-and-click version (vaultis-gui), used for everyday \
+                 viewing and editing. The same vault can also be opened with a text-based, \
+                 keyboard-driven interface (vaultis --tui), and there are separate command-line \
+                 tools for bulk jobs like backups and exports. Most people only ever need this \
+                 window; the others are covered in “Command line” under Reference.",
             ),
         ],
     },
@@ -152,36 +145,32 @@ pub(crate) const TOPICS: &[Topic] = &[
                  want, and what are its two passwords? Nothing on this screen is your data yet — \
                  it is just how you get to it.",
             ),
-            Block::Sub("Picture a filing cabinet"),
+            Block::Sub("The Vaults folder and the vault inside it"),
             Block::P(
-                "The easiest way to understand this screen is a filing cabinet standing in the \
-                 corner of a room. The cabinet itself is an ordinary folder on your computer — \
-                 you get to choose which one, and vaultis calls it the \"Vaults folder\". Inside \
-                 that cabinet, every vault is one locked drawer. You are not limited to a single \
-                 drawer: you could keep a drawer for yourself, a second drawer for a parent you \
-                 are helping get organised, a third for a small business — as many drawers as you \
-                 like, sitting side by side in the same cabinet. Each drawer has its own lock (its \
-                 own two passwords, chosen separately) and none of them can see what is inside \
-                 any other. Creating a second vault does not touch the first one in any way.",
+                "The \"Vaults folder\" is an ordinary folder on your computer that you choose. \
+                 Each vault inside it is its own folder with its own two passwords, holding its \
+                 own records — you can keep more than one, for example one for yourself and \
+                 another you are helping a parent set up, and none of them can see what is inside \
+                 another. Creating a second vault does not touch the first one.",
             ),
-            Block::Sub("Step 1 — point at the cabinet"),
+            Block::Sub("Step 1 — choose the Vaults folder"),
             Block::P(
-                "The top box, \"Vaults folder\", is where you tell vaultis which folder to treat \
-                 as the cabinet. Type or paste a folder path into it — pasting straight from your \
-                 file manager works even if the path has quotation marks around it, see “Typing \
-                 file and folder paths”. vaultis then looks one level inside that folder for \
-                 anything that looks like a vault (technically: any subfolder that contains a \
-                 vault.pmv file) and lists what it finds in the dropdown below. This folder choice \
-                 is remembered, so you will not have to type it again next time you open the app.",
+                "The top box, \"Vaults folder\", is where you tell vaultis which folder to look \
+                 in. Type or paste a folder path into it — pasting straight from your file \
+                 manager works even if the path has quotation marks around it, see “Typing file \
+                 and folder paths”. vaultis then looks one level inside that folder for anything \
+                 that looks like a vault (technically: any subfolder that contains a vault.pmv \
+                 file) and lists what it finds in the dropdown below. This folder choice is \
+                 remembered, so you will not have to type it again next time you open the app.",
             ),
-            Block::Sub("Step 2 — pick a drawer, or name a new one"),
+            Block::Sub("Step 2 — pick a vault, or name a new one"),
             Block::P(
-                "The second box, \"Vault\", is the drawer itself — the vault's own folder name \
-                 inside the cabinet. If you already have a vault, click the dropdown and choose \
-                 its name from the list; that is opening a drawer you already filled. If you want \
-                 to start completely fresh, type a name that is not already in the list — \
-                 something like MyVault or Mom2026 — and vaultis will build a brand-new, empty \
-                 drawer with that name the moment you finish the next two steps.",
+                "The second box, \"Vault\", is the vault's own folder name inside the Vaults \
+                 folder. If you already have a vault, click the dropdown and choose its name from \
+                 the list; that is opening one you already made. If you want to start completely \
+                 fresh, type a name that is not already in the list — something like MyVault or \
+                 Mom2026 — and vaultis will build a brand-new, empty vault with that name the \
+                 moment you finish the next two steps.",
             ),
             Block::Sub("Step 3 — type the two passwords"),
             Block::P(
@@ -248,11 +237,9 @@ pub(crate) const TOPICS: &[Topic] = &[
         body: &[
             Block::P(
                 "Every vault is locked with two separate passwords, typed one after the other, \
-                 rather than the single password you might expect from other programs. Think of \
-                 it like a bank safe-deposit box that needs two different keys turned together: \
-                 the bank holds one, you hold the other, and neither key alone opens anything. \
-                 Here, both keys are passwords you choose, and the point is the same — the vault \
-                 cannot be opened with only half of what it takes.",
+                 instead of the single password you might expect from other programs. Neither \
+                 password alone opens the vault — both are required, similar to a safe-deposit \
+                 box that needs two keys turned together.",
             ),
             Block::P(
                 "This is meant to let the two passwords be kept apart from each other on purpose \
@@ -312,14 +299,11 @@ pub(crate) const TOPICS: &[Topic] = &[
         blurb: "Why the app opens looking rather than editing by default, and the exact, complete list of what each mode does and does not let you do.",
         body: &[
             Block::P(
-                "vaultis opens READ-ONLY — meaning it can look at your vault but cannot change a \
-                 single byte of it — unless it is deliberately started with an extra flag \
-                 (--write). Think of read-only mode like a photocopy of a document: you can read \
-                 every word of it, even mark it up in your head, but there is no way to \
-                 accidentally alter the original. Because a read-only session is physically \
-                 incapable of writing to the vault, it cannot break anything — which is exactly \
-                 why it is the safe default, and the mode an heir who has never used this program \
-                 before should use.",
+                "vaultis opens READ-ONLY by default — it can look at your vault but cannot \
+                 change anything in it — unless it is started with an extra flag (--write). A \
+                 read-only session cannot write to the vault at all, so it cannot break anything, \
+                 which is why it is the default, and the mode to use if you are not sure you need \
+                 to change something.",
             ),
             Block::P(
                 "Whenever the app is in this mode, an orange 🔒 READ-ONLY badge is shown in the \
@@ -448,10 +432,10 @@ pub(crate) const TOPICS: &[Topic] = &[
         blurb: "The handful of things someone must read within hours of opening this vault. Deliberately the very first, leftmost tab.",
         body: &[
             Block::P(
-                "Think of URGENT as the note you would tape to the front door: the small number \
-                 of things a person needs to know immediately, not eventually — where the will \
-                 physically is, who to phone first, which bill is on autopay and needs to be \
-                 stopped, the combination to a safe. Nothing that can wait a week belongs here.",
+                "URGENT holds the small number of things a person needs to know immediately, not \
+                 eventually — where the will physically is, who to phone first, which bill is on \
+                 autopay and needs to be stopped, the combination to a safe. Nothing that can \
+                 wait a week belongs here.",
             ),
             Block::P(
                 "Each entry is simply a title and a free-form block of text — there are no \
