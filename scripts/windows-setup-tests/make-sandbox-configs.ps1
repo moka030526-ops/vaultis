@@ -14,6 +14,16 @@ $ConfigDir = Join-Path $PSScriptRoot 'sandbox-configs'
 New-Item -ItemType Directory -Path $ResultsDir -Force | Out-Null
 New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
 
+# Windows Sandbox defaults to a modest slice of RAM, and these runs do a full
+# `cargo build --workspace --release` inside it -- rustc and the linker are the two
+# hungriest things on the machine, and a starved sandbox fails the build with an
+# out-of-memory error that reads like a code problem. Ask for half the host's RAM,
+# clamped: below 4 GB the build is unreliable, above 8 GB there is nothing to gain and
+# the sandbox may refuse to start on a smaller host.
+$HostMemoryMB = [int]((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1MB)
+$SandboxMemoryMB = [Math]::Max(4096, [Math]::Min(8192, [int]($HostMemoryMB / 2)))
+Write-Host "host RAM ${HostMemoryMB} MB -> sandbox RAM ${SandboxMemoryMB} MB"
+
 $Combos = @(
     @{ Name = 'git-rustup-winget';       Git = 'true';  Rustup = 'true';  Winget = 'true'  }
     @{ Name = 'git-rustup-nowinget';     Git = 'true';  Rustup = 'true';  Winget = 'false' }
@@ -34,6 +44,7 @@ foreach ($Combo in $Combos) {
 <Configuration>
   <VGpu>Disable</VGpu>
   <Networking>Enable</Networking>
+  <MemoryInMB>$SandboxMemoryMB</MemoryInMB>
   <MappedFolders>
     <MappedFolder>
       <HostFolder>$RepoRoot</HostFolder>
@@ -62,3 +73,5 @@ Write-Host "Done. Run the combos one at a time (only one sandbox needs to be ope
 Write-Host "  each .wsb in $ConfigDir"
 Write-Host "Logs land in:"
 Write-Host "  $ResultsDir"
+Write-Host "Then collate them with:"
+Write-Host "  .\show-results.ps1"

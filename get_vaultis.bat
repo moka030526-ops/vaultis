@@ -64,6 +64,13 @@ exit /b %RC%
 #:PSBEGIN:
 $ErrorActionPreference = "Stop"
 
+# Invoke-WebRequest redraws a progress bar for every chunk it receives, and on Windows
+# PowerShell 5.1 that redraw costs far more than the transfer itself: the ~70 MB Git
+# installer below goes from seconds to many minutes, on a console that looks frozen the
+# whole time. This is the fresh-Windows path -- exactly where nobody can tell a slow
+# download from a hung script -- so turn it off for the whole run.
+$ProgressPreference = "SilentlyContinue"
+
 # ==========================================
 # Configuration
 # ==========================================
