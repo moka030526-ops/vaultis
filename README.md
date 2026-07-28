@@ -30,8 +30,15 @@ family or executor would need in one organized, protected file.
 
 # Part 1 — Using vaultis (no technical knowledge needed)
 
-These steps assume the program is already installed on your computer. If it
-isn't, see **Part 2** (or ask whoever set it up for you).
+These steps assume the program is already installed on your computer.
+
+**If it isn't, and you are on Windows:** download **`get_vaultis.bat`** from the
+project page and double-click it. It fetches the latest released build, checks it,
+installs it, and puts the two shortcuts on your Desktop. Nothing else is needed — no
+developer tools, and it does not ask for administrator rights. Double-click it again
+any time to update.
+
+On Mac/Linux, see **Part 2** (or ask whoever set it up for you).
 
 ## Starting the program
 
@@ -50,7 +57,13 @@ the **Edit shortcut** described next.
 ## Turning on editing (one-time setup)
 
 To **create** a vault or **change** anything, the program must be started in
-**Edit mode**. The easiest way is to make an "Edit" shortcut once:
+**Edit mode**.
+
+> **If you installed with `get_vaultis.bat`, this is already done for you** — both
+> shortcuts are on your Desktop: **vaultis (View)** and **vaultis (Edit)**. Skip
+> straight to "Creating your vault the first time" below.
+
+Otherwise, make an "Edit" shortcut once:
 
 **On Windows:**
 1. Right-click **`vaultis-gui.exe`** → **Show more options** → **Create shortcut**.
@@ -440,7 +453,24 @@ data, so it's fine if it's lost:
 
 # Part 2 — For the person who sets it up (technical)
 
-## Getting the program (build from source)
+## Getting the program
+
+**On Windows, you do not need to build anything.** Double-click
+[`get_vaultis.bat`](get_vaultis.bat): it downloads the latest release, verifies it
+against its published SHA-256, installs it under `%LOCALAPPDATA%\Programs\vaultis`,
+and creates both Desktop shortcuts. No Git, no Rust, no compiler, no elevation.
+
+> The Windows binaries are built in CI — see
+> [`.github/workflows/release.yml`](.github/workflows/release.yml) — because building
+> on the machine being set up could not be made to work unattended: every Rust
+> toolchain rustup can install by itself fails to *link* on a clean Windows box, and
+> the alternative was a multi-gigabyte Visual Studio download mid-install. Cut a
+> release with `git tag vX.Y.Z && git push origin vX.Y.Z`.
+>
+> The release is **not code-signed yet**, so the checksum proves the download arrived
+> intact but not who produced it, and Windows SmartScreen will warn on first launch.
+
+## Building from source
 
 vaultis is written in Rust. Install the toolchain from <https://rustup.rs> if you
 don't have it, then build:
@@ -530,6 +560,14 @@ cargo build --release
 .\target\release\vaultis-gui.exe        # the graphical app — no console window
 .\target\release\vaultis.exe --help     # the command-line version
 ```
+
+> Building here needs a **linker**, which on Windows means Visual Studio or "Build
+> Tools for Visual Studio" with the *Desktop development with C++* workload. The
+> `gnu` and `gnullvm` toolchains are not a way around that — each needs external
+> tooling of its own; `scripts\build.bat` documents what each one costs, and checks
+> up front so a missing linker is a one-second error rather than one that surfaces
+> hundreds of crates into the build. If you only want to *run* vaultis, use
+> `get_vaultis.bat` instead.
 
 The build produces **two `.exe` files**:
 
