@@ -60,7 +60,8 @@ Per combo, `results\` holds:
 | --- | --- |
 | `<combo>.result` | the one-line verdict `show-results.ps1` reads |
 | `<combo>.status` | timestamped steps, **written straight through** -- this is the one to watch mid-run |
-| `<combo>.log` | the full PowerShell transcript: prep, then all of `get_vaultis.bat`'s output |
+| `<combo>-get_vaultis.log` | **everything `get_vaultis.bat` printed**, stdout and stderr -- the file that says *why* a run failed |
+| `<combo>.log` | the PowerShell transcript of the prep steps around it |
 | `<combo>-desktop.png` | a screenshot of that sandbox's desktop, taken just before it was discarded |
 
 Watch `.status` rather than `.log` while a run is in flight. The transcript is

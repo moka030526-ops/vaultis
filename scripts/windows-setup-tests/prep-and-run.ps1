@@ -140,11 +140,23 @@ try {
     Copy-Item 'C:\vaultis-src\get_vaultis.bat' (Join-Path $WorkDir 'get_vaultis.bat') -Force
     Push-Location $WorkDir
 
+    $RunLog = Join-Path $ResultsDir "$ComboName-get_vaultis.log"
     Write-Step '=== running get_vaultis.bat (clone + release build; expect 10-20 minutes) ==='
-    # Redirected from NUL: get_vaultis.bat's own trailing `pause` fires whenever
-    # %cmdcmdline% mentions its own filename, which is true of `cmd /c get_vaultis.bat`
-    # too. Empty stdin makes that pause a no-op instead of hanging the sandbox forever.
-    cmd /c "get_vaultis.bat < NUL"
+    Write-Step "    its output -> $RunLog"
+    # Both redirections inside the cmd string are load-bearing:
+    #   < NUL  get_vaultis.bat's trailing `pause` fires whenever %cmdcmdline% mentions
+    #          its own filename, which `cmd /c get_vaultis.bat` does. Empty stdin makes
+    #          that pause a no-op instead of hanging the sandbox forever.
+    #   2>&1   build.bat reports EVERY error with `1>&2`. Merged here, by cmd, so stderr
+    #          is interleaved with the stdout it belongs between before it reaches the
+    #          pipe -- redirecting only stdout captures a log with no error in it.
+    #
+    # And piped rather than left to Start-Transcript, which records only what the
+    # PowerShell host itself writes: a native command's output goes straight to the
+    # console down an inherited handle, so the transcript never sees a byte of it. That
+    # is not theoretical -- it produced a failing run whose log held the exit code and
+    # nothing else. The pipe forces every descendant's output through something we own.
+    cmd /c "get_vaultis.bat < NUL 2>&1" | Tee-Object -FilePath $RunLog
     $ExitCode = $LASTEXITCODE
     Write-Step "=== get_vaultis.bat exited with code $ExitCode ==="
 
@@ -156,6 +168,15 @@ try {
     # exits 0, so the exit code alone does not answer the question.
     if ($ExitCode -ne 0) {
         $Failures.Add("get_vaultis.bat exited $ExitCode")
+        # Echo the tail into the step log as well, so the small .status file says WHY it
+        # failed and not merely where -- the whole point of a one-screen status file.
+        if (Test-Path -LiteralPath $RunLog) {
+            Write-Step '--- last 20 lines of get_vaultis.bat output ---'
+            Get-Content -LiteralPath $RunLog |
+                Where-Object { $_.Trim() } |
+                Select-Object -Last 20 |
+                ForEach-Object { Write-Step "  | $_" }
+        }
     }
 
     $Desktop = [Environment]::GetFolderPath('Desktop')
