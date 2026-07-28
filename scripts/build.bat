@@ -184,7 +184,8 @@ rem runs an installer from the network - so it is never done silently: the scrip
 rem and defaults to NO. --install-rust is the explicit yes for an unattended run.
 rem `where` is the Windows equivalent of `which`; it sets a nonzero exit code when the
 rem program is not on PATH.
-set "RUST_TOOLCHAIN=stable-x86_64-pc-windows-gnu"
+set "RUST_TARGET=x86_64-pc-windows-gnu"
+set "RUST_TOOLCHAIN=stable-%RUST_TARGET%"
 
 rem rustup, not cargo, is what decides this: choosing a specific toolchain is rustup's
 rem job, and a Rust installed any other way - an MSI, winget, a distro package - cannot
@@ -285,6 +286,30 @@ if errorlevel 1 (
     popd
     exit /b 1
 )
+
+rem --- Put the toolchain's own binutils on PATH ----------------------------
+rem The windows-* crates declare their imports with `kind = "raw-dylib"`, and on a gnu
+rem target rustc implements that by running dlltool.exe. rustup DOES ship dlltool, in
+rem the rust-mingw component - but inside the toolchain rather than on PATH:
+rem   <sysroot>\lib\rustlib\%RUST_TARGET%\bin\self-contained\dlltool.exe
+rem while rustc looks it up by bare name. Without this the build dies on
+rem   error: error calling dlltool 'dlltool.exe': program not found
+rem and does so about a hundred crates in, because windows-result sits nowhere near the
+rem front of the dependency graph.
+rem
+rem The sysroot is ASKED OF rustc rather than assembled from %USERPROFILE%\.rustup\...,
+rem which is merely the default location and is wrong wherever RUSTUP_HOME was moved.
+for /f "delims=" %%S in ('rustc --print sysroot 2^>nul') do set "RUST_SYSROOT=%%S"
+if defined RUST_SYSROOT (
+    if exist "!RUST_SYSROOT!\lib\rustlib\%RUST_TARGET%\bin\self-contained\dlltool.exe" (
+        set "PATH=!RUST_SYSROOT!\lib\rustlib\%RUST_TARGET%\bin\self-contained;!PATH!"
+    )
+)
+rem Warn rather than fail: an msvc toolchain needs no dlltool at all, so its absence is
+rem only fatal for the gnu build this script selects - and saying so here beats the same
+rem discovery a hundred crates later.
+where dlltool >nul 2>nul
+if errorlevel 1 echo warning: dlltool.exe is not on PATH; the windows-* crates may fail to build. 1>&2
 
 rem An ancient-but-present toolchain is the other failure mode, and its error message
 rem - "let chains are unstable", "edition 2024 is unsupported" - reads like broken code
