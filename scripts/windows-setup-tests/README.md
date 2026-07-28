@@ -3,25 +3,22 @@
 Runs the real `get_vaultis.bat` in a disposable, genuinely clean Windows Sandbox VM.
 Real network calls, the real published release, a real install -- nothing is mocked.
 
-A run PASSES only if the sandbox ends up with vaultis actually installed: both
-binaries present under `%LOCALAPPDATA%\Programs\vaultis`, and both desktop shortcuts --
-"vaultis (View)" and "vaultis (Edit)" -- pointing at a `vaultis-gui.exe` that exists.
-`get_vaultis.bat`'s exit code is not enough on its own, because it treats a failure to
-create the shortcuts as a warning and still exits 0.
+**One sandbox.** Inside it the installer runs twice: once on a machine that has never
+seen vaultis, then again over the top of that install -- the path every future update
+takes. Both are checked. The whole thing takes about two minutes.
+
+There is no git/rustup/winget matrix any more. `get_vaultis.bat` downloads a prebuilt
+release and uses none of those tools, so the old eight combinations exercised one code
+path eight times, at 10-20 minutes of compiling each.
+
+A run PASSES only if the sandbox ends up with vaultis actually installed **after each
+run**: both binaries under `%LOCALAPPDATA%\Programs\vaultis`, and both desktop
+shortcuts -- "vaultis (View)" and "vaultis (Edit)" -- pointing at a `vaultis-gui.exe`
+that exists. `get_vaultis.bat`'s exit code is not enough on its own, because it treats a
+failure to create the shortcuts as a warning and still exits 0.
 
 Requires Windows 10/11 Pro, Enterprise, or Education (not Home), with virtualization
 enabled in firmware.
-
-## Scenarios
-
-| scenario | what it covers |
-| --- | --- |
-| `fresh` | a clean machine that has never seen vaultis |
-| `reinstall` | runs it twice, so the second run replaces the first install -- the same path every future update takes |
-
-There is no git/rustup/winget matrix. `get_vaultis.bat` downloads a prebuilt release
-and uses none of those tools, so the old eight combinations exercised one code path
-eight times, at 10-20 minutes of compiling each. A run now takes about a minute.
 
 ## One-time setup
 
@@ -29,15 +26,20 @@ eight times, at 10-20 minutes of compiling each. A run now takes about a minute.
    ```powershell
    Enable-WindowsOptionalFeature -Online -FeatureName "Containers-DisposableClientVM" -All
    ```
-2. Generate the sandbox configs (run on the host, from this folder):
+2. Generate the sandbox config (run on the host, from this folder):
    ```powershell
    .\make-sandbox-configs.ps1
    ```
+   If execution policy blocks it:
+   `powershell -ExecutionPolicy Bypass -File .\make-sandbox-configs.ps1`
 
-## Running one
+   This also deletes configs and results left by older versions of this kit, which
+   generated one `.wsb` per combination and never cleaned up after itself.
 
-Double-click a `.wsb` file, e.g. `sandbox-configs\fresh.wsb`. The sandbox boots, runs
-`get_vaultis.bat`, and writes its results to the mapped `results\` folder on the host.
+## Running it
+
+Double-click `sandbox-configs\vaultis.wsb`. The sandbox boots, runs `get_vaultis.bat`
+twice, and writes its results to the mapped `results\` folder on the host.
 
 No UAC prompt should appear: the install is per-user, under `%LOCALAPPDATA%`, and needs
 no administrator rights. The run records whether it was elevated, so that claim has
@@ -46,30 +48,32 @@ evidence rather than being assumed.
 When it finishes, the window says PASS or FAIL and waits. Minimize it and you are
 looking at the sandbox desktop with the two vaultis icons on it -- **double-click one**,
 since only launching the app proves the downloaded binary actually runs on a clean
-machine, which no amount of file checking can tell you. Close the sandbox window when
-you are done; everything inside it is discarded, and what is in `results\` persists.
+machine, which no amount of file checking can tell you. A SmartScreen warning there is
+expected: the release is not code-signed yet.
+
+Close the sandbox window when you are done; everything inside it is discarded, and what
+is in `results\` persists.
 
 ## Reading results
 
+`results\run.status` is the whole story, and it ends with `RESULT: PASS` or `RESULT:
+FAIL` followed by each failure. Watch it live from the host while the sandbox runs:
+
 ```powershell
-.\show-results.ps1
+Get-Content results\run.status -Wait
 ```
-
-One line per scenario -- PASS, FAIL, RUNNING, or not run -- and the log paths for any
-failures. Safe to run while a sandbox is still going.
-
-Per scenario, `results\` holds:
 
 | file | what it is |
 | --- | --- |
-| `<scenario>-get_vaultis-N.log` | **everything `get_vaultis.bat` printed** on run N, stdout and stderr -- the file that says *why* a run failed |
-| `<scenario>.status` | timestamped steps, **written straight through**, plus the tail of any failure -- usually enough on its own |
-| `<scenario>.log` | the PowerShell transcript of the steps around it |
-| `<scenario>-desktop.png` | a screenshot of that sandbox's desktop, taken just before it was discarded |
+| `run.status` | timestamped steps, **written straight through**, ending in the verdict -- usually enough on its own |
+| `get_vaultis-1.log` | **everything `get_vaultis.bat` printed** on the clean install, stdout and stderr -- the file that says *why* a run failed |
+| `get_vaultis-2.log` | the same, for the second run over the top of the first |
+| `run.log` | the PowerShell transcript of the steps around them |
+| `run-desktop.png` | a screenshot of the sandbox desktop, taken just before it was discarded |
 
-Watch `.status` rather than `.log` while a run is in flight. The transcript is buffered,
-so mid-run it stops dead partway through and looks exactly like a hang; `.status` is
-always current.
+Watch `run.status` rather than `run.log` while a run is in flight. The transcript is
+buffered, so mid-run it stops dead partway through and looks exactly like a hang;
+`run.status` is always current.
 
 ## What is actually under test
 
@@ -80,6 +84,6 @@ copy. So:
   local copy into the sandbox before running it.
 * Local edits to anything that ends up *inside the release* -- the binaries,
   `packaging\windows\make-shortcuts.ps1`, the icons -- are **not**. Those come from the
-  last release, so cut one (`git tag vX.Y.Z && git push origin vX.Y.Z`, which triggers
+  last release, so cut one (`scripts/release.sh`, which pushes the tag that triggers
   `.github/workflows/release.yml`) before testing them here.
-* If there is no published release at all, every scenario fails at the lookup step.
+* If there is no published release at all, the run fails at the lookup step.

@@ -1,30 +1,30 @@
 <#
-Runs INSIDE a Windows Sandbox instance (via a .wsb LogonCommand, never by hand).
+Runs INSIDE a Windows Sandbox instance (via the .wsb LogonCommand, never by hand).
 Runs the real get_vaultis.bat on a genuinely clean Windows machine and logs the whole
 thing to a folder mapped back to the host, so the log survives after the disposable
 sandbox is closed and discarded.
 
-The run only PASSES if the sandbox ends up with vaultis actually installed: both
-desktop shortcuts present, each pointing at a vaultis-gui.exe that exists. That is
-checked here rather than left to the eye, because the sandbox -- and its desktop -- is
-destroyed the moment the window closes. A screenshot of that desktop is saved next to
-the log so the two icons are still there to look at afterwards.
+get_vaultis.bat is run TWICE, and checked after each:
 
-Scenarios:
-  fresh      a clean machine that has never seen vaultis
-  reinstall  run it twice, so the second run exercises replacing an existing install
-             (get_vaultis.bat deletes and re-extracts the install directory, which is
-             also the update path every user takes on every later release)
+  run 1  a clean machine that has never seen vaultis
+  run 2  the same installer over the top of run 1's install -- get_vaultis.bat deletes
+         and re-extracts the install directory, which is the path every user takes on
+         every later release, and the one where a half-deleted install would show up
 
-There is deliberately no git/rustup/winget matrix any more. get_vaultis.bat downloads
-a prebuilt release and uses none of those tools, so eight combinations of them tested
-eight identical code paths. Nothing here needs elevation either, which the run records
-rather than assumes.
+Both in one sandbox: the second run needs the first run's install to be there, so they
+have to share a machine anyway, and booting a second VM to test an upgrade would have
+to install first regardless.
+
+A run PASSES only if vaultis really ended up installed BOTH times: both binaries under
+%LOCALAPPDATA%\Programs\vaultis, and both desktop shortcuts pointing at a
+vaultis-gui.exe that exists. That is checked here rather than left to the eye, because
+the sandbox -- and its desktop -- is destroyed the moment the window closes. A
+screenshot of that desktop is saved next to the log so the icons remain to look at.
+
+get_vaultis.bat's own exit code is not sufficient: it treats a failure to create the
+shortcuts as a warning and still exits 0. Nothing here needs elevation either, which
+the run records rather than assumes.
 #>
-param(
-    [Parameter(Mandatory)] [ValidateSet('fresh', 'reinstall')] [string]$Scenario
-)
-
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -33,8 +33,8 @@ New-Item -ItemType Directory -Path $ResultsDir -Force | Out-Null
 
 # Start-Transcript buffers, so a host watching results\ mid-run sees a log that stops
 # dead after a line or two and cannot tell a slow download from a hang. These step lines
-# are written straight through to disk, so the .status file is always current.
-$StatusFile = Join-Path $ResultsDir "$Scenario.status"
+# are written straight through to disk, so run.status is always current.
+$StatusFile = Join-Path $ResultsDir 'run.status'
 [IO.File]::WriteAllText($StatusFile, '')
 
 function Write-Step([string]$Message) {
@@ -43,17 +43,44 @@ function Write-Step([string]$Message) {
     [IO.File]::AppendAllText($StatusFile, $Line + [Environment]::NewLine)
 }
 
-Start-Transcript -Path (Join-Path $ResultsDir "$Scenario.log") -Force
+Start-Transcript -Path (Join-Path $ResultsDir 'run.log') -Force
 
 $ExitCode = $null
 $Failures = New-Object Collections.Generic.List[string]
 $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\vaultis'
+$Desktop = [Environment]::GetFolderPath('Desktop')
+
+# Checked after EVERY run, not once at the end: an upgrade that leaves a working install
+# is the whole point of run 2, and checking only afterwards cannot say which run broke.
+function Test-Installed([int]$Run) {
+    foreach ($Exe in 'vaultis-gui.exe', 'vaultis.exe') {
+        $Path = Join-Path $InstallDir $Exe
+        if (Test-Path -LiteralPath $Path) { Write-Step "  run ${Run}: installed $Exe" }
+        else { $Failures.Add("run ${Run}: not installed: $Path") }
+    }
+
+    # The point of the whole exercise: two working shortcuts on the desktop.
+    $Shell = New-Object -ComObject WScript.Shell
+    foreach ($Name in 'vaultis (View)', 'vaultis (Edit)') {
+        $Lnk = Join-Path $Desktop "$Name.lnk"
+        if (-not (Test-Path -LiteralPath $Lnk)) {
+            $Failures.Add("run ${Run}: no desktop shortcut: $Name.lnk")
+            continue
+        }
+        $Target = $Shell.CreateShortcut($Lnk).TargetPath
+        if (-not $Target -or -not (Test-Path -LiteralPath $Target)) {
+            $Failures.Add("run ${Run}: $Name.lnk points at a missing exe: $Target")
+            continue
+        }
+        Write-Step "  run ${Run}: shortcut OK: $Name.lnk"
+    }
+}
 
 try {
     $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $IsElevated = (New-Object Security.Principal.WindowsPrincipal($Identity)).IsInRole(
         [Security.Principal.WindowsBuiltInRole]::Administrator)
-    Write-Step "=== scenario '$Scenario' ==="
+    Write-Step '=== testing get_vaultis.bat on a clean machine ==='
     # Recorded because "needs no admin rights" is a claim about the installer worth
     # having evidence for, not an assumption.
     Write-Step "elevated: $IsElevated"
@@ -63,10 +90,10 @@ try {
     Copy-Item 'C:\vaultis-src\get_vaultis.bat' (Join-Path $WorkDir 'get_vaultis.bat') -Force
     Push-Location $WorkDir
 
-    $Runs = if ($Scenario -eq 'reinstall') { 1, 2 } else { 1 }
-    foreach ($Run in $Runs) {
-        $RunLog = Join-Path $ResultsDir "$Scenario-get_vaultis-$Run.log"
-        Write-Step "=== running get_vaultis.bat (run $Run of $($Runs.Count)) ==="
+    foreach ($Run in 1, 2) {
+        $What = if ($Run -eq 1) { 'clean install' } else { 'over the top of run 1' }
+        $RunLog = Join-Path $ResultsDir "get_vaultis-$Run.log"
+        Write-Step "=== run $Run of 2: $What ==="
         Write-Step "    its output -> $RunLog"
         # Both redirections inside the cmd string are load-bearing:
         #   < NUL  get_vaultis.bat's trailing `pause` fires whenever %cmdcmdline%
@@ -95,33 +122,11 @@ try {
             }
             break
         }
+
+        Test-Installed -Run $Run
     }
 
     Pop-Location
-
-    # --- did vaultis actually end up installed? -----------------------------
-    foreach ($Exe in 'vaultis-gui.exe', 'vaultis.exe') {
-        $Path = Join-Path $InstallDir $Exe
-        if (Test-Path -LiteralPath $Path) { Write-Step "installed: $Path" }
-        else { $Failures.Add("not installed: $Path") }
-    }
-
-    # The point of the whole exercise: two working shortcuts on the desktop.
-    $Desktop = [Environment]::GetFolderPath('Desktop')
-    $Shell = New-Object -ComObject WScript.Shell
-    foreach ($Name in 'vaultis (View)', 'vaultis (Edit)') {
-        $Lnk = Join-Path $Desktop "$Name.lnk"
-        if (-not (Test-Path -LiteralPath $Lnk)) {
-            $Failures.Add("no desktop shortcut: $Name.lnk")
-            continue
-        }
-        $Target = $Shell.CreateShortcut($Lnk).TargetPath
-        if (-not $Target -or -not (Test-Path -LiteralPath $Target)) {
-            $Failures.Add("$Name.lnk points at a missing exe: $Target")
-            continue
-        }
-        Write-Step "shortcut OK: $Name.lnk -> $Target"
-    }
 
     # --- a picture of that desktop, since the sandbox is about to be thrown away ---
     # Best effort: this is evidence, not a check.
@@ -134,7 +139,7 @@ try {
         $Bitmap = New-Object Drawing.Bitmap $Bounds.Width, $Bounds.Height
         $Graphics = [Drawing.Graphics]::FromImage($Bitmap)
         $Graphics.CopyFromScreen($Bounds.Location, [Drawing.Point]::Empty, $Bounds.Size)
-        $Shot = Join-Path $ResultsDir "$Scenario-desktop.png"
+        $Shot = Join-Path $ResultsDir 'run-desktop.png'
         $Bitmap.Save($Shot, [Drawing.Imaging.ImageFormat]::Png)
         $Graphics.Dispose()
         $Bitmap.Dispose()
@@ -157,17 +162,16 @@ $Result = if ($Failures.Count -eq 0) { 'PASS' } else { 'FAIL' }
 Write-Step "RESULT: $Result"
 foreach ($Failure in $Failures) { Write-Step "  - $Failure" }
 
-# One line per scenario, for show-results.ps1 on the host to collate.
-$Summary = "$Result`t$Scenario`texit=$ExitCode"
+$Summary = "$Result`texit=$ExitCode"
 if ($Failures.Count) { $Summary += "`t" + ($Failures -join '; ') }
-[IO.File]::WriteAllText((Join-Path $ResultsDir "$Scenario.result"), $Summary + [Environment]::NewLine)
+[IO.File]::WriteAllText((Join-Path $ResultsDir 'run.result'), $Summary + [Environment]::NewLine)
 
 Stop-Transcript
 
 # The log is complete on the host by now, so holding here costs nothing and buys the
 # one thing a transcript cannot show: the actual desktop, with the two icons on it.
 Write-Host ''
-Write-Host "$Result -- $Scenario. Minimize this window to see the two vaultis icons on the desktop."
+Write-Host "$Result -- minimize this window to see the two vaultis icons on the desktop."
 Write-Host 'Try double-clicking one: only launching it proves the download really runs here.'
 Write-Host 'Press Enter to close (or just close the sandbox window).'
 Read-Host | Out-Null
