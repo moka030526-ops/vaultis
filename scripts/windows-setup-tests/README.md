@@ -1,17 +1,27 @@
 # Testing get_vaultis.bat in Windows Sandbox
 
-Exercises all 8 combinations of git / rustup / winget present-or-absent against the
-real `get_vaultis.bat`, each in a disposable, genuinely clean Windows Sandbox VM. Real
-network calls, real installers, real `cargo build` -- nothing here is mocked.
+Runs the real `get_vaultis.bat` in a disposable, genuinely clean Windows Sandbox VM.
+Real network calls, the real published release, a real install -- nothing is mocked.
 
-A combo PASSES only if that sandbox ends up with vaultis actually installed: both
-desktop shortcuts -- "vaultis (View)" and "vaultis (Edit)" -- present, and each
-pointing at a `vaultis-gui.exe` that exists. `get_vaultis.bat`'s own exit code is not
-enough on its own, because it treats a failure to install the shortcuts as a warning
-and still exits 0.
+A run PASSES only if the sandbox ends up with vaultis actually installed: both
+binaries present under `%LOCALAPPDATA%\Programs\vaultis`, and both desktop shortcuts --
+"vaultis (View)" and "vaultis (Edit)" -- pointing at a `vaultis-gui.exe` that exists.
+`get_vaultis.bat`'s exit code is not enough on its own, because it treats a failure to
+create the shortcuts as a warning and still exits 0.
 
 Requires Windows 10/11 Pro, Enterprise, or Education (not Home), with virtualization
 enabled in firmware.
+
+## Scenarios
+
+| scenario | what it covers |
+| --- | --- |
+| `fresh` | a clean machine that has never seen vaultis |
+| `reinstall` | runs it twice, so the second run replaces the first install -- the same path every future update takes |
+
+There is no git/rustup/winget matrix. `get_vaultis.bat` downloads a prebuilt release
+and uses none of those tools, so the old eight combinations exercised one code path
+eight times, at 10-20 minutes of compiling each. A run now takes about a minute.
 
 ## One-time setup
 
@@ -23,27 +33,21 @@ enabled in firmware.
    ```powershell
    .\make-sandbox-configs.ps1
    ```
-   This writes 8 `.wsb` files into `sandbox-configs\`, sized to give each sandbox half
-   the host's RAM (4-8 GB) -- a release build of the workspace needs it.
 
-## Running a combo
+## Running one
 
-Double-click a `.wsb` file, e.g. `sandbox-configs\nogit-norustup-nowinget.wsb`. The
-sandbox boots, installs whatever the combo calls for (skip this for "absent" --
-sandboxes start with none of these tools), then runs the real `get_vaultis.bat`.
+Double-click a `.wsb` file, e.g. `sandbox-configs\fresh.wsb`. The sandbox boots, runs
+`get_vaultis.bat`, and writes its results to the mapped `results\` folder on the host.
 
-Budget **10-20 minutes per combo**: it clones the repo, installs a Rust toolchain, and
-does a full release build of the workspace, from scratch, every time.
+No UAC prompt should appear: the install is per-user, under `%LOCALAPPDATA%`, and needs
+no administrator rights. The run records whether it was elevated, so that claim has
+evidence rather than being assumed.
 
-Watch the sandbox window at the very start. The script takes an elevated token up
-front -- Git's installer is `requireAdministrator`, so `/VERYSILENT` still stalls on a
-UAC consent dialog without one -- so click "Yes" if a prompt appears in the first few
-seconds. After that the run is unattended.
-
-Run combos one at a time. When a combo finishes, the window says PASS or FAIL and
-waits: minimize it and you are looking at the sandbox desktop with the two vaultis
-icons on it. Close the sandbox window when you're done; everything inside it is
-discarded, and what's in `results\` is what persists.
+When it finishes, the window says PASS or FAIL and waits. Minimize it and you are
+looking at the sandbox desktop with the two vaultis icons on it -- **double-click one**,
+since only launching the app proves the downloaded binary actually runs on a clean
+machine, which no amount of file checking can tell you. Close the sandbox window when
+you are done; everything inside it is discarded, and what is in `results\` persists.
 
 ## Reading results
 
@@ -51,30 +55,31 @@ discarded, and what's in `results\` is what persists.
 .\show-results.ps1
 ```
 
-One line per combo -- PASS, FAIL, RUNNING, or not run -- and the log paths for any
+One line per scenario -- PASS, FAIL, RUNNING, or not run -- and the log paths for any
 failures. Safe to run while a sandbox is still going.
 
-Per combo, `results\` holds:
+Per scenario, `results\` holds:
 
 | file | what it is |
 | --- | --- |
-| `<combo>.result` | the one-line verdict `show-results.ps1` reads |
-| `<combo>.status` | timestamped steps, **written straight through** -- this is the one to watch mid-run |
-| `<combo>-get_vaultis.log` | **everything `get_vaultis.bat` printed**, stdout and stderr -- the file that says *why* a run failed |
-| `<combo>.log` | the PowerShell transcript of the prep steps around it |
-| `<combo>-desktop.png` | a screenshot of that sandbox's desktop, taken just before it was discarded |
+| `<scenario>-get_vaultis-N.log` | **everything `get_vaultis.bat` printed** on run N, stdout and stderr -- the file that says *why* a run failed |
+| `<scenario>.status` | timestamped steps, **written straight through**, plus the tail of any failure -- usually enough on its own |
+| `<scenario>.log` | the PowerShell transcript of the steps around it |
+| `<scenario>-desktop.png` | a screenshot of that sandbox's desktop, taken just before it was discarded |
 
-Watch `.status` rather than `.log` while a run is in flight. The transcript is
-buffered, so mid-run it stops dead partway through and looks exactly like a hang; the
-`.status` file is always current, and its last line tells you whether the sandbox is
-downloading, building, or genuinely stuck.
+Watch `.status` rather than `.log` while a run is in flight. The transcript is buffered,
+so mid-run it stops dead partway through and looks exactly like a hang; `.status` is
+always current.
 
-## Note on what's actually under test
+## What is actually under test
 
-get_vaultis.bat clones the real `vaultis` repo from GitHub and builds *that* clone --
-not your local working copy. If you're testing local edits to `get_vaultis.bat`
-itself, this kit picks those up (it copies the mapped, local copy into the sandbox
-before running it). If you're testing local edits to `scripts\build.bat`,
-`packaging\windows\make-shortcuts.ps1`, or anything else in the repo, push first --
-get_vaultis.bat has no way to build from anything but the GitHub clone. A shortcut fix
-that only exists locally will show up here as a FAIL.
+`get_vaultis.bat` downloads **the latest published GitHub release**, not your working
+copy. So:
+
+* Local edits to `get_vaultis.bat` itself **are** picked up -- the kit copies the mapped
+  local copy into the sandbox before running it.
+* Local edits to anything that ends up *inside the release* -- the binaries,
+  `packaging\windows\make-shortcuts.ps1`, the icons -- are **not**. Those come from the
+  last release, so cut one (`git tag vX.Y.Z && git push origin vX.Y.Z`, which triggers
+  `.github/workflows/release.yml`) before testing them here.
+* If there is no published release at all, every scenario fails at the lookup step.

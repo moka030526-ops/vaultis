@@ -1,7 +1,7 @@
 <#
-Run this ONE on the host (not inside a sandbox) to (re)generate the 8 .wsb files under
-sandbox-configs\, one per git/rustup/winget present-or-absent combination. Double-click
-any of the generated files to launch that combo in a disposable Windows Sandbox.
+Run this ONCE on the host (not inside a sandbox) to (re)generate the .wsb files under
+sandbox-configs\, one per scenario. Double-click any of the generated files to launch
+that scenario in a disposable Windows Sandbox.
 
 Regenerate any time this script or prep-and-run.ps1 moves, since the .wsb files bake in
 absolute host paths.
@@ -14,31 +14,24 @@ $ConfigDir = Join-Path $PSScriptRoot 'sandbox-configs'
 New-Item -ItemType Directory -Path $ResultsDir -Force | Out-Null
 New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
 
-# Windows Sandbox defaults to a modest slice of RAM, and these runs do a full
-# `cargo build --workspace --release` inside it -- rustc and the linker are the two
-# hungriest things on the machine, and a starved sandbox fails the build with an
-# out-of-memory error that reads like a code problem. Ask for half the host's RAM,
-# clamped: below 4 GB the build is unreliable, above 8 GB there is nothing to gain and
-# the sandbox may refuse to start on a smaller host.
-$HostMemoryMB = [int]((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1MB)
-$SandboxMemoryMB = [Math]::Max(4096, [Math]::Min(8192, [int]($HostMemoryMB / 2)))
-Write-Host "host RAM ${HostMemoryMB} MB -> sandbox RAM ${SandboxMemoryMB} MB"
-
-$Combos = @(
-    @{ Name = 'git-rustup-winget';       Git = 'true';  Rustup = 'true';  Winget = 'true'  }
-    @{ Name = 'git-rustup-nowinget';     Git = 'true';  Rustup = 'true';  Winget = 'false' }
-    @{ Name = 'git-norustup-winget';     Git = 'true';  Rustup = 'false'; Winget = 'true'  }
-    @{ Name = 'git-norustup-nowinget';   Git = 'true';  Rustup = 'false'; Winget = 'false' }
-    @{ Name = 'nogit-rustup-winget';     Git = 'false'; Rustup = 'true';  Winget = 'true'  }
-    @{ Name = 'nogit-rustup-nowinget';   Git = 'false'; Rustup = 'true';  Winget = 'false' }
-    @{ Name = 'nogit-norustup-winget';   Git = 'false'; Rustup = 'false'; Winget = 'true'  }
-    @{ Name = 'nogit-norustup-nowinget'; Git = 'false'; Rustup = 'false'; Winget = 'false' }
+# get_vaultis.bat downloads a prebuilt release: no git, no rustup, no winget, no
+# compiler. The old eight-way git/rustup/winget matrix therefore ran eight copies of one
+# code path, and each one spent 10-20 minutes compiling. What is actually worth
+# exercising is a clean machine and the replace-an-existing-install path every update
+# takes.
+$Scenarios = @(
+    @{ Name = 'fresh';     Note = 'a clean machine that has never seen vaultis' }
+    @{ Name = 'reinstall'; Note = 'run twice: the second run replaces the first install' }
 )
 
-foreach ($Combo in $Combos) {
+# Nothing compiles in the sandbox any more, so the default memory allocation is ample
+# and there is no reason to reserve gigabytes of the host's RAM for a download.
+$SandboxMemoryMB = 4096
+
+foreach ($Scenario in $Scenarios) {
     $PrepScriptInSandbox = 'C:\vaultis-src\scripts\windows-setup-tests\prep-and-run.ps1'
     $Command = "powershell -NoProfile -ExecutionPolicy Bypass -File $PrepScriptInSandbox " +
-        "-Git $($Combo.Git) -Rustup $($Combo.Rustup) -Winget $($Combo.Winget) -ComboName $($Combo.Name)"
+        "-Scenario $($Scenario.Name)"
 
     $Xml = @"
 <Configuration>
@@ -63,13 +56,13 @@ foreach ($Combo in $Combos) {
 </Configuration>
 "@
 
-    $OutFile = Join-Path $ConfigDir "$($Combo.Name).wsb"
+    $OutFile = Join-Path $ConfigDir "$($Scenario.Name).wsb"
     Set-Content -LiteralPath $OutFile -Value $Xml -Encoding ASCII
-    Write-Host "wrote $OutFile"
+    Write-Host "wrote $OutFile  -- $($Scenario.Note)"
 }
 
 Write-Host ""
-Write-Host "Done. Run the combos one at a time (only one sandbox needs to be open):"
+Write-Host "Done. Run them one at a time (only one sandbox needs to be open):"
 Write-Host "  each .wsb in $ConfigDir"
 Write-Host "Logs land in:"
 Write-Host "  $ResultsDir"

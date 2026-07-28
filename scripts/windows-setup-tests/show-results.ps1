@@ -15,17 +15,11 @@ if (-not (Test-Path -LiteralPath $ResultsDir)) {
     exit 0
 }
 
-# Same order and names make-sandbox-configs.ps1 writes, so a combo that has never been
-# run is reported as missing rather than silently omitted.
+# Same order and names make-sandbox-configs.ps1 writes, so a scenario that has never
+# been run is reported as missing rather than silently omitted.
 $Combos = @(
-    'git-rustup-winget'
-    'git-rustup-nowinget'
-    'git-norustup-winget'
-    'git-norustup-nowinget'
-    'nogit-rustup-winget'
-    'nogit-rustup-nowinget'
-    'nogit-norustup-winget'
-    'nogit-norustup-nowinget'
+    'fresh'
+    'reinstall'
 )
 
 $Rows = foreach ($Combo in $Combos) {
@@ -33,12 +27,13 @@ $Rows = foreach ($Combo in $Combos) {
     $StatusFile = Join-Path $ResultsDir "$Combo.status"
 
     if (Test-Path -LiteralPath $ResultFile) {
-        # PASS/FAIL <tab> combo <tab> wanted-state <tab> exit=N [<tab> failures]
+        # PASS/FAIL <tab> scenario <tab> exit=N [<tab> failures]
+        # Show the failures when there are any, and the exit code when there are not.
         $Fields = (Get-Content -LiteralPath $ResultFile -TotalCount 1) -split "`t"
         [pscustomobject]@{
             Combo  = $Combo
             Result = $Fields[0]
-            Detail = if ($Fields.Count -gt 4) { $Fields[4] } else { $Fields[3] }
+            Detail = if ($Fields.Count -gt 3) { $Fields[3] } else { $Fields[2] }
         }
     }
     elseif (Test-Path -LiteralPath $StatusFile) {
