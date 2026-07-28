@@ -4,6 +4,16 @@ setlocal EnableExtensions
 REM ==========================================================================
 REM Self-contained Windows setup script for vaultis: double-click it.
 REM
+REM Downloads the latest released build and puts two shortcuts on your Desktop.
+REM It does NOT compile anything: no Git, no Rust, no compiler, no Visual
+REM Studio. Building on the machine being set up was tried and abandoned --
+REM every Rust toolchain rustup can install unaided fails to LINK on a clean
+REM Windows box, and the alternative was a multi-gigabyte Visual Studio
+REM download in the middle of a double-click install. The compiling happens in
+REM CI now, once, on a runner that already has the toolchain; see
+REM .github/workflows/release.yml. To build from source yourself, clone the
+REM repository and run scripts\build.bat.
+REM
 REM This file is both a batch script and a PowerShell script. cmd.exe runs the
 REM header below, which launches PowerShell on this same file with
 REM -ExecutionPolicy Bypass -- needed because the default Restricted /
@@ -28,9 +38,10 @@ REM into the -Command string keeps quoting out of it, so a folder containing an
 REM apostrophe or an ampersand cannot break -- or reshape -- the command line.
 set "VAULTIS_SELF=%~f0"
 
-REM The script clones into a RELATIVE folder ("vaultis"), so the working directory
-REM decides where everything lands. Pin it to this file's folder: double-clicking
-REM already starts there, but "Run as administrator" starts in C:\Windows\System32.
+REM Pin the working directory to this file's folder. Nothing is written here any
+REM more, but a predictable working directory keeps relative paths in error
+REM messages meaningful, and "Run as administrator" would otherwise start in
+REM C:\Windows\System32.
 pushd "%~dp0"
 if errorlevel 1 (
     echo ERROR: Could not enter "%~dp0".
@@ -65,224 +76,153 @@ exit /b %RC%
 $ErrorActionPreference = "Stop"
 
 # Invoke-WebRequest redraws a progress bar for every chunk it receives, and on Windows
-# PowerShell 5.1 that redraw costs far more than the transfer itself: the ~70 MB Git
-# installer below goes from seconds to many minutes, on a console that looks frozen the
-# whole time. This is the fresh-Windows path -- exactly where nobody can tell a slow
-# download from a hung script -- so turn it off for the whole run.
+# PowerShell 5.1 that redraw costs far more than the transfer itself -- turning a short
+# download into minutes on a console that looks frozen the whole time. This is the
+# fresh-Windows path, exactly where nobody can tell a slow download from a hung script.
 $ProgressPreference = "SilentlyContinue"
 
 # ==========================================
 # Configuration
 # ==========================================
 
-$RepoUrl = "https://github.com/moka030526-ops/vaultis.git"
-$RepoFolder = "vaultis"
+$Repo = "moka030526-ops/vaultis"
 
-$ScriptPath = ".\scripts\build.bat"
-$ScriptArgs = @("--release", "--install-rust")
+# Matched by PATTERN from the releases API rather than guessed as a fixed name: the
+# asset carries its version (vaultis-v0.1.0-windows-x86_64.zip), so the convenient
+# /releases/latest/download/<fixed-name> URL would be a 404 -- and with
+# $ErrorActionPreference = "Stop" that kills this script on exactly the machines it
+# exists to set up.
+$AssetPattern = '^vaultis-.*-windows-x86_64\.zip$'
 
-# Who the downloaded Git installer must be Authenticode-signed by, matched against the
-# signing certificate's Subject. Only used on the winget-less fallback path below.
-# Git for Windows is released and signed by its maintainer, Johannes Schindelin.
-#
-# If a future release is signed under a different name this script FAILS CLOSED — it
-# refuses to run the installer and tells you the name it actually saw, so you can either
-# install Git yourself or, once you have satisfied yourself the new signer is genuine,
-# update this line. That is the intended failure mode: refusing a good installer is a
-# minor inconvenience, running a bad one is not.
-$ExpectedGitSigner = "Johannes Schindelin"
+# Per-user, so nothing here needs elevation: %LOCALAPPDATA%\Programs is where per-user
+# applications belong on Windows. An install under Program Files would need admin
+# rights and buy nothing -- one person's vault app is not a machine-wide service.
+$InstallDir = Join-Path $env:LOCALAPPDATA "Programs\vaultis"
 
 # ==========================================
-# Ensure Git is installed
+# Find the latest release
 # ==========================================
 
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Write-Host "Git not found. Installing Git..."
+Write-Host "Looking up the latest vaultis release..."
 
-    # Prefer winget where it exists: it resolves the current version itself and verifies
-    # the package hash against its manifest, so this path needs no verification of its
-    # own. The fallback below has to do that work explicitly -- see the signature check
-    # there, which is what keeps "no winget" from meaning "no verification".
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if ($winget) {
-        Write-Host "Installing Git with winget..."
-        winget install --id Git.Git --exact --source winget `
-            --accept-package-agreements --accept-source-agreements
-        if ($LASTEXITCODE -ne 0) {
-            throw "winget failed to install Git (exit $LASTEXITCODE). Install Git yourself: https://git-scm.com/download/win"
-        }
+$Release = Invoke-RestMethod `
+    -Uri "https://api.github.com/repos/$Repo/releases/latest" `
+    -Headers @{ "User-Agent" = "vaultis-setup" }
+
+$Asset = $Release.assets |
+    Where-Object { $_.name -match $AssetPattern } |
+    Select-Object -First 1
+
+if (-not $Asset) {
+    throw ("Release '$($Release.tag_name)' has no Windows package. " +
+        "Download it yourself: $($Release.html_url)")
+}
+
+# Refuse to install something whose integrity cannot be established at all. Failing
+# closed here costs one release-publishing mistake; installing an unverifiable binary
+# costs whatever that binary turns out to be.
+$Checksum = $Release.assets |
+    Where-Object { $_.name -eq ($Asset.name + ".sha256") } |
+    Select-Object -First 1
+
+if (-not $Checksum) {
+    throw ("Release '$($Release.tag_name)' ships $($Asset.name) with no .sha256 " +
+        "beside it. Refusing to install a download that cannot be verified.")
+}
+
+Write-Host "Found $($Release.tag_name): $($Asset.name)"
+
+# ==========================================
+# Download and verify
+# ==========================================
+
+# A FRESH randomly-named directory rather than a fixed %TEMP%\vaultis.zip: a predictable
+# path in a world-writable-ish location is something another process on this machine can
+# pre-create, and verify-then-extract is only meaningful if nothing can swap the file
+# underneath it in between.
+$DownloadDir = Join-Path $env:TEMP ("vaultis-dl-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $DownloadDir -Force | Out-Null
+
+try {
+    $Zip = Join-Path $DownloadDir $Asset.name
+    $ShaFile = Join-Path $DownloadDir $Checksum.name
+
+    Write-Host "Downloading $($Asset.name) (~$([int]($Asset.size / 1MB)) MB)..."
+    Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $Zip
+    Invoke-WebRequest -Uri $Checksum.browser_download_url -OutFile $ShaFile
+
+    Write-Host "Verifying the download..."
+
+    # The published file is "<hex>  <filename>", the sha256sum format the release job
+    # writes; take the first whitespace-delimited field.
+    $Expected = ((Get-Content -LiteralPath $ShaFile -Raw) -split '\s+')[0].Trim().ToLowerInvariant()
+    $Actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Zip).Hash.ToLowerInvariant()
+
+    if ($Expected -ne $Actual) {
+        throw ("The download does not match its published checksum. Refusing to " +
+            "install it.`n  expected: $Expected`n  actual:   $Actual")
     }
-    else {
-        # No winget: download the official installer. The asset name must be resolved
-        # from the releases API, NOT guessed. There is no stable "Git-64-bit.exe"
-        # asset -- the real ones are versioned (Git-2.55.0.3-64-bit.exe) -- so the
-        # convenient-looking /releases/latest/download/Git-64-bit.exe URL is a 404,
-        # and with $ErrorActionPreference = "Stop" that killed this script on exactly
-        # the machines it exists to set up: a fresh Windows box with no Git.
-        Write-Host "winget not available; downloading the Git installer..."
 
-        # Download into a FRESH randomly-named directory rather than a fixed
-        # %TEMP%\GitInstaller.exe. A predictable path in a world-writable-ish location is
-        # something another process on this machine can pre-create, and the verify-then-run
-        # sequence below is only meaningful if nothing can swap the file underneath it.
-        $DownloadDir = Join-Path $env:TEMP ("vaultis-git-" + [Guid]::NewGuid().ToString("N"))
-        New-Item -ItemType Directory -Path $DownloadDir -Force | Out-Null
-        $Installer = Join-Path $DownloadDir "Git-64-bit.exe"
+    # Worth being straight about what that check is and is not. The .sha256 comes from
+    # the same release, over the same TLS connection, from the same host as the zip --
+    # so it proves the bytes arrived intact, catching a truncated or corrupted download
+    # or a broken proxy. It is NOT proof of authorship: anyone able to publish a release
+    # here could publish a matching checksum with it. Authenticode signing is what would
+    # bind these bytes to a publisher, and until the release is signed this line is the
+    # honest description of the guarantee.
+    Write-Host "Checksum OK."
 
-        $Release = Invoke-RestMethod `
-            -Uri "https://api.github.com/repos/git-for-windows/git/releases/latest" `
-            -Headers @{ "User-Agent" = "vaultis-setup" }
+    # ==========================================
+    # Install
+    # ==========================================
 
-        # Anchored so PortableGit-<ver>-64-bit.7z.exe (a self-extracting archive, not
-        # an installer) cannot be picked up instead.
-        $Asset = $Release.assets |
-            Where-Object { $_.name -match '^Git-[0-9.]+-64-bit\.exe$' } |
-            Select-Object -First 1
-
-        if (-not $Asset) {
-            throw "Could not find a 64-bit Git installer in the latest release. Install Git yourself: https://git-scm.com/download/win"
-        }
-
-        Write-Host "Downloading $($Asset.name)..."
-
+    if (Test-Path -LiteralPath $InstallDir) {
+        Write-Host "Replacing the existing install in $InstallDir..."
         try {
-            Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $Installer
-
-            # Verify the installer BEFORE running it. HTTPS proves only that the bytes came
-            # from github.com; it says nothing about a compromised release, a corporate
-            # TLS-intercepting proxy with its root CA installed on this machine, or a
-            # truncated download. Authenticode is the check that actually binds these bytes
-            # to a publisher, and it is the difference between "we fetched an .exe and ran
-            # it silently as the user" and a verified install.
-            Write-Host "Verifying the installer's signature..."
-
-            $Signature = Get-AuthenticodeSignature -LiteralPath $Installer
-
-            if ($Signature.Status -ne "Valid") {
-                throw ("The downloaded Git installer is not validly signed " +
-                    "(signature status: $($Signature.Status)). Refusing to run it. " +
-                    "Install Git yourself: https://git-scm.com/download/win")
-            }
-
-            $Signer = $Signature.SignerCertificate.Subject
-
-            # Substring match on the Subject, which is a full DN
-            # (CN=..., O=..., L=..., C=...) -- not just the common name.
-            if ($Signer -notlike "*$ExpectedGitSigner*") {
-                throw ("The downloaded Git installer is signed by an unexpected publisher. " +
-                    "Expected '$ExpectedGitSigner', got: $Signer. Refusing to run it. " +
-                    "Install Git yourself: https://git-scm.com/download/win")
-            }
-
-            Write-Host "Signature OK ($ExpectedGitSigner). Installing Git..."
-
-            # -PassThru to actually READ the exit code: without it a silent install that
-            # failed would be indistinguishable from one that worked, and the failure would
-            # only surface later as the confusing "installed, but not on PATH" error.
-            $Proc = Start-Process `
-                -FilePath $Installer `
-                -ArgumentList "/VERYSILENT", "/NORESTART" `
-                -Wait `
-                -PassThru
-
-            if ($Proc.ExitCode -ne 0) {
-                throw ("The Git installer failed with exit code $($Proc.ExitCode). " +
-                    "Install Git yourself: https://git-scm.com/download/win")
-            }
+            Remove-Item -LiteralPath $InstallDir -Recurse -Force
         }
-        finally {
-            # `finally` so a rejected or failed installer is never left behind in %TEMP%
-            # for something else to find and run.
-            Remove-Item -LiteralPath $DownloadDir -Recurse -Force -ErrorAction SilentlyContinue
+        catch {
+            throw ("Could not replace '$InstallDir'. If vaultis is open, close it and " +
+                "run this again. ($($_.Exception.Message))")
         }
     }
 
-    # Add Git to PATH for the current PowerShell session.
-    $env:Path = "$env:ProgramFiles\Git\cmd;$env:Path"
-
-    if (${env:ProgramFiles(x86)}) {
-        $env:Path = "${env:ProgramFiles(x86)}\Git\cmd;$env:Path"
-    }
-
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        throw "Git was installed, but it is not available in this PowerShell session. Restart PowerShell and run the script again."
-    }
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    Write-Host "Installing into $InstallDir..."
+    Expand-Archive -LiteralPath $Zip -DestinationPath $InstallDir -Force
+}
+finally {
+    # `finally` so a rejected or half-finished download is never left behind in %TEMP%
+    # for something else to find.
+    Remove-Item -LiteralPath $DownloadDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # ==========================================
-# Clone or update repository
+# Desktop shortcuts
 # ==========================================
 
-if (-not (Test-Path -LiteralPath $RepoFolder)) {
-    Write-Host "Cloning repository into '$RepoFolder'..."
+# The same script the from-source build uses, shipped inside the zip. -InstallDir makes
+# it take both the exe and the icons from that one folder, which is exactly the flat
+# layout the release job packages.
+$ShortcutScript = Join-Path $InstallDir "make-shortcuts.ps1"
 
-    git clone $RepoUrl $RepoFolder
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to clone repository."
-    }
+if (Test-Path -LiteralPath $ShortcutScript) {
+    & $ShortcutScript -InstallDir $InstallDir
 }
 else {
-    Write-Host "Directory '$RepoFolder' already exists."
-
-    $GitDirectory = Join-Path $RepoFolder ".git"
-
-    if (-not (Test-Path -LiteralPath $GitDirectory)) {
-        throw "Directory '$RepoFolder' exists, but it is not a Git repository."
-    }
-
-    Push-Location $RepoFolder
-
-    try {
-        # Verify this really is the vaultis repository BEFORE pulling from it and then
-        # executing scripts\build.bat out of it. Without this check, any pre-existing
-        # git repo that happens to sit at .\vault -- planted, or just an unrelated
-        # folder of the same name -- would be fetched from ITS own remote and its build
-        # script run, which is arbitrary code execution from an unverified source.
-        $Origin = (git remote get-url origin 2>$null)
-        if ($LASTEXITCODE -ne 0 -or -not $Origin) {
-            throw "Directory '$RepoFolder' is a Git repository with no 'origin' remote; refusing to build from it."
-        }
-        # Compare ignoring a trailing .git and case, which are cosmetic on GitHub URLs.
-        # TrimEnd('/') first, so a remote written as ".../vaultis.git/" also normalises.
-        $Normalize = { param($u) (($u.Trim().TrimEnd('/')) -replace '\.git$', '').ToLowerInvariant() }
-        if ((& $Normalize $Origin) -ne (& $Normalize $RepoUrl)) {
-            throw "Directory '$RepoFolder' points at a different repository ('$Origin', expected '$RepoUrl'). Refusing to pull and build from it. Move or delete that folder and re-run."
-        }
-
-        Write-Host "Pulling the latest changes..."
-
-        git pull --ff-only
-
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to pull the latest repository changes."
-        }
-    }
-    finally {
-        Pop-Location
-    }
+    Write-Warning ("The package has no make-shortcuts.ps1, so no Desktop shortcuts " +
+        "were created. vaultis is installed: $InstallDir\vaultis-gui.exe")
 }
 
-# ==========================================
-# Enter repository
-# ==========================================
-
-Set-Location $RepoFolder
-
-# ==========================================
-# Run build script
-# ==========================================
-
-if (-not (Test-Path -LiteralPath $ScriptPath)) {
-    throw "Build script not found: $ScriptPath"
-}
-
-Write-Host "Running build script..."
-
-& cmd.exe /c $ScriptPath @ScriptArgs
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Build script failed with exit code $LASTEXITCODE."
-}
-
-Write-Host "Build completed successfully."
+Write-Host ""
+Write-Host "------------------------------------------------------------------------"
+Write-Host " vaultis $($Release.tag_name) is installed"
+Write-Host "------------------------------------------------------------------------"
+Write-Host "  Location: $InstallDir"
+Write-Host ""
+Write-Host "  Two shortcuts are on your Desktop:"
+Write-Host "    vaultis (View)  - read-only"
+Write-Host "    vaultis (Edit)  - edit mode"
+Write-Host ""
+Write-Host "  Re-run this file any time to update to the latest release."
+Write-Host "------------------------------------------------------------------------"
