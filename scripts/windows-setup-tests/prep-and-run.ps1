@@ -86,7 +86,7 @@ Write-Host "=== running get_vaultis.bat ==="
 # Redirected from NUL: get_vaultis.bat's own trailing `pause` fires whenever
 # %cmdcmdline% mentions its own filename, which is true of `cmd /c get_vaultis.bat`
 # too. Empty stdin makes that pause a no-op instead of hanging the sandbox forever.
-cmd /c get_vaultis.bat < NUL
+cmd /c "get_vaultis.bat < NUL"
 Write-Host "=== get_vaultis.bat exited with code $LASTEXITCODE ==="
 
 Pop-Location

@@ -136,6 +136,7 @@ fn light_visuals() -> egui::Visuals {
 /// — it holds no vault data, so it can apply on the lock screen too.
 #[derive(PartialEq, Eq, Clone, Copy, Default, Debug)]
 enum Theme {
+    #[default]
     Light,
     Dark,
     HighContrast,
@@ -146,7 +147,6 @@ enum Theme {
     GruvboxDark,
     GruvboxLight,
     RosePine,
-    #[default]
     CatppuccinMocha,
     CatppuccinLatte,
     TokyoNight,
@@ -1677,7 +1677,7 @@ impl GuiApp {
         let dir = match crate::checked_export_dir(&self.path, &self.export_dir) {
             Ok(d) => d,
             Err(msg) => {
-                self.status = msg;
+                self.fail(msg);
                 return;
             }
         };
@@ -6990,7 +6990,7 @@ mod tests {
 
         let mut app = GuiApp::new(tmp("adopt-prefs-launch"), false);
         // A launch elsewhere: the built-in defaults are in force.
-        assert_eq!(app.theme, Theme::CatppuccinMocha, "starts on the default theme");
+        assert_eq!(app.theme, Theme::Light, "starts on the default theme");
 
         app.vault_root = root.display().to_string();
         // A bare egui context is all `adopt_root_prefs` needs (it only sets visuals/zoom/fonts).
@@ -7012,7 +7012,7 @@ mod tests {
         std::fs::create_dir_all(&bare).unwrap();
         app.vault_root = bare.display().to_string();
         app.adopt_root_prefs(&ctx);
-        assert_eq!(app.theme, Theme::CatppuccinMocha, "no prefs.json -> built-in default");
+        assert_eq!(app.theme, Theme::Light, "no prefs.json -> built-in default");
         assert!(!bare.join("prefs.json").exists(), "browsing a folder must not create prefs.json in it");
 
         cleanup(&path);
@@ -8163,12 +8163,12 @@ mod tests {
     }
 
     #[test]
-    fn theme_id_round_trips_and_defaults_to_catppuccin_mocha() {
+    fn theme_id_round_trips_and_defaults_to_light() {
         for t in Theme::ALL {
             assert_eq!(Theme::from_id(t.id()), Some(t), "{} id must round-trip", t.label());
         }
         assert_eq!(Theme::from_id("nonsense"), None);
-        assert_eq!(Theme::default(), Theme::CatppuccinMocha);
+        assert_eq!(Theme::default(), Theme::Light);
         // Every theme builds a usable Visuals (no panic / field mismatch).
         for t in Theme::ALL {
             let _ = visuals_for(t);
@@ -8671,12 +8671,12 @@ mod tests {
         assert_eq!(load_theme_from(&p), Theme::Solarized);
         // Unknown id falls back to the default.
         std::fs::write(&p, br#"{"theme":"nope"}"#).unwrap();
-        assert_eq!(load_theme_from(&p), Theme::CatppuccinMocha);
+        assert_eq!(load_theme_from(&p), Theme::Light);
         // Over-cap file is rejected before the body is parsed (DoS guard).
         std::fs::write(&p, vec![b'{'; (crate::MAX_PREFS_SIZE as usize) + 1]).unwrap();
-        assert_eq!(load_theme_from(&p), Theme::CatppuccinMocha);
+        assert_eq!(load_theme_from(&p), Theme::Light);
         // Missing file -> default.
-        assert_eq!(load_theme_from(&dir.join("absent.json")), Theme::CatppuccinMocha);
+        assert_eq!(load_theme_from(&dir.join("absent.json")), Theme::Light);
         // A symlinked prefs file is refused even if its target is a valid prefs file.
         #[cfg(unix)]
         {
@@ -8684,7 +8684,7 @@ mod tests {
             save_theme_to(&real, Theme::Dark);
             let link = dir.join("link.json");
             std::os::unix::fs::symlink(&real, &link).unwrap();
-            assert_eq!(load_theme_from(&link), Theme::CatppuccinMocha, "symlinked prefs refused");
+            assert_eq!(load_theme_from(&link), Theme::Light, "symlinked prefs refused");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
