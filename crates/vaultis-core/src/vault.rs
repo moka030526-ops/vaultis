@@ -3383,7 +3383,11 @@ mod tests {
     /// file is right there and belongs to someone else" (NOT safe: a concurrent writer may
     /// be mid-rekey, and a lock-less snapshot could then pair an old-key vault.pmv with a
     /// new-key volume/manifest). Only the first may proceed unlocked.
-    #[cfg(unix)]
+    // Same gate, and for the same reason, as the sibling test above: `LOCK_FILE` only
+    // exists with `single-writer-lock`, so `#[cfg(unix)]` alone fails to compile under
+    // `cargo test -p vaultis-core --no-default-features` — the feature set the mobile and
+    // static-musl builds actually ship.
+    #[cfg(all(unix, feature = "single-writer-lock"))]
     #[test]
     fn backup_does_not_skip_the_lock_when_the_lock_file_merely_cannot_be_opened() {
         use std::os::unix::fs::PermissionsExt;
