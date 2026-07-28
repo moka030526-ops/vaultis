@@ -1272,7 +1272,7 @@ mod tests {
         // ...but read() must fail closed.
         match s2.read("doc", &key) {
             Err(StorageError::Crypto(_) | StorageError::Corrupt(_)) => {}
-            Ok(b) => panic!("bit rot served wrong plaintext instead of failing: {:?}", &*b),
+            Ok(b) => panic!("bit rot served wrong plaintext instead of failing: {:?}", *b),
             Err(e) => panic!("unexpected error variant: {e:?}"),
         }
         std::fs::remove_dir_all(&dir).ok();
