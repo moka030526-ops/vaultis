@@ -1,0 +1,95 @@
+name: release
+
+# Builds the Windows binaries and publishes them as a GitHub Release, so end users can
+# install vaultis by downloading it rather than by compiling it.
+#
+# This exists because compiling on the user's machine turned out not to be possible
+# without a separate multi-gigabyte toolchain install. Every toolchain rustup can
+# install unaided fails to LINK on a clean Windows box, each in its own way:
+#   msvc     - needs link.exe, which ships with Visual Studio
+#   gnu      - ships ld and dlltool but no assembler, so the windows-* crates'
+#              `raw-dylib` imports fail inside dlltool
+#   gnullvm  - needs an external llvm-mingw (x86_64-w64-mingw32-clang)
+# A GitHub windows-latest runner already has MSVC, so the compile happens HERE, once,
+# where the toolchain is a solved problem - and get_vaultis.bat just downloads.
+#
+# Cut a release by pushing a tag:
+#   git tag v0.1.0 && git push origin v0.1.0
+
+on:
+  push:
+    tags: ['v*']
+  # Build and upload the zip as a workflow artifact WITHOUT publishing a release, to
+  # check the packaging end to end before committing to a tag.
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write # required to create the release
+
+jobs:
+  windows:
+    name: windows x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The first job in this repo that actually LINKS a Windows binary. ci.yml's
+      # windows job only `cargo check`s from an ubuntu runner, which is why four
+      # consecutive link-time failures reached users instead of CI.
+      - name: Build the release binaries
+        run: cargo build --release -p vaultis --bins
+
+      # Everything make-shortcuts.ps1 needs, in one flat folder: it already prefers
+      # icons sitting beside the exe when given -InstallDir, which is exactly the
+      # layout get_vaultis.bat extracts to.
+      - name: Stage the package
+        shell: pwsh
+        run: |
+          $Stage = 'stage/vaultis'
+          New-Item -ItemType Directory -Path $Stage -Force | Out-Null
+          Copy-Item target/release/vaultis-gui.exe        $Stage
+          Copy-Item target/release/vaultis.exe            $Stage
+          Copy-Item packaging/icons/vaultis-locked.ico    $Stage
+          Copy-Item packaging/icons/vaultis-unlocked.ico  $Stage
+          Copy-Item packaging/windows/make-shortcuts.ps1  $Stage
+          Get-ChildItem $Stage | Select-Object Name, Length
+
+      - name: Zip it, with a checksum
+        shell: pwsh
+        run: |
+          # A tag build names itself after the tag; a manual dispatch has no tag, so it
+          # is labelled by commit instead of borrowing a version number it is not.
+          $Version = if ($env:GITHUB_REF -like 'refs/tags/*') {
+              $env:GITHUB_REF -replace '^refs/tags/', ''
+          } else {
+              'dev-' + $env:GITHUB_SHA.Substring(0, 8)
+          }
+          $Zip = "vaultis-$Version-windows-x86_64.zip"
+          Compress-Archive -Path stage/vaultis/* -DestinationPath $Zip
+          # Published beside the zip so get_vaultis.bat can verify what it downloaded.
+          # Format matches `sha256sum`: "<hex>  <filename>".
+          $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Zip).Hash.ToLowerInvariant()
+          "$Hash  $Zip" | Set-Content -LiteralPath "$Zip.sha256" -Encoding ascii
+          Write-Host "$Hash  $Zip"
+          "ZIP=$Zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # On a manual dispatch this is the whole output: download it from the run page and
+      # check the packaging before tagging anything.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vaultis-windows-x86_64
+          path: |
+            ${{ env.ZIP }}
+            ${{ env.ZIP }}.sha256
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "${{ env.ZIP }}" "${{ env.ZIP }}.sha256" --generate-notes

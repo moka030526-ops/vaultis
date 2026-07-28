@@ -69,19 +69,28 @@ jobs:
       - run: cargo install cargo-deny --locked
       - run: cargo deny check
 
-  windows-cross:
-    name: windows cross-compile check
-    runs-on: ubuntu-latest
+  windows:
+    name: windows build (real link)
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@v2
-      # --bins checks both the console `vaultis` and the GUI-subsystem `vaultis-gui`,
-      # so the Windows `windows_subsystem` build can't regress.
-      - run: cargo check --target x86_64-pc-windows-gnu --bins
+      # A real BUILD on a real Windows runner, not `cargo check` cross-compiled from
+      # ubuntu. cargo check never links, and every Windows failure this project has
+      # actually hit was a link-time one - link.exe missing, dlltool missing, dlltool's
+      # assembler missing, mingw32-clang missing - so the old job was structurally
+      # incapable of catching any of them, and all four reached users instead.
+      #
+      # --bins builds both the console `vaultis` and the GUI-subsystem `vaultis-gui`,
+      # so the Windows `windows_subsystem` build can't regress either.
+      - run: cargo build --release -p vaultis --bins
+      # The binaries the release ships must exist and RUN, not merely compile: a
+      # missing runtime DLL is invisible to the linker. `--help` is the only
+      # side-effect-free entry point (the CLI is hand-rolled, with no --version) and
+      # returns ExitCode::SUCCESS.
+      - name: Smoke-test the built exe
+        run: ./target/release/vaultis.exe --help
 
   fuzz-smoke:
     name: fuzz smoke (parsers)
