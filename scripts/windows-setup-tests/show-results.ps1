@@ -1,11 +1,11 @@
 <#
-Run this on the HOST (not inside a sandbox) to collate what the combos have produced
-so far. Answers the only question the kit exists to answer -- did every combination of
-git/rustup/winget end up with vaultis actually installed, two working shortcuts on the
-desktop -- and names the ones that did not.
+Run this on the HOST (not inside a sandbox) to collate what the scenarios have produced
+so far. Answers the only question the kit exists to answer -- did every scenario end up
+with vaultis actually installed, two working shortcuts on the desktop -- and names the
+ones that did not.
 
-Safe to run mid-run: a combo still in progress shows as RUNNING, with the last step it
-reported, so a long cargo build is distinguishable from a hang.
+Safe to run mid-run: a scenario still in progress shows as RUNNING, with the last step
+it reported, so a slow download is distinguishable from a hang.
 #>
 $ErrorActionPreference = 'Stop'
 
@@ -17,31 +17,31 @@ if (-not (Test-Path -LiteralPath $ResultsDir)) {
 
 # Same order and names make-sandbox-configs.ps1 writes, so a scenario that has never
 # been run is reported as missing rather than silently omitted.
-$Combos = @(
+$Scenarios = @(
     'fresh'
     'reinstall'
 )
 
-$Rows = foreach ($Combo in $Combos) {
-    $ResultFile = Join-Path $ResultsDir "$Combo.result"
-    $StatusFile = Join-Path $ResultsDir "$Combo.status"
+$Rows = foreach ($Scenario in $Scenarios) {
+    $ResultFile = Join-Path $ResultsDir "$Scenario.result"
+    $StatusFile = Join-Path $ResultsDir "$Scenario.status"
 
     if (Test-Path -LiteralPath $ResultFile) {
         # PASS/FAIL <tab> scenario <tab> exit=N [<tab> failures]
         # Show the failures when there are any, and the exit code when there are not.
         $Fields = (Get-Content -LiteralPath $ResultFile -TotalCount 1) -split "`t"
         [pscustomobject]@{
-            Combo  = $Combo
+            Scenario = $Scenario
             Result = $Fields[0]
             Detail = if ($Fields.Count -gt 3) { $Fields[3] } else { $Fields[2] }
         }
     }
     elseif (Test-Path -LiteralPath $StatusFile) {
         $LastStep = Get-Content -LiteralPath $StatusFile | Where-Object { $_ } | Select-Object -Last 1
-        [pscustomobject]@{ Combo = $Combo; Result = 'RUNNING'; Detail = $LastStep }
+        [pscustomobject]@{ Scenario = $Scenario; Result = 'RUNNING'; Detail = $LastStep }
     }
     else {
-        [pscustomobject]@{ Combo = $Combo; Result = 'not run'; Detail = '' }
+        [pscustomobject]@{ Scenario = $Scenario; Result = 'not run'; Detail = '' }
     }
 }
 
@@ -49,13 +49,13 @@ $Rows | Format-Table -AutoSize -Wrap
 
 $Passed = @($Rows | Where-Object { $_.Result -eq 'PASS' }).Count
 Write-Host ""
-Write-Host "$Passed of $($Combos.Count) combos ended with vaultis installed and both desktop shortcuts working."
+Write-Host "$Passed of $($Scenarios.Count) scenarios ended with vaultis installed and both desktop shortcuts working."
 $Bad = @($Rows | Where-Object { $_.Result -eq 'FAIL' })
 if ($Bad) {
     Write-Host ""
     Write-Host "Full transcripts for the failures:"
     foreach ($Row in $Bad) {
-        $LogFile = Join-Path $ResultsDir ($Row.Combo + '.log')
+        $LogFile = Join-Path $ResultsDir ($Row.Scenario + '.log')
         Write-Host "  $LogFile"
     }
 }
