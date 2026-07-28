@@ -8,14 +8,15 @@ rem                      [-- <extra cargo args>]
 rem
 rem  It does four things:
 rem    1. Makes sure the ONE Rust toolchain this project builds with on Windows
-rem       - stable-x86_64-pc-windows-gnu - is installed, selected for this
-rem       directory, and new enough. Always the gnu toolchain, never msvc: it
-rem       carries its own linker, so a fresh Windows box needs no Visual Studio
-rem       and no multi-gigabyte Build Tools download. If rustup is missing it
-rem       offers to install it - https://rustup.rs; if the toolchain is older
-rem       than the minimum below it offers to update it. Both ask first and
-rem       default to NO; --install-rust answers yes up front, for an unattended
-rem       run.
+rem       - stable-x86_64-pc-windows-gnullvm - is installed, selected for this
+rem       directory, and new enough. Never msvc and never plain gnu; the long
+rem       comment by RUST_TARGET below records what each of those cost. rustup
+rem       can install this one unaided, so a fresh Windows box needs no Visual
+rem       Studio and no multi-gigabyte Build Tools download. If rustup is
+rem       missing it offers to install it - https://rustup.rs; if the toolchain
+rem       is older than the minimum below it offers to update it. Both ask
+rem       first and default to NO; --install-rust answers yes up front, for an
+rem       unattended run.
 rem    2. `cargo build` - debug by default, --release for the optimized build.
 rem    3. Makes sure a FULLY POPULATED sample vault exists - every tab filled
 rem       in, with attached documents so the encrypted volume is real - by
@@ -159,21 +160,27 @@ if "%SAMPLE_DIR%"=="" set "SAMPLE_DIR=%DEFAULT_SAMPLE_DIR%"
 
 rem --- Rust toolchain -----------------------------------------------------
 rem
-rem ONE toolchain on every Windows machine: stable-x86_64-pc-windows-gnu. Not the msvc
-rem toolchain rustup picks by default, and never a mix of the two.
+rem ONE toolchain on every Windows machine: stable-x86_64-pc-windows-gnullvm. The goal
+rem is a toolchain rustup can install ON ITS OWN, so a double-click setup never stops to
+rem demand a separate multi-gigabyte compiler install. Both obvious candidates fail that
+rem test, each in its own way, and the scars are worth recording:
 rem
-rem The msvc targets link with link.exe, which ships with Visual Studio. A fresh Windows
-rem box has no Visual Studio, and rustup installs the msvc toolchain onto it regardless
-rem - noting the missing prerequisites in one warning that scrolls past in the install
-rem chatter. So the first real symptom is `cargo build` dying on "linker `link.exe` not
-rem found", some hundreds of crates and several minutes in. Demanding a multi-gigabyte
-rem Build Tools install before you can open a password vault is not something anyone
-rem should meet at the end of a double-click.
+rem   msvc - links with link.exe, which ships with Visual Studio. A fresh Windows box has
+rem     none, and rustup installs the msvc toolchain onto it regardless, noting the
+rem     missing prerequisites in one warning that scrolls past in the install chatter.
+rem     First real symptom: `cargo build` dying on "linker `link.exe` not found", some
+rem     hundreds of crates and several minutes in.
 rem
-rem The gnu toolchain carries its own linker - rustup's rust-mingw component - and
-rem nothing here needs a C COMPILER on Windows: the only crates with C build scripts
-rem (wayland, x11, android) are never built for a Windows target. A linker is therefore
-rem the entire requirement, and the gnu toolchain meets it with no Visual Studio at all.
+rem   gnu - carries a linker of its own (rustup's rust-mingw component) but NOT a full
+rem     binutils. The windows-* crates declare their imports with `kind = "raw-dylib"`,
+rem     which rustc implements on a gnu target by running dlltool, and dlltool in turn
+rem     needs an assembler that rust-mingw does not ship. Symptom, later still:
+rem     "dlltool.exe: CreateProcess".
+rem
+rem gnullvm keeps the MinGW-w64 headers and CRT but uses LLVM's tooling instead of GNU
+rem binutils, so neither hole applies, and rustup distributes it as a full host
+rem toolchain. Nothing here needs a C COMPILER on Windows either way: the only crates
+rem with C build scripts (wayland, x11, android) are never built for a Windows target.
 rem
 rem Pinned on Windows-on-ARM too, which has no equally self-contained target: the x64
 rem binaries it produces run under that machine's x86 emulation. One toolchain means one
@@ -184,7 +191,7 @@ rem runs an installer from the network - so it is never done silently: the scrip
 rem and defaults to NO. --install-rust is the explicit yes for an unattended run.
 rem `where` is the Windows equivalent of `which`; it sets a nonzero exit code when the
 rem program is not on PATH.
-set "RUST_TARGET=x86_64-pc-windows-gnu"
+set "RUST_TARGET=x86_64-pc-windows-gnullvm"
 set "RUST_TOOLCHAIN=stable-%RUST_TARGET%"
 
 rem rustup, not cargo, is what decides this: choosing a specific toolchain is rustup's
@@ -288,28 +295,21 @@ if errorlevel 1 (
 )
 
 rem --- Put the toolchain's own binutils on PATH ----------------------------
-rem The windows-* crates declare their imports with `kind = "raw-dylib"`, and on a gnu
-rem target rustc implements that by running dlltool.exe. rustup DOES ship dlltool, in
-rem the rust-mingw component - but inside the toolchain rather than on PATH:
-rem   <sysroot>\lib\rustlib\%RUST_TARGET%\bin\self-contained\dlltool.exe
-rem while rustc looks it up by bare name. Without this the build dies on
+rem Some Windows toolchains keep their binutils inside the toolchain rather than on
+rem PATH, at <sysroot>\lib\rustlib\<target>\bin\self-contained, while rustc looks them
+rem up by bare name - which is how a gnu build reaches the windows-* crates and dies on
 rem   error: error calling dlltool 'dlltool.exe': program not found
-rem and does so about a hundred crates in, because windows-result sits nowhere near the
-rem front of the dependency graph.
+rem about a hundred crates in. Prepended when the directory is really there, so this is
+rem simply a no-op for a toolchain that needs nothing from it.
 rem
 rem The sysroot is ASKED OF rustc rather than assembled from %USERPROFILE%\.rustup\...,
 rem which is merely the default location and is wrong wherever RUSTUP_HOME was moved.
 for /f "delims=" %%S in ('rustc --print sysroot 2^>nul') do set "RUST_SYSROOT=%%S"
 if defined RUST_SYSROOT (
-    if exist "!RUST_SYSROOT!\lib\rustlib\%RUST_TARGET%\bin\self-contained\dlltool.exe" (
+    if exist "!RUST_SYSROOT!\lib\rustlib\%RUST_TARGET%\bin\self-contained\" (
         set "PATH=!RUST_SYSROOT!\lib\rustlib\%RUST_TARGET%\bin\self-contained;!PATH!"
     )
 )
-rem Warn rather than fail: an msvc toolchain needs no dlltool at all, so its absence is
-rem only fatal for the gnu build this script selects - and saying so here beats the same
-rem discovery a hundred crates later.
-where dlltool >nul 2>nul
-if errorlevel 1 echo warning: dlltool.exe is not on PATH; the windows-* crates may fail to build. 1>&2
 
 rem An ancient-but-present toolchain is the other failure mode, and its error message
 rem - "let chains are unstable", "edition 2024 is unsupported" - reads like broken code
