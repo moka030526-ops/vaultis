@@ -7,12 +7,15 @@ rem                      [--no-sample] [--install-rust] [--no-shortcuts]
 rem                      [-- <extra cargo args>]
 rem
 rem  It does four things:
-rem    1. Makes sure a usable RUST TOOLCHAIN is installed AND new enough. If
-rem       `cargo` is missing it offers to install it with the official rustup
-rem       installer - https://rustup.rs; if the toolchain is older than the
-rem       minimum below it offers to run `rustup update stable` instead. Either
-rem       way it asks first and defaults to NO; --install-rust answers yes up
-rem       front, for an unattended run.
+rem    1. Makes sure the ONE Rust toolchain this project builds with on Windows
+rem       - stable-x86_64-pc-windows-gnu - is installed, selected for this
+rem       directory, and new enough. Always the gnu toolchain, never msvc: it
+rem       carries its own linker, so a fresh Windows box needs no Visual Studio
+rem       and no multi-gigabyte Build Tools download. If rustup is missing it
+rem       offers to install it - https://rustup.rs; if the toolchain is older
+rem       than the minimum below it offers to update it. Both ask first and
+rem       default to NO; --install-rust answers yes up front, for an unattended
+rem       run.
 rem    2. `cargo build` - debug by default, --release for the optimized build.
 rem    3. Makes sure a FULLY POPULATED sample vault exists - every tab filled
 rem       in, with attached documents so the encrypted volume is real - by
@@ -156,20 +159,49 @@ if "%SAMPLE_DIR%"=="" set "SAMPLE_DIR=%DEFAULT_SAMPLE_DIR%"
 
 rem --- Rust toolchain -----------------------------------------------------
 rem
-rem Installing a compiler toolchain is a real change to the machine - it downloads
-rem and runs an installer from the network - so it is never done silently: the script
-rem asks, and defaults to NO. --install-rust is the explicit yes for an unattended
-rem run. `where` is the Windows equivalent of `which`; it sets a nonzero exit code
-rem when the program is not on PATH.
-where cargo >nul 2>nul
-if not errorlevel 1 goto have_cargo
+rem ONE toolchain on every Windows machine: stable-x86_64-pc-windows-gnu. Not the msvc
+rem toolchain rustup picks by default, and never a mix of the two.
+rem
+rem The msvc targets link with link.exe, which ships with Visual Studio. A fresh Windows
+rem box has no Visual Studio, and rustup installs the msvc toolchain onto it regardless
+rem - noting the missing prerequisites in one warning that scrolls past in the install
+rem chatter. So the first real symptom is `cargo build` dying on "linker `link.exe` not
+rem found", some hundreds of crates and several minutes in. Demanding a multi-gigabyte
+rem Build Tools install before you can open a password vault is not something anyone
+rem should meet at the end of a double-click.
+rem
+rem The gnu toolchain carries its own linker - rustup's rust-mingw component - and
+rem nothing here needs a C COMPILER on Windows: the only crates with C build scripts
+rem (wayland, x11, android) are never built for a Windows target. A linker is therefore
+rem the entire requirement, and the gnu toolchain meets it with no Visual Studio at all.
+rem
+rem Pinned on Windows-on-ARM too, which has no equally self-contained target: the x64
+rem binaries it produces run under that machine's x86 emulation. One toolchain means one
+rem set of build behaviour to reason about, and one thing to reproduce when it breaks.
+rem
+rem Installing a compiler toolchain is a real change to the machine - it downloads and
+rem runs an installer from the network - so it is never done silently: the script asks,
+rem and defaults to NO. --install-rust is the explicit yes for an unattended run.
+rem `where` is the Windows equivalent of `which`; it sets a nonzero exit code when the
+rem program is not on PATH.
+set "RUST_TOOLCHAIN=stable-x86_64-pc-windows-gnu"
+
+rem rustup, not cargo, is what decides this: choosing a specific toolchain is rustup's
+rem job, and a Rust installed any other way - an MSI, winget, a distro package - cannot
+rem do it at all.
+where rustup >nul 2>nul
+if not errorlevel 1 goto have_rustup
 rem A rustup install this console has not picked up yet: %USERPROFILE%\.cargo\bin is
 rem on PATH only for consoles started AFTER the install.
-if exist "%USERPROFILE%\.cargo\bin\cargo.exe" (
+if exist "%USERPROFILE%\.cargo\bin\rustup.exe" (
     set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
-    goto have_cargo
+    goto have_rustup
 )
-echo Rust ^(cargo^) was not found on this machine.
+rem Some other Rust, installed without rustup. Its toolchain cannot be pinned, so build
+rem with what is there and let the link check below be the judge of whether it works.
+where cargo >nul 2>nul
+if not errorlevel 1 goto no_rustup
+echo Rust ^(rustup^) was not found on this machine.
 echo vaultis is written in Rust, so a toolchain is needed to build it.
 if "%INSTALL_RUST%"=="1" goto install_rust
 set "REPLY="
@@ -182,20 +214,13 @@ popd
 exit /b 1
 
 :install_rust
-rem If rustup is already here, only the default toolchain is missing.
-where rustup >nul 2>nul
-if not errorlevel 1 (
-    echo ==^> rustup is installed but no toolchain is active; installing stable
-    rustup toolchain install stable
-    rustup default stable
-    goto after_install
-)
-echo ==^> Installing the Rust toolchain with rustup ^(https://rustup.rs^)
-rem Fetch the official installer over HTTPS into TEMP, run it with rustup's defaults
-rem - the -y flag - then delete it. PowerShell is used only as the downloader, since
-rem batch has none; -NoProfile keeps a user profile script out of the way.
-rem The installer is per-architecture, so pick the one this machine can run: an ARM64
-rem Windows box handed the x64 build would install a toolchain targeting the wrong CPU.
+echo ==^> Installing rustup ^(https://rustup.rs^)
+rem Fetch the official installer over HTTPS into TEMP, run it, then delete it.
+rem PowerShell is used only as the downloader, since batch has none; -NoProfile keeps a
+rem user profile script out of the way.
+rem The installer is per-architecture, so pick the one this machine can RUN. That is
+rem about the rustup-init binary itself, not about the toolchain it fetches - which is
+rem named explicitly below rather than left to the installer's default.
 set "RUSTUP_URL=https://win.rustup.rs/x86_64"
 if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "RUSTUP_URL=https://win.rustup.rs/aarch64"
 set "RUSTUP_INIT=%TEMP%\rustup-init-vaultis.exe"
@@ -207,7 +232,10 @@ if errorlevel 1 (
     popd
     exit /b 1
 )
-"%RUSTUP_INIT%" -y
+rem --default-toolchain none: install rustup and NOTHING else. Letting it pick its own
+rem default would download a full msvc toolchain - hundreds of megabytes - that this
+rem project then never uses, on every fresh machine.
+"%RUSTUP_INIT%" -y --default-toolchain none
 set "INSTALL_RC=%ERRORLEVEL%"
 del /q "%RUSTUP_INIT%" 2>nul
 if not "%INSTALL_RC%"=="0" (
@@ -216,8 +244,37 @@ if not "%INSTALL_RC%"=="0" (
     popd
     exit /b 1
 )
-rem The installer puts cargo on PATH for FUTURE consoles; add it to this one.
+rem The installer puts rustup on PATH for FUTURE consoles; add it to this one.
 set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+
+:have_rustup
+rem Named explicitly, every run, rather than trusted to be whatever a previous run or a
+rem previous rustup left behind. rustup-init also defers to an existing
+rem %USERPROFILE%\.rustup\settings.toml over its own flags - saying so only in a warning
+rem lost in the install chatter - so on any machine that has ever had rustup, asking the
+rem installer for a toolchain is not the same as getting it.
+echo ==^> Using %RUST_TOOLCHAIN%
+rustup toolchain install %RUST_TOOLCHAIN%
+if errorlevel 1 goto toolchain_failed
+rem `override set` pins it for THIS DIRECTORY. Directory-scoped rather than `rustup
+rem default`, because a machine-wide default is someone's choice for all their other
+rem work and a build script has no business rewriting it.
+rustup override set %RUST_TOOLCHAIN%
+if errorlevel 1 goto toolchain_failed
+goto after_install
+
+:toolchain_failed
+echo. 1>&2
+echo error: could not select the %RUST_TOOLCHAIN% toolchain. 1>&2
+echo        Try it by hand and re-run this script: 1>&2
+echo            rustup toolchain install %RUST_TOOLCHAIN% 1>&2
+echo            rustup override set %RUST_TOOLCHAIN% 1>&2
+popd
+exit /b 1
+
+:no_rustup
+echo warning: rustup is not installed, so the %RUST_TOOLCHAIN% toolchain cannot be 1>&2
+echo          selected; building with whatever Rust is on PATH instead. 1>&2
 
 :after_install
 where cargo >nul 2>nul
@@ -229,7 +286,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:have_cargo
 rem An ancient-but-present toolchain is the other failure mode, and its error message
 rem - "let chains are unstable", "edition 2024 is unsupported" - reads like broken code
 rem rather than a stale compiler. So the version is checked, and an old one is offered
@@ -246,25 +302,24 @@ if errorlevel 1 goto rust_too_old_manual
 echo Rust 1.%RUST_MINOR% is too old to build vaultis - it needs 1.%MIN_RUST_MINOR% or newer.
 if "%INSTALL_RUST%"=="1" goto update_rust
 set "REPLY="
-set /p "REPLY=Update it now with rustup, and make stable the default? [y/N] "
+set /p "REPLY=Update it now with rustup? [y/N] "
 if /i "%REPLY%"=="y" goto update_rust
 if /i "%REPLY%"=="yes" goto update_rust
 echo Not updating. Update it yourself and re-run this script:
-echo   rustup update stable
+echo   rustup update %RUST_TOOLCHAIN%
 echo Or re-run with --install-rust to update without being asked.
 popd
 exit /b 1
 
 :update_rust
-echo ==^> Updating the Rust toolchain ^(rustup update stable^)
-rustup update stable
+rem Named, not `rustup update stable`: this repository is pinned to %RUST_TOOLCHAIN% by
+rem the override set above, so updating the bare `stable` channel would update a
+rem DIFFERENT toolchain on any machine whose host triple is not the one we pin to -
+rem leaving rustc here exactly as old as it was.
+echo ==^> Updating the Rust toolchain ^(rustup update %RUST_TOOLCHAIN%^)
+rustup update %RUST_TOOLCHAIN%
 if errorlevel 1 goto rust_update_failed
-rem Updating stable is not enough on its own when the DEFAULT toolchain is an old
-rem pinned one - `rustup default 1.85.0` - because rustc would still be that old
-rem compiler afterwards. Point the default at stable too, then re-read the version
-rem rather than assuming the update did the job.
-rustup default stable
-if errorlevel 1 goto rust_update_failed
+rem Re-read the version rather than assuming the update did the job.
 call :read_rust_minor
 if not defined RUST_MINOR goto rust_ok
 if %RUST_MINOR% GEQ %MIN_RUST_MINOR% goto rust_ok
@@ -291,6 +346,42 @@ popd
 exit /b 1
 
 :rust_ok
+
+rem --- Can this toolchain actually LINK? ----------------------------------
+rem A safety net rather than the main defence: the toolchain selected above brings its
+rem own linker, so this normally passes. It is here for the routes that get around that
+rem - a Rust installed without rustup (the warning above), or a rust-toolchain.toml in
+rem some parent directory quietly selecting an msvc toolchain instead.
+rem
+rem "cargo is installed and new enough" does not mean it can produce a binary, and the
+rem difference is expensive to discover late: failing here costs a second, while failing
+rem inside `cargo build` costs ~300 downloaded crates and several minutes first.
+rem
+rem Tested by actually linking a two-token program, NOT by looking for link.exe on PATH:
+rem a working Visual Studio install does not put link.exe on PATH - cargo finds it
+rem through the registry - so `where link.exe` would reject perfectly good machines.
+set "LINKCHECK_DIR=%TEMP%\vaultis-linkcheck"
+rmdir /s /q "%LINKCHECK_DIR%" 2>nul
+mkdir "%LINKCHECK_DIR%" 2>nul
+rem Redirection first so no trailing space lands in the file; ^( ^) escapes the parens.
+> "%LINKCHECK_DIR%\linkcheck.rs" echo fn main^(^) {}
+rustc -o "%LINKCHECK_DIR%\linkcheck.exe" "%LINKCHECK_DIR%\linkcheck.rs" >"%LINKCHECK_DIR%\rustc.log" 2>&1
+if not errorlevel 1 goto linker_ok
+
+echo. 1>&2
+echo error: this Rust toolchain cannot link a program on this machine. 1>&2
+type "%LINKCHECK_DIR%\rustc.log" 1>&2
+echo. 1>&2
+echo        vaultis builds with %RUST_TOOLCHAIN%, which brings its own linker and 1>&2
+echo        needs no Visual Studio. Select it here and re-run this script: 1>&2
+echo            rustup toolchain install %RUST_TOOLCHAIN% 1>&2
+echo            rustup override set %RUST_TOOLCHAIN% 1>&2
+rmdir /s /q "%LINKCHECK_DIR%" 2>nul
+popd
+exit /b 1
+
+:linker_ok
+rmdir /s /q "%LINKCHECK_DIR%" 2>nul
 
 echo ==^> Building vaultis ^(%PROFILE%^)
 cargo build --workspace %PROFILE_ARGS%%EXTRA_CARGO_ARGS%
