@@ -14,6 +14,51 @@ The full, per-finding security write-up for the hardening work below lives in
 
 Nothing yet.
 
+## [0.2.1] — 2026-07-29
+
+A bug-fix release from the [2026-07-29 audit round](docs/AUDIT_2026-07-29.md). **If you
+installed 0.2.0, this is the one to take** — the start page in 0.2.0 always opened the
+sample vault and could never find its way back to your own.
+
+### Fixed
+
+- **The Desktop shortcuts always opened the sample vault, and your real vault root could
+  never win.** No single change caused this; three reasonable ones composed into it.
+  `make-shortcuts.ps1` starts both shortcuts in the install folder; 0.2.0 began shipping
+  `sample-vault/` *beside* the executables; and the start page treated "the working
+  directory is a folder of vaults" as **higher priority** than the last root you actually
+  opened. So the install folder qualified as a vault root, and every launch landed there
+  showing `sample-vault` — while `last_root.txt` was being written correctly and
+  permanently ignored. Being shown a vault of invented practice data on every launch is the
+  wrong default for a program whose job is to put an executor in front of the real thing.
+
+  The working-directory rule is **removed** rather than re-prioritised: re-ordering would
+  still pre-fill the sample on a first run, and would leave the underlying hazard intact
+  (anything shipped next to the executable could re-trigger it). The start page's **Vault
+  root** now comes from the `DIR` argument if you passed one, else the last root you
+  successfully opened a vault from, else it opens **empty**. `vaultis-gui DIR` still opens a
+  specific folder, and the vault *name* inside a root is still never pre-selected.
+
+  Note that `cd /my/vaults && vaultis` no longer changes the start page — pass the folder
+  explicitly instead.
+
+### Security
+
+- **`last_root.txt` is now read with the same hardening as `prefs.json`** — an `O_NOFOLLOW`
+  open under a 4 KiB cap, instead of a plain `std::fs::read_to_string` that followed a
+  symlink planted at the path and allocated without bound at UI startup. Low severity (the
+  file sits in your own per-user data directory, so planting one needs your own privileges;
+  no key material or vault contents are involved), but the file's *writer* was already
+  hardened and only the reader was not — and that asymmetry is exactly the shape earlier
+  audit rounds kept finding.
+
+### Internal
+
+- The wrapper around `last_root.txt` had **no test coverage at all**: it short-circuits
+  under `cfg!(test)` so a unit-test run cannot touch the one fixed OS path, which left the
+  real code unreachable by the suite — `cargo-mutants` could replace it wholesale and all
+  671 tests still passed. Now covered by an integration test that redirects `XDG_DATA_HOME`.
+
 ## [0.2.0] — 2026-07-29
 
 The release that made vaultis **installable without a compiler**. Everything below
