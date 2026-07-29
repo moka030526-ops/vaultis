@@ -12,11 +12,45 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
-These changes are committed but **not yet tagged** — the workspace crates are still
-at `0.1.0`. When cutting the release, rename this section to the chosen version +
-date and bump the crate versions to match.
+Nothing yet.
+
+## [0.2.0] — 2026-07-29
+
+The release that made vaultis **installable without a compiler**. Everything below
+0.1.0 could only be obtained by building it, which meant a Rust toolchain, and on
+Windows a toolchain is not enough — see "Windows binaries are now built in CI" below.
 
 ### Added
+
+- **A one-file Windows install.** [`get_vaultis.bat`](get_vaultis.bat) downloads the
+  latest published release, verifies it against its published SHA-256, installs it under
+  `%LOCALAPPDATA%\Programs\vaultis` and creates both Desktop shortcuts. No Git, no Rust,
+  no compiler, no elevation. It **refuses to install** a release that ships no `.sha256`
+  beside its package, rather than installing a download whose integrity cannot be
+  established at all.
+- **Windows binaries are now built in CI** and published as a GitHub Release
+  ([`.github/workflows/release.yml`](.github/workflows/release.yml)), because compiling on
+  the machine being set up could not be made to work unattended: *every* toolchain rustup
+  can install by itself fails to **link** on a clean Windows box — `msvc` needs `link.exe`
+  from Visual Studio, `gnu` ships `dlltool` but not the assembler it calls, `gnullvm` needs
+  an external llvm-mingw. A GitHub `windows-latest` runner already has MSVC, so the compile
+  happens there, once. CI also gained a real Windows **build** job; the old one only
+  `cargo check`ed from Ubuntu, which never links, and is why four consecutive link-time
+  failures reached users instead of CI.
+- **[`scripts/release.sh`](scripts/release.sh)** — cuts a release by pushing the tag, after
+  checking the things that have to be true first: the tree is clean and identical to
+  `origin`, the tag is new, the tag matches the crate version (nothing in the build reads
+  the tag, so those drift silently), and the changelog has a section for it. Refuses a
+  prerelease-looking tag, which would otherwise become `/releases/latest` and be installed
+  by everyone.
+- **The sample vault now ships with the program.** The lock screen's "Sample vault" button
+  had never once appeared on an installed copy: it looks for a practice vault, and nothing
+  ever put one on a Windows machine — the only thing that can build one is a cargo example
+  that is not compiled into the shipped binaries. The release job now seeds it into the
+  package (~30 KB), so it arrives beside the binaries and the button works from **both**
+  shortcuts; opened from "vaultis (View)" the practice vault is read-only, exactly like a
+  real one. It remains a throwaway: its two passwords are the publicly-known
+  `sample1`/`sample2`, and updating replaces it.
 
 - **Help is now reachable from the lock screen.** The manual was only ever reachable from
   the top bar — i.e. only *after* a successful unlock. Someone handed this program and two
@@ -119,6 +153,16 @@ date and bump the crate versions to match.
 
 ### Fixed
 
+- **A read-only session offered to create a vault.** Whether the lock screen showed
+  "Create vault" depended only on whether a `vault.pmv` existed at the target — never on
+  whether the session could write one. So opening the "vaultis (View)" shortcut on a folder
+  with no vault presented the whole create form: a "Create vault" heading and button,
+  "choose two passwords", and both confirmation fields — for an action that is then refused
+  on submit. The heir handed the View shortcut is exactly the person least able to tell
+  that apart from a genuine setup step. The create affordances are now gated on the
+  session being writable, in both the graphical and terminal front-ends; the password
+  fields stay live either way, so someone who landed on the wrong folder can still retype
+  the root and find the real vault.
 - **Long values were truncated in the record form panes with no scrollbar.** Reported on
   Assets and Liabilities; a scan of every tab found it was broader than that. The form
   pane scrolled only *vertically* while `two_col` clips each column at the divider, so
