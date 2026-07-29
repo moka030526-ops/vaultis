@@ -83,25 +83,47 @@ pub fn vault_file(dir: &str) -> PathBuf {
     PathBuf::from(dir).join(VAULT_FILE)
 }
 
-/// The two passwords `scripts/build.sh` unlocks its demo vault with — kept in sync
-/// with `SAMPLE_PW1`/`SAMPLE_PW2` in that script.
+/// The two passwords the demo vault is built with — kept in sync with
+/// `SAMPLE_PW1`/`SAMPLE_PW2` in `scripts/build.sh` and with the release workflow, which
+/// seeds the same vault into the shipped package.
 pub const SAMPLE_PW1: &str = "sample1";
 pub const SAMPLE_PW2: &str = "sample2";
 
-/// Where `scripts/build.sh` puts its demo vault, if one was ever actually built there.
+/// The demo vault, if one actually exists — `None` (rather than a guessed path) when it
+/// does not, so callers can hide the affordance instead of offering a button that fails.
 ///
-/// Mirrors the script's own resolution: `VAULTIS_SAMPLE_DIR` if set, else
-/// `target/sample-vault` next to the running executable. The executable always lives
-/// at `target/<debug|release>/<exe>`, so walking up two directories from it reaches
-/// `target/` without needing to know the repo root or which profile was built.
-/// Returns `None` (rather than a guessed path) when no vault actually lives there, so
-/// callers can hide the affordance instead of offering a button that then fails.
+/// `VAULTIS_SAMPLE_DIR` wins when set. Otherwise there are two layouts to find, because a
+/// copy of vaultis arrives one of two ways and they put the sample in different places:
+///
+/// * **Installed** — `<exe dir>/sample-vault`. `.github/workflows/release.yml` seeds the
+///   vault into the release zip, and `get_vaultis.bat` extracts that zip whole, so the
+///   folder lands directly beside the two executables.
+/// * **Built from source** — `target/sample-vault`, where `scripts/build.sh` puts it. The
+///   executable is at `target/<debug|release>/<exe>`, so walking up two directories
+///   reaches `target/` without needing the repo root or the profile that was built.
+///
+/// Checked in that order, and both are checked every time: a developer's `target/release`
+/// build and an installed copy can exist on one machine, and the exe being run decides
+/// which sample is its own. Neither layout can produce the other's path by accident —
+/// `<exe dir>/sample-vault` for a cargo build would be `target/release/sample-vault`,
+/// which nothing writes.
 pub fn sample_vault_dir() -> Option<PathBuf> {
-    let dir = match std::env::var("VAULTIS_SAMPLE_DIR") {
-        Ok(d) => PathBuf::from(d),
-        Err(_) => std::env::current_exe().ok()?.parent()?.parent()?.join("sample-vault"),
-    };
-    dir.join(VAULT_FILE).is_file().then_some(dir)
+    if let Ok(dir) = std::env::var("VAULTIS_SAMPLE_DIR") {
+        let dir = PathBuf::from(dir);
+        return dir.join(VAULT_FILE).is_file().then_some(dir);
+    }
+    sample_vault_beside(std::env::current_exe().ok()?.parent()?)
+}
+
+/// The layout search of [`sample_vault_dir`], split out from the two things that cannot be
+/// arranged in a test — the process's own executable path and the environment.
+fn sample_vault_beside(exe_dir: &Path) -> Option<PathBuf> {
+    let installed = exe_dir.join("sample-vault");
+    if installed.join(VAULT_FILE).is_file() {
+        return Some(installed);
+    }
+    let from_source = exe_dir.parent()?.join("sample-vault");
+    from_source.join(VAULT_FILE).is_file().then_some(from_source)
 }
 
 /// The outcome of scanning a root directory for vaults: the discovered vault names
@@ -546,5 +568,52 @@ mod tests {
         assert!(scan.warning.is_none(), "no inaccessible entries expected: {:?}", scan.warning);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Both layouts a real copy of vaultis arrives in are found, and neither is invented:
+    /// only a directory that actually holds a `vault.pmv` counts, because the caller uses
+    /// `None` to HIDE the "Sample vault" button rather than offer one that fails on click.
+    #[test]
+    fn sample_vault_is_found_beside_the_exe_and_one_level_up() {
+        let base = std::env::temp_dir().join(format!("pmv-sample-{}-{}", std::process::id(), nanos_for_test()));
+        let _ = std::fs::remove_dir_all(&base);
+        // The from-source layout: exe at target/<profile>/, sample at target/sample-vault.
+        let target = base.join("target");
+        let exe_dir = target.join("release");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+
+        // Nothing anywhere yet.
+        assert_eq!(sample_vault_beside(&exe_dir), None, "no sample -> no path guessed");
+
+        // An empty directory of the right NAME is still not a sample vault.
+        std::fs::create_dir_all(target.join("sample-vault")).unwrap();
+        assert_eq!(sample_vault_beside(&exe_dir), None, "a directory with no vault.pmv does not count");
+
+        std::fs::write(target.join("sample-vault").join(VAULT_FILE), b"x").unwrap();
+        assert_eq!(sample_vault_beside(&exe_dir), Some(target.join("sample-vault")), "from-source layout");
+
+        // The installed layout: the release zip extracts sample-vault beside the two exes.
+        let installed = base.join("Programs").join("vaultis");
+        std::fs::create_dir_all(installed.join("sample-vault")).unwrap();
+        assert_eq!(sample_vault_beside(&installed), None, "still needs a real vault.pmv");
+        std::fs::write(installed.join("sample-vault").join(VAULT_FILE), b"x").unwrap();
+        assert_eq!(sample_vault_beside(&installed), Some(installed.join("sample-vault")), "installed layout");
+
+        // When BOTH could match, the one beside the exe wins: it belongs to the copy of the
+        // program actually running, which is the sample its Help describes.
+        let both_exe = base.join("both").join("release");
+        std::fs::create_dir_all(both_exe.join("sample-vault")).unwrap();
+        std::fs::create_dir_all(base.join("both").join("sample-vault")).unwrap();
+        std::fs::write(both_exe.join("sample-vault").join(VAULT_FILE), b"x").unwrap();
+        std::fs::write(base.join("both").join("sample-vault").join(VAULT_FILE), b"x").unwrap();
+        assert_eq!(sample_vault_beside(&both_exe), Some(both_exe.join("sample-vault")), "beside the exe wins");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Distinct temp paths within one test binary run, so this test can't collide with a
+    /// sibling that used the same pid-derived name.
+    fn nanos_for_test() -> u128 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     }
 }

@@ -460,12 +460,19 @@ data, so it's fine if it's lost:
 against its published SHA-256, installs it under `%LOCALAPPDATA%\Programs\vaultis`,
 and creates both Desktop shortcuts. No Git, no Rust, no compiler, no elevation.
 
+The install includes a **sample vault** — a complete, filled-in practice vault of
+invented data, in a `sample-vault` folder beside the binaries. The lock screen's
+"Sample vault" button opens it in one click, from either shortcut. Never put anything
+real in it: its two passwords are the publicly-known `sample1` / `sample2`, and
+re-running `get_vaultis.bat` to update replaces the whole folder.
+
 > The Windows binaries are built in CI — see
 > [`.github/workflows/release.yml`](.github/workflows/release.yml) — because building
 > on the machine being set up could not be made to work unattended: every Rust
 > toolchain rustup can install by itself fails to *link* on a clean Windows box, and
 > the alternative was a multi-gigabyte Visual Studio download mid-install. Cut a
-> release with `git tag vX.Y.Z && git push origin vX.Y.Z`.
+> release with [`scripts/release.sh`](scripts/release.sh), which runs the pre-flight
+> checks and then pushes the tag that triggers it.
 >
 > The release is **not code-signed yet**, so the checksum proves the download arrived
 > intact but not who produced it, and Windows SmartScreen will warn on first launch.

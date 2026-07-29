@@ -1354,13 +1354,25 @@ pub(crate) const TOPICS: &[Topic] = &[
         id: "demo-vault",
         section: "Reference",
         title: "Trying it out on a sample vault",
-        blurb: "A throwaway practice vault full of invented, fake data, built by the build script — a safe place to click around and learn without touching your real information.",
+        blurb: "A throwaway practice vault full of invented, fake data — a safe place to click around and learn without touching your real information.",
         body: &[
             Block::P(
-                "If you built the program yourself from source, one single command builds it AND \
-                 leaves you with a fully filled-in practice vault to click around in — \
-                 scripts/build.sh on Linux or macOS, scripts\\build.bat on Windows. The two are \
-                 identical twins of each other: same flags, same defaults, same demo passwords.",
+                "Every copy of vaultis comes with a practice vault: a complete, filled-in vault \
+                 full of invented people and invented money, there to be clicked around in. \
+                 Nothing in it is real, and nothing you do to it can touch a vault of your own.",
+            ),
+            Block::P(
+                "If you INSTALLED vaultis on Windows, it is already on your computer — it arrived \
+                 in the same download as the program, and sits in a sample-vault folder beside it. \
+                 You do not have to go looking for it: the lock screen opens it in one click, as \
+                 described just below.",
+            ),
+            Block::Sub("If you build from source"),
+            Block::P(
+                "Building it yourself, one single command builds the program AND leaves you the \
+                 same practice vault — scripts/build.sh on Linux or macOS, scripts\\build.bat on \
+                 Windows. The two are identical twins of each other: same flags, same defaults, \
+                 same demo passwords.",
             ),
             Block::Rows(&[
                 ("(no flags)", "Builds the program, then creates the sample vault too, if it is not already there."),
@@ -1388,12 +1400,19 @@ pub(crate) const TOPICS: &[Topic] = &[
             ),
             Block::Sub("Opening it in one click"),
             Block::P(
-                "You do not have to type any of that in. Whenever a sample vault exists where the \
-                 build script puts it, the lock screen shows a “Sample vault” button beneath the \
-                 password fields: clicking it fills in the folder and both demo passwords and \
-                 opens the vault straight away. The button only appears when there really is a \
-                 sample vault to open, so on an ordinary installed copy of the program you will \
-                 never see it.",
+                "You do not have to type any of that in. Whenever a sample vault is present — the \
+                 one that came with an installed copy, or the one the build script leaves — the \
+                 lock screen shows a “Sample vault” button beneath the password fields: clicking \
+                 it fills in the folder and both demo passwords and opens the vault straight \
+                 away. It works from either desktop shortcut; opened from “vaultis (View)” the \
+                 practice vault is read-only, exactly like a real one. The button appears only \
+                 when there really is a sample vault to open, so if it is absent, there is none.",
+            ),
+            Block::Note(
+                "Re-running get_vaultis.bat to update vaultis replaces the whole installed folder, \
+                 and the practice vault inside it goes with it — you get a brand-new one. That is \
+                 no loss, because the practice vault is not somewhere to keep anything: see the \
+                 warning at the end of this topic.",
             ),
             Block::Note(
                 "The button only ever OPENS: \
@@ -1564,9 +1583,9 @@ pub(crate) const TOPICS: &[Topic] = &[
             ),
             Block::Sub("Can I practise using this without touching my real vault?"),
             Block::P(
-                "Yes. If you built the program from source, scripts/build.sh leaves you a sample \
-                 vault full of entirely invented data, and prints both its location and its two demo \
-                 passwords once it finishes. See “Trying it out on a sample vault”.",
+                "Yes — a practice vault full of entirely invented data comes with the program, and \
+                 the lock screen has a “Sample vault” button that opens it in one click. See \
+                 “Trying it out on a sample vault”.",
             ),
             Block::Sub("What is actually a sensible routine to follow?"),
             Block::Bullets(&[

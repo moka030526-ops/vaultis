@@ -198,14 +198,25 @@ struct AuthState {
 
 impl AuthState {
     // `Self` is shorthand for the enclosing type (`AuthState`).
-    fn new(mode: AuthMode) -> Self {
+    /// `writable` is what the SESSION can do, and it decides whether the confirmation
+    /// fields exist at all. Confirmations catch a typo in a password being SET, and a
+    /// read-only session sets none: it cannot create a vault (`submit_open_or_create`
+    /// refuses) and cannot change one's passwords. Offering to confirm a password that is
+    /// only ever going to be checked against an existing vault describes an action this
+    /// session cannot perform — see the matching reasoning in `gui.rs`.
+    fn new(mode: AuthMode, writable: bool) -> Self {
         // `&[&'static str]` is a slice (borrowed view) of static string slices.
         // `if` is an expression here: the chosen `&[...]` array literal is bound
         // to `labels`.
-        let labels: &[&'static str] = if mode == AuthMode::Unlock {
-            &["Password 1", "Password 2"]
-        } else {
+        let setting_a_password = match mode {
+            AuthMode::Create => writable,
+            AuthMode::ChangePassword => true,
+            AuthMode::Unlock => false,
+        };
+        let labels: &[&'static str] = if setting_a_password {
             &["Password 1", "Confirm password 1", "Password 2", "Confirm password 2"]
+        } else {
+            &["Password 1", "Password 2"]
         };
         AuthState {
             mode,
@@ -571,7 +582,7 @@ impl App {
             path,
             writable,
             screen: Screen::Auth,
-            auth: AuthState::new(mode),
+            auth: AuthState::new(mode, writable),
             auth_dir,
             auth_root,
             auth_name,
@@ -1034,7 +1045,7 @@ impl App {
         let new_mode = if self.path.exists() { AuthMode::Unlock } else { AuthMode::Create };
         if new_mode != self.auth.mode {
             let focus = self.auth.focus;
-            self.auth = AuthState::new(new_mode);
+            self.auth = AuthState::new(new_mode, self.writable);
             // Clamp in case the rebuild has fewer rows (Create→Unlock drops 2 fields); the
             // leading Root/Vault rows always survive, so editing them keeps focus.
             self.auth.focus = focus.min(self.auth_focus_count().saturating_sub(1));
@@ -1133,7 +1144,7 @@ impl App {
                             // screen; reopening runs recover_pending_rekey, which
                             // finishes or discards the interrupted rekey idempotently.
                             self.vault = None;
-                            self.auth = AuthState::new(AuthMode::Unlock);
+                            self.auth = AuthState::new(AuthMode::Unlock, self.writable);
                             self.auth.error =
                                 Some(format!("Password change interrupted: {e}. Unlock again to recover."));
                             self.screen = Screen::Auth;
@@ -1220,13 +1231,13 @@ impl App {
             // the password was right (audit O-1; mirrors the FFI collapse). Structural,
             // password-INDEPENDENT errors keep their specific messages in the catch-all.
             Err(VaultError::Crypto(_) | VaultError::ArchiveMismatch | VaultError::Json(_) | VaultError::Storage(_)) => {
-                self.auth = AuthState::new(self.auth.mode);
+                self.auth = AuthState::new(self.auth.mode, self.writable);
                 self.auth.focus = self.auth_lead_rows(); // land on the first password, past the Root/picker/dir rows
                 self.auth.error = Some("Wrong password(s) or corrupted/unreadable vault.".into());
             }
             // Catch-all for any other (password-independent) error variant.
             Err(e) => {
-                self.auth = AuthState::new(self.auth.mode);
+                self.auth = AuthState::new(self.auth.mode, self.writable);
                 self.auth.focus = self.auth_lead_rows();
                 self.auth.error = Some(format!("{e}"));
             }
@@ -1381,7 +1392,7 @@ impl App {
             }
             KeyCode::Char('p') => {
                 if self.require_writable() {
-                    self.auth = AuthState::new(AuthMode::ChangePassword);
+                    self.auth = AuthState::new(AuthMode::ChangePassword, self.writable);
                     self.screen = Screen::Auth;
                 }
             }
@@ -3418,7 +3429,7 @@ impl App {
                 // is lost (the merge did not persist; prior edits were already saved).
                 self.vault = None;
                 self.reset_merge();
-                self.auth = AuthState::new(AuthMode::Unlock);
+                self.auth = AuthState::new(AuthMode::Unlock, self.writable);
                 self.auth.error = Some(format!("Update interrupted: {e}. Unlock again to recover."));
                 self.screen = Screen::Auth;
             }
@@ -3759,9 +3770,12 @@ impl App {
 
     fn draw_auth(&self, frame: &mut Frame) {
         let area = frame.area();
+        // Create is only ON OFFER in a writable session; read-only refuses it at submit, so
+        // the screen reads as the way IN to a vault rather than as a setup step that will be
+        // rejected. Same reasoning (and same condition) as `AuthState::new` above.
         let (title, help) = match self.auth.mode {
-            AuthMode::Create => (" Create vault ", "Choose two passwords. Both are required."),
-            AuthMode::Unlock => (" Unlock vault ", "Enter both passwords to unlock."),
+            AuthMode::Create if self.writable => (" Create vault ", "Choose two passwords. Both are required."),
+            AuthMode::Create | AuthMode::Unlock => (" Unlock vault ", "Enter both passwords to unlock."),
             AuthMode::ChangePassword => (" Change master passwords ", "Set two new passwords."),
         };
         let mut lines = vec![
@@ -3792,8 +3806,14 @@ impl App {
             };
             lines.push(row(0, "Vault root", self.auth_root.clone()));
             // The Vault row shows the typed/selected name plus a picker hint (count + ←/→).
+            // With no vaults under the root the hint depends on the session: only a writable
+            // one can act on "type a name to create".
             let hint = if self.auth_vaults.is_empty() {
-                "  (none found — type a name to create)".to_string()
+                if self.writable {
+                    "  (none found — type a name to create)".to_string()
+                } else {
+                    "  (none found here)".to_string()
+                }
             } else {
                 let sel = self.auth_vault_sel.min(self.auth_vaults.len() - 1);
                 format!("  (←/→ {}/{})", sel + 1, self.auth_vaults.len())
@@ -4546,10 +4566,11 @@ mod tests {
         std::fs::create_dir_all(&base).unwrap();
         let mut app = App::new(base.join("empty").join("vault.pmv"), false); // read-only
         assert_eq!(app.auth.mode, AuthMode::Create);
+        // Two fields, not four: a read-only session cannot create, so it is never asked to
+        // CONFIRM a password. (See `read_only_auth_screen_never_offers_to_create_a_vault_tui`.)
+        assert_eq!(app.auth.fields.len(), 2, "no confirmation fields in a read-only session");
         app.auth.fields[0].value = "a".into();
-        app.auth.fields[1].value = "a".into();
-        app.auth.fields[2].value = "b".into();
-        app.auth.fields[3].value = "b".into();
+        app.auth.fields[1].value = "b".into();
         app.submit_auth();
         assert!(app.vault.is_none(), "read-only must not create a vault");
         assert!(
@@ -4557,6 +4578,39 @@ mod tests {
             "error explains --write is needed; got {:?}",
             app.auth.error
         );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// The TUI half of `gui::tests::read_only_lock_screen_never_offers_to_create_a_vault`.
+    /// A read-only session cannot create a vault, so its auth screen must not present
+    /// creating one: no "Create vault" title, no "choose two passwords" instruction, and no
+    /// confirmation fields. The two password fields stay, because retyping the root to find
+    /// the real vault is exactly what a read-only heir needs to do.
+    #[test]
+    fn read_only_auth_screen_never_offers_to_create_a_vault_tui() {
+        let base = std::env::temp_dir()
+            .join(format!("vaultis-ui-ronc-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&base).unwrap();
+        let missing = base.join("nothing-here").join("vault.pmv");
+
+        let ro = App::new(missing.clone(), false);
+        assert_eq!(ro.auth.mode, AuthMode::Create, "nothing exists at the target");
+        assert_eq!(ro.auth.fields.len(), 2, "read-only: no confirmation fields");
+        let ro_screen = render_text(&ro);
+        assert!(!ro_screen.contains("Create vault"), "read-only must not offer to create:\n{ro_screen}");
+        assert!(ro_screen.contains("Unlock vault"), "it reads as the way in:\n{ro_screen}");
+        assert!(!ro_screen.contains("Choose two passwords"), "nothing is being set:\n{ro_screen}");
+        assert!(!ro_screen.contains("Confirm password"), "nothing to confirm:\n{ro_screen}");
+        assert!(ro_screen.contains("Password 1"), "the way in stays usable:\n{ro_screen}");
+
+        // The writable session at the same path is unchanged: creating IS on offer there.
+        let rw = App::new(missing, true);
+        assert_eq!(rw.auth.mode, AuthMode::Create);
+        assert_eq!(rw.auth.fields.len(), 4, "writable: both confirmations are asked for");
+        let rw_screen = render_text(&rw);
+        assert!(rw_screen.contains("Create vault"), "writable still offers it:\n{rw_screen}");
+        assert!(rw_screen.contains("Confirm password"), "writable still confirms:\n{rw_screen}");
+
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -6273,15 +6327,36 @@ mod tests {
         term.draw(|f| app.draw(f)).unwrap();
     }
 
+    /// As [`render`], but hands back what the screen actually SAYS: every cell's symbol,
+    /// row by row. For asserting on wording rather than on internal state — the screen is
+    /// what the user is confronted with, and it is the thing that can be wrong on its own.
+    fn render_text(app: &App) -> String {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        term.draw(|f| app.draw(f)).unwrap();
+        let buf = term.backend().buffer();
+        let width = buf.area.width;
+        // Joined per row, so a phrase that wrapped is not silently reassembled across lines
+        // into a match the user never actually saw.
+        (0..buf.area.height)
+            .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn renders_every_screen_without_panicking() {
-        // Auth screen, all three modes.
+        // Auth screen, all three modes — in BOTH session kinds, since `writable` now changes
+        // which fields the screen has (read-only Create drops the two confirmations).
         let path = tmp_vault("render");
-        for mode in [AuthMode::Create, AuthMode::Unlock, AuthMode::ChangePassword] {
-            let mut app = App::new(path.clone(), true);
-            app.auth = AuthState::new(mode);
-            app.auth.error = Some("err".into());
-            render(&app);
+        for writable in [true, false] {
+            for mode in [AuthMode::Create, AuthMode::Unlock, AuthMode::ChangePassword] {
+                let mut app = App::new(path.clone(), writable);
+                app.auth = AuthState::new(mode, writable);
+                app.auth.error = Some("err".into());
+                render(&app);
+            }
         }
 
         let (mut app, _p) = app_unlocked("render2");

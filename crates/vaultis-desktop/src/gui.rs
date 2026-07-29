@@ -2268,12 +2268,32 @@ impl GuiApp {
             ui.add_space(8.0 * k);
         }
 
+        // `auth_mode` answers "does a vault exist at the current target?", which is a fact
+        // about the DISK and stays true regardless of how this session was launched. Whether
+        // the create AFFORDANCES are shown is a separate question, and the answer in a
+        // read-only session is no: creating is refused at submit (see `submit_open_or_create`),
+        // so offering a "Create vault" heading, a "choose two passwords" instruction, two
+        // confirmation fields and a "Create vault" button describes an action this session
+        // cannot perform. An heir who was handed the View shortcut and lands on a folder with
+        // no vault should not be walked through creating one.
+        //
+        // The root/name fields stay live either way — retyping them to find the real vault is
+        // exactly what that heir needs to do — and the warning below says why creating is not
+        // on offer.
+        let offer_create = self.auth_mode == AuthMode::Create && self.writable;
         let (heading, help) = match self.auth_mode {
-            AuthMode::Create => ("Create vault", "Choose two passwords. Both are required to open this vault."),
+            AuthMode::Create if offer_create => {
+                ("Create vault", "Choose two passwords. Both are required to open this vault.")
+            }
+            // Read-only with nothing at the target: the screen is still the way IN to a vault,
+            // so it reads as one rather than as a create form that will be refused.
+            AuthMode::Create => ("Unlock vault", "Enter both passwords to unlock."),
             AuthMode::Unlock => ("Unlock vault", "Enter both passwords to unlock."),
             AuthMode::ChangePassword => ("Change master passwords", "Set two new passwords."),
         };
-        let confirm = self.auth_mode != AuthMode::Unlock;
+        // Confirmations exist to catch a typo in a password being SET. Nothing is being set
+        // here unless a vault is actually being created or its passwords changed.
+        let confirm = offer_create || self.auth_mode == AuthMode::ChangePassword;
 
         // `|ui| { ... }` is a closure (anonymous function). egui passes a child
         // `ui` into it so everything inside is laid out vertically and centered.
@@ -2341,9 +2361,11 @@ impl GuiApp {
         }
 
         ui.horizontal(|ui| {
+            // Same reasoning as the heading above: a read-only session cannot create, so the
+            // button never offers to. `offer_create` already folds in `writable`.
             let label = match self.auth_mode {
-                AuthMode::Create => "Create vault",
-                AuthMode::Unlock => "🔓 Unlock",
+                AuthMode::Create if offer_create => "Create vault",
+                AuthMode::Create | AuthMode::Unlock => "🔓 Unlock",
                 AuthMode::ChangePassword => "Change passwords",
             };
             // The one action of this screen, drawn as the primary (filled) button.
@@ -6824,6 +6846,52 @@ mod tests {
         cleanup(&path);
     }
 
+    /// A read-only session cannot create a vault — `submit_open_or_create` refuses — so the
+    /// lock screen must not present creating one. Pointing View mode at a folder with no
+    /// vault used to render the full create form: a "Create vault" heading and button, the
+    /// "choose two passwords" instruction, and BOTH confirmation fields, none of which could
+    /// lead anywhere. The heir handed the View shortcut is exactly the person least able to
+    /// tell that apart from a real setup step.
+    #[test]
+    fn read_only_lock_screen_never_offers_to_create_a_vault() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        // A path with no vault at it: `auth_mode` is Create in both sessions below.
+        let path = tmp("ro-nocreate").parent().unwrap().join("nothing-here").join("vault.pmv");
+
+        for (writable, label) in [(false, "read-only"), (true, "writable")] {
+            let app = std::cell::RefCell::new(GuiApp::new(path.clone(), writable));
+            assert_eq!(app.borrow().auth_mode, AuthMode::Create, "{label}: nothing exists at the target");
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(760.0, 700.0))
+                .with_max_steps(64)
+                .build_ui(|ui| app.borrow_mut().render(ui));
+            h.try_run().expect("lock screen settles");
+
+            // `writable` decides every create affordance, together: heading, primary button,
+            // and the two confirmation fields (which exist to catch a typo in a password
+            // being SET, and nothing is being set here).
+            let creates = h.query_all_by_label("Create vault").count();
+            let unlocks = h.query_all_by_label("🔓 Unlock").count();
+            let confirms = h.query_all_by_label("Confirm password 1").count()
+                + h.query_all_by_label("Confirm password 2").count();
+
+            if writable {
+                assert!(creates > 0, "{label}: creating IS on offer, so it is shown");
+                assert_eq!(confirms, 2, "{label}: both confirmation fields are shown");
+            } else {
+                assert_eq!(creates, 0, "{label}: nothing may offer to create a vault");
+                assert_eq!(unlocks, 1, "{label}: the screen reads as the way in to a vault");
+                assert_eq!(confirms, 0, "{label}: no confirmation fields for a password never set");
+            }
+
+            // Unchanged either way: both password fields stay live, so an heir who landed on
+            // the wrong folder can still type their way into the real vault.
+            assert_eq!(h.query_all_by_label("Password 1").count(), 1, "{label}: password 1 stays");
+            assert_eq!(h.query_all_by_label("Password 2").count(), 1, "{label}: password 2 stays");
+        }
+    }
+
     /// The lock screen only offers the "Sample vault" button when a sample vault was
     /// actually found (`self.sample_vault`) — never a button that fails on click.
     #[test]
@@ -7100,10 +7168,12 @@ mod tests {
         for scale in UiScale::ALL {
             let f = scale.factor();
             let path = tmp("authscale");
-            // No vault.pmv exists at this fresh path, so the screen is in Create mode —
-            // its TALLEST variant, with the two extra confirm rows. That is exactly the
-            // case the size floor was chosen for, so it is the right one to squeeze.
-            let app = std::cell::RefCell::new(GuiApp::new(path.clone(), false));
+            // No vault.pmv exists at this fresh path, so the screen is in Create mode. The
+            // session must also be WRITABLE for that to be the TALLEST variant: the two
+            // extra confirm rows are shown only when creating is actually on offer, so a
+            // read-only Create screen is the shortest one, not the worst case. The floor was
+            // chosen for the tallest, so that is the one to squeeze.
+            let app = std::cell::RefCell::new(GuiApp::new(path.clone(), true));
             assert_eq!(app.borrow().auth_mode, AuthMode::Create, "tallest lock-screen variant");
 
             // The real window cannot go below this, so it is the worst case that can
