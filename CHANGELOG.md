@@ -12,7 +12,17 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **The build says which build it is.** Nothing in either binary knew its own version:
+  `--help` printed no version, `--version` was not a flag at all, and the graphical app
+  showed the number nowhere — so "which version are you running?" had no answer a user
+  could give, and a bug report could not be tied to a release. The help's first line is
+  now `vaultis <version> — …`, `vaultis --version` (or `-V`) prints just that line, and
+  the in-app manual's header carries it beside "Help" on every page for the users who
+  never open a terminal. The number is the `vaultis` crate version, which
+  `scripts/release.sh` already requires the release tag to match, so it names exactly one
+  published build.
 
 ## [0.2.1] — 2026-07-29
 

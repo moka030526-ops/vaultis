@@ -32,6 +32,7 @@
 //!   vaultis export-tree [DIR] OUT   decrypt the whole vault into OUT (plaintext mirror)
 //!   vaultis import-tree SRC [DIR]   build a new encrypted vault from a plaintext mirror
 //!   vaultis --help                  show this help
+//!   vaultis --version               print this build's version and exit
 //! ```
 // Crate-wide attribute: refuse to even compile any `unsafe` block in this crate.
 // `unsafe` is Rust's escape hatch for memory operations the compiler can't verify;
@@ -69,11 +70,24 @@ use vaultis::gui;
 // arm, and `src/migrate_cli.rs` to remove the feature.
 mod migrate_cli;
 
+/// The build's identity: the program name plus the `vaultis` crate version from
+/// `Cargo.toml`, which `scripts/release.sh` requires the release tag to match — so
+/// this line names exactly one published build. Printed by `--version`, and shown
+/// as the first line of the help below.
+// `env!` reads an environment variable AT COMPILE TIME and expands to a string
+// literal, so this costs nothing at run time. `concat!` glues literals together,
+// which is why both of these can be `const`.
+const VERSION_LINE: &str = concat!("vaultis ", env!("CARGO_PKG_VERSION"));
+
 // `const` is a compile-time constant. `&str` is a borrowed string slice (a view
 // into text); this one points at a string literal baked into the binary. The
-// leading `\` on the first line is a line-continuation that swallows the newline.
-const HELP: &str = "\
-vaultis — standalone, offline, two-password encrypted estate vault
+// version is prepended so the help identifies the build it came from; `concat!`
+// takes literals only (not the `VERSION_LINE` const above), so the `env!` is
+// spelled out a second time here rather than reused.
+const HELP: &str = concat!(
+    "vaultis ",
+    env!("CARGO_PKG_VERSION"),
+    " — standalone, offline, two-password encrypted estate vault
 
 DIR is the vault DIRECTORY (it holds vault.pmv, manifest/, and volume/).
 If omitted, the per-user default directory is used.
@@ -129,11 +143,13 @@ USAGE:
                                       --dry-run (preview old->new paths, no changes),
                                       --no-backup (skip the pre-migration backup).
     vaultis --help                 Show this help
+    vaultis --version              Print the version of this build and exit
 
 The vault is protected by two passwords entered in sequence. The interactive UI
 opens READ-ONLY unless --write is given (a writable session takes a single-writer
 lock, so a second --write instance fails fast). The category dropdown lists are
-stored inside the encrypted vault — there are no external configuration files.";
+stored inside the encrypted vault — there are no external configuration files."
+);
 
 /// Pull an optional `--part N` / `--part=N` flag out of the argument list,
 /// returning the parsed partition index plus the remaining arguments. Errors if
@@ -275,6 +291,14 @@ fn main() -> ExitCode {
     // `&String`). `{HELP}` interpolates the constant into the formatted output.
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("{HELP}");
+        return ExitCode::SUCCESS;
+    }
+
+    // `--version` prints the build identity alone (the help's first line without
+    // the manual), so a bug report can name the exact build. Checked after
+    // `--help` so `--help --version` shows the help, which contains it anyway.
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("{VERSION_LINE}");
         return ExitCode::SUCCESS;
     }
 

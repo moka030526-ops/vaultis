@@ -34,6 +34,29 @@ fn help_lists_every_subcommand_and_exits_zero() {
     ] {
         assert!(stdout.contains(sub), "help should mention `{sub}`");
     }
+    // The help names the build it belongs to, so a pasted help output identifies
+    // the version it came from.
+    assert!(
+        stdout.starts_with(concat!("vaultis ", env!("CARGO_PKG_VERSION"), " —")),
+        "help's first line should be the version line; got: {stdout}"
+    );
+}
+
+#[test]
+fn version_flag_prints_the_crate_version_and_exits_zero() {
+    // Both spellings, and the output is exactly one line: `--version` is what a bug
+    // report gets pasted from, and what scripts/release.sh's tag/crate-version check
+    // makes meaningful.
+    for flag in ["--version", "-V"] {
+        let out = Command::new(bin()).arg(flag).output().expect("run --version");
+        assert!(out.status.success(), "{flag} must exit 0");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            stdout.trim(),
+            concat!("vaultis ", env!("CARGO_PKG_VERSION")),
+            "{flag} should print name + version alone"
+        );
+    }
 }
 
 #[test]

@@ -1337,6 +1337,7 @@ pub(crate) const TOPICS: &[Topic] = &[
                 ("vaultis update-from OTHER [DIR]", "Pulls newer records in from another vault; add --dry-run to preview it first without changing anything."),
                 ("vaultis compact [DIR] …", "Reclaims wasted space. See “Keeping the vault small”."),
                 ("vaultis --help", "The full, authoritative list of every option this tool supports."),
+                ("vaultis --version", "Prints which version of the program this is — the same number shown beside “Help” above."),
             ]),
             Block::Warn(
                 "decrypt, extract, and export-tree all write or print your data with absolutely no \
@@ -1827,6 +1828,12 @@ pub(crate) fn ui(ui: &mut egui::Ui, state: &mut HelpState, ctx: &HelpContext, ac
             }
             ui.add_space(4.0);
             ui.heading(egui::RichText::new("Help").color(accent));
+            // The build's version, on every page of the manual. Most users never open a
+            // terminal, so this is the only place they can read off WHICH build they are
+            // running — the first thing any support question needs. `env!` is resolved at
+            // compile time from this crate's Cargo.toml version.
+            ui.label(egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).weak().small())
+                .on_hover_text("The version of vaultis you are running. Quote this if you ever report a problem.");
             ui.label(
                 egui::RichText::new(if ctx.writable { "write mode" } else { "read-only mode" })
                     .weak()
