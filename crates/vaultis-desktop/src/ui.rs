@@ -553,13 +553,12 @@ impl Drop for App {
 impl App {
     fn new(path: PathBuf, writable: bool) -> Self {
         // Collapsed start page: the open target is `<root>/<name>`. Seed the root from the
-        // launch directory when it is a folder of vaults, else the last root a vault was
-        // successfully opened from (see `launch::save_last_root`), else EMPTY. See the prefs
-        // comment in `lib.rs` for why only that one pointer lives outside a vault root.
-        let cwd = crate::launch::cwd_vault_root();
+        // launched path, else the last root a vault was successfully opened from (see
+        // `launch::save_last_root`), else EMPTY. The working directory is deliberately NOT
+        // consulted — see `launch::initial_root_and_name`. See the prefs comment in `lib.rs`
+        // for why only that one pointer lives outside a vault root.
         let last_root = crate::launch::load_last_root();
-        let (auth_root, auth_name) =
-            crate::launch::initial_root_and_name(&path, cwd.as_ref(), last_root.as_deref());
+        let (auth_root, auth_name) = crate::launch::initial_root_and_name(&path, last_root.as_deref());
         // Default the backup destination to the root (see the `cfg_backup_dest` field).
         let cfg_backup_dest = auth_root.clone();
         let auth_dir = crate::launch::join_root_name(&auth_root, &auth_name);

@@ -92,12 +92,8 @@ pub fn run(path: std::path::PathBuf, writable: bool) -> anyhow::Result<()> {
             // flash of the default theme otherwise). When no root is known yet the start
             // page opens empty and these simply fall back to the built-in defaults; the
             // app re-applies all three live once a root is chosen.
-            let boot_root = crate::launch::initial_root_and_name(
-                &path,
-                crate::launch::cwd_vault_root().as_ref(),
-                crate::launch::load_last_root().as_deref(),
-            )
-            .0;
+            let boot_root =
+                crate::launch::initial_root_and_name(&path, crate::launch::load_last_root().as_deref()).0;
             apply_theme(&cc.egui_ctx, load_theme(&boot_root));
             // Same reason as the theme: apply the saved zoom before the first frame so
             // the window does not visibly resize itself a frame after opening.
@@ -1411,14 +1407,12 @@ impl GuiApp {
     // `new` keyword in Rust — this is just a regular function.
     fn new(path: std::path::PathBuf, writable: bool) -> Self {
         // Collapsed start page: the open target is `<root>/<name>`. The root comes from the
-        // launched path, else the working directory when that is a folder of vaults, else the
-        // last root a vault was successfully opened from (see `launch::save_last_root`), else
-        // nothing — the start page opens EMPTY and the user types or pastes a root. See
-        // `launch::initial_root_and_name` and the prefs comment in `lib.rs`.
-        let cwd = crate::launch::cwd_vault_root();
+        // launched path, else the last root a vault was successfully opened from (see
+        // `launch::save_last_root`), else nothing — the start page opens EMPTY and the user
+        // types or pastes a root. The working directory is deliberately NOT consulted; see
+        // `launch::initial_root_and_name` for why, and the prefs comment in `lib.rs`.
         let last_root = crate::launch::load_last_root();
-        let (vault_root, vault_name) =
-            crate::launch::initial_root_and_name(&path, cwd.as_ref(), last_root.as_deref());
+        let (vault_root, vault_name) = crate::launch::initial_root_and_name(&path, last_root.as_deref());
         // Default the backup destination to the root (see the `backup_dest` field).
         let backup_dest = vault_root.clone();
         let vault_dir = crate::launch::join_root_name(&vault_root, &vault_name);

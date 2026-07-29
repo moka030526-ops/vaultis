@@ -381,9 +381,10 @@ fn lexical_normalize(path: &Path) -> PathBuf {
 // can't be recorded inside the folder it names, so it is remembered in a single plain-text
 // file in the per-user OS data directory instead (`launch::save_last_root`/`load_last_root`) —
 // nothing else lives there, and it holds nothing but that one path. Precedence at startup is
-// the command line (`vaultis-gui DIR`) > the working directory, when that is a folder of
-// vaults > that remembered root > empty. The vault NAME within the root is never
-// pre-selected — the user always picks it. See `launch::initial_root_and_name`.
+// the command line (`vaultis-gui DIR`) > that remembered root > empty. The working directory
+// is deliberately NOT consulted — it used to be, and the sample vault shipping beside the
+// executables turned it into a trap (see `launch::initial_root_and_name`). The vault NAME
+// within the root is never pre-selected — the user always picks it.
 //
 // Both front-ends share these helpers, and every write is a read-modify-write so one key
 // never clobbers another.
@@ -430,7 +431,13 @@ pub(crate) fn read_prefs_obj(path: &Path) -> serde_json::Map<String, serde_json:
 /// erroring once the file is known to exceed `max`. The `+ 1` detects an over-size file
 /// without ever allocating past the ceiling. (On non-unix the caller's `symlink_metadata`
 /// pre-check remains the only symlink guard, exactly as in the core crate.)
-fn read_bounded_nofollow(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+///
+/// `pub(crate)` because it is the single hardened reader for **every** small local file this
+/// app reads outside the vault itself — `prefs.json` here and `last_root.txt` in
+/// [`crate::launch`]. Keeping one definition is the point: `last_root.txt` originally shipped
+/// with a raw `std::fs::read_to_string` while its writer used the hardened `write_atomic`,
+/// which is the guard asymmetry the 2026-07-29 audit (L-1) found.
+pub(crate) fn read_bounded_nofollow(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     #[cfg(unix)]
     let f = {
         use std::os::unix::fs::OpenOptionsExt;
@@ -441,7 +448,7 @@ fn read_bounded_nofollow(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     f.take(max.saturating_add(1)).read_to_end(&mut buf)?;
     if buf.len() as u64 > max {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "prefs file exceeds the size cap"));
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "file exceeds the size cap"));
     }
     Ok(buf)
 }

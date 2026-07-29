@@ -34,6 +34,12 @@ fn last_root_file() -> Option<PathBuf> {
     ProjectDirs::from("dev", "vaultis", "vaultis").map(|d| d.data_dir().join("last_root.txt"))
 }
 
+/// Hard cap on `last_root.txt`. It holds ONE filesystem path, so 4 KiB is already far more
+/// than any real vault root needs (Linux `PATH_MAX` is 4096); anything larger is corrupt or
+/// hostile. Bounding the read before allocating means an over-size or `/dev/zero`-symlinked
+/// file can never stall or OOM the UI at startup. Same role as [`crate::MAX_PREFS_SIZE`].
+const MAX_LAST_ROOT_SIZE: u64 = 4 * 1024;
+
 /// The remembered last-opened root, or `None` on first run, or if the file is
 /// missing, unreadable, or empty.
 ///
@@ -50,7 +56,25 @@ pub fn load_last_root() -> Option<String> {
     load_last_root_from(&last_root_file()?)
 }
 pub(crate) fn load_last_root_from(path: &Path) -> Option<String> {
-    let s = std::fs::read_to_string(path).ok()?;
+    // Read through the SAME hardened helper `prefs.json` uses, not `std::fs::read_to_string`.
+    // That call follows a final-component symlink and allocates without any ceiling, so a
+    // symlink planted here was read THROUGH (returning an arbitrary readable file's contents,
+    // which then land in the start page's vault-root box) and a huge file was read whole —
+    // at UI startup, before anything is drawn. The writer for this very file already used the
+    // hardened `write_atomic`; only the reader was raw, which is exactly the "guard on some
+    // paths but not all" shape this codebase keeps producing (audit 2026-07-29, L-1).
+    //
+    // The `symlink_metadata` pre-check is a cheap early reject and the only symlink guard on
+    // non-unix; `read_bounded_nofollow`'s `O_NOFOLLOW` is the real boundary on unix, since the
+    // stat is a separate syscall from the open. Mirrors `crate::read_prefs_obj` exactly.
+    match std::fs::symlink_metadata(path) {
+        Ok(m) if m.is_file() && m.len() <= MAX_LAST_ROOT_SIZE => {}
+        _ => return None,
+    }
+    let bytes = crate::read_bounded_nofollow(path, MAX_LAST_ROOT_SIZE).ok()?;
+    // Fails closed to None on invalid UTF-8, same as the old `read_to_string` did, and the
+    // same as a missing file — "no remembered root" is already a supported state (first run).
+    let s = String::from_utf8(bytes).ok()?;
     let s = s.trim();
     (!s.is_empty()).then(|| s.to_string())
 }
@@ -159,47 +183,37 @@ pub fn join_root_name(root: &str, name: &str) -> String {
     }
 }
 
-/// A working directory that is a **vault root**: it holds at least one immediate
-/// subdirectory containing a `vault.pmv`. Produced by [`cwd_vault_root`] and consumed by
-/// [`initial_root_and_name`]; the discovered names also seed the start page's dropdown.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CwdRoot {
-    pub root: String,
-    pub vaults: Vec<String>,
-}
-
-/// The process's current directory, iff it is a vault ROOT — i.e. [`discover_vaults`] finds
-/// at least one vault directly beneath it. This is what lets `cd /my/vaults && vaultis-gui`
-/// browse *that* folder instead of the remembered/default root.
-///
-/// "Is this a vault?" is deliberately NOT redefined here: the check is `discover_vaults`'s,
-/// so the `vault.pmv` marker stays the single definition across the whole app. A CWD that is
-/// itself a vault (holding `vault.pmv` directly) is intentionally NOT special-cased — only
-/// the root-of-vaults shape triggers this. An unreadable or non-UTF-8 CWD yields `None`,
-/// which simply leaves the start page empty.
-pub fn cwd_vault_root() -> Option<CwdRoot> {
-    let cwd = std::env::current_dir().ok()?;
-    let root = cwd.to_str()?.to_owned();
-    let vaults = discover_vaults(&root).vaults;
-    (!vaults.is_empty()).then_some(CwdRoot { root, vaults })
-}
-
 /// Compute the start page's initial `(root, vault_name)` for a launched vault `path`, given
-/// the current directory `cwd` when it is a vault root ([`cwd_vault_root`], `None` otherwise)
-/// and the OS-remembered `last_root` ([`load_last_root`], `None` on first run).
+/// the OS-remembered `last_root` ([`load_last_root`], `None` on first run).
 ///
-/// Precedence is **argument > cwd > last root > empty**:
+/// Precedence is **argument > last root > empty**:
 ///
 /// 1. An **explicitly launched** vault (a `path` differing from the per-user default) always
 ///    wins: its parent becomes the root and its folder the selected name, so `vaultis DIR`
 ///    opens exactly `DIR`.
-/// 2. Otherwise, a `cwd` that is a vault root becomes the root, so launching from a folder of
-///    vaults browses it. No vault is pre-selected — the user picks from the dropdown.
-/// 3. Otherwise, the last root a vault was successfully opened from (if any) is used the same
-///    way: browsed, nothing pre-selected.
-/// 4. Otherwise **empty**: the start page opens with both boxes blank and the user types or
+/// 2. Otherwise, the last root a vault was successfully opened from (if any): browsed, with
+///    nothing pre-selected — the user still picks the vault.
+/// 3. Otherwise **empty**: the start page opens with both boxes blank and the user types or
 ///    pastes a root.
-pub fn initial_root_and_name(path: &Path, cwd: Option<&CwdRoot>, last_root: Option<&str>) -> (String, String) {
+///
+/// # Why the working directory is NOT consulted
+///
+/// There used to be a rule between (1) and (2): a current directory that was itself a folder
+/// of vaults became the root, so `cd /my/vaults && vaultis-gui` browsed it. That rule was
+/// removed because shipping the sample vault turned it into a trap.
+///
+/// `make-shortcuts.ps1` sets both Desktop shortcuts' working directory to the **install
+/// folder**, and since the sample vault ships *beside the executables*, that folder contains
+/// `sample-vault/vault.pmv` — so it qualified as a vault root. Every shortcut launch therefore
+/// resolved to the install directory showing `sample-vault`, and because the cwd outranked
+/// `last_root`, it **permanently shadowed the user's real remembered root**: `last_root.txt`
+/// was written correctly and could never win. For a program whose whole job is to put an
+/// executor in front of the real estate vault, silently presenting a vault of invented
+/// practice data on every launch is the wrong default, and no amount of ranking fixes the
+/// general problem — any future file shipped next to the exe could re-trigger it.
+///
+/// Launching a specific folder is still fully supported, explicitly: `vaultis-gui DIR`.
+pub fn initial_root_and_name(path: &Path, last_root: Option<&str>) -> (String, String) {
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty());
     let dir_parent = dir.and_then(|d| d.parent()).filter(|p| !p.as_os_str().is_empty());
     let parent_str = dir_parent.map(|p| p.display().to_string());
@@ -208,11 +222,8 @@ pub fn initial_root_and_name(path: &Path, cwd: Option<&CwdRoot>, last_root: Opti
     if path != default_vault_path() {
         // Honor the launched vault: root = its parent, name = its folder.
         (parent_str.unwrap_or_else(|| ".".into()), leaf.unwrap_or_default())
-    } else if let Some(cwd) = cwd {
-        // Launched bare from a folder of vaults: browse it, nothing pre-selected.
-        (cwd.root.clone(), String::new())
     } else if let Some(last) = last_root {
-        // Nothing about the cwd, but a root was remembered from a previous session.
+        // A root was remembered from a previous session.
         (last.to_string(), String::new())
     } else {
         (String::new(), String::new())
@@ -435,10 +446,10 @@ mod tests {
     fn initial_root_and_name_honors_an_explicit_launch() {
         // An explicit launch (path != default) always wins: parent is the root, folder the name.
         let p = PathBuf::from("/vaults/work/vault.pmv");
-        assert_eq!(initial_root_and_name(&p, None, Some("/elsewhere")), ("/vaults".to_string(), "work".to_string()));
+        assert_eq!(initial_root_and_name(&p, Some("/elsewhere")), ("/vaults".to_string(), "work".to_string()));
     }
 
-    /// A bare launch with no vault-root cwd and no remembered root starts EMPTY.
+    /// A bare launch with no remembered root starts EMPTY.
     ///
     /// This used to fall back to the per-user default vault's own parent
     /// (`~/.local/share/vaultis`). That fallback is gone: pre-filling the box with a path the
@@ -446,41 +457,66 @@ mod tests {
     /// up. Empty is the honest answer to "you have not said where your vaults are, and none
     /// was remembered either."
     #[test]
-    fn initial_root_and_name_is_empty_without_an_argument_cwd_or_remembered_root() {
-        let (root, name) = initial_root_and_name(&default_vault_path(), None, None);
-        assert!(root.is_empty(), "no argument, cwd, or remembered root -> empty root, got {root:?}");
+    fn initial_root_and_name_is_empty_without_an_argument_or_remembered_root() {
+        let (root, name) = initial_root_and_name(&default_vault_path(), None);
+        assert!(root.is_empty(), "no argument or remembered root -> empty root, got {root:?}");
         assert!(name.is_empty(), "...and no pre-selected vault, got {name:?}");
     }
 
-    /// Neither the cwd nor the remembered root ever pre-selects a specific vault — only the
-    /// ROOT is seeded; the user still picks (or types) the vault itself.
+    /// The remembered root seeds only the ROOT — never a specific vault. The user still picks
+    /// (or types) which vault inside it to open.
     #[test]
-    fn initial_root_and_name_never_pre_selects_a_vault_from_cwd_or_last_root() {
-        let cwd = CwdRoot { root: "/here".into(), vaults: vec!["alpha".into(), "personal".into()] };
-        let def = default_vault_path();
+    fn initial_root_and_name_never_pre_selects_a_vault_from_the_remembered_root() {
+        let (root, name) = initial_root_and_name(&default_vault_path(), Some("/remembered"));
+        assert_eq!(root, "/remembered");
+        assert!(name.is_empty(), "no pre-selection from the remembered root, got {name:?}");
 
-        // Bare launch from a folder of vaults: that folder becomes the root...
-        let (root, name) = initial_root_and_name(&def, Some(&cwd), Some("/remembered"));
-        assert_eq!(root, "/here", "cwd wins over the remembered root");
-        // ...but no vault inside it is chosen for the user, even though two were discovered.
-        assert!(name.is_empty(), "no pre-selection even with a cwd root, got {name:?}");
-
-        // An explicit DIR argument still wins over both the cwd and the remembered root.
+        // An explicit DIR argument still wins over the remembered root.
         let p = PathBuf::from("/vaults/work/vault.pmv");
-        assert_eq!(
-            initial_root_and_name(&p, Some(&cwd), Some("/remembered")),
-            ("/vaults".to_string(), "work".to_string())
-        );
+        assert_eq!(initial_root_and_name(&p, Some("/remembered")), ("/vaults".to_string(), "work".to_string()));
     }
 
-    /// With no argument and no vault-root cwd, the last root a vault was successfully opened
-    /// from (persisted outside any vault root — see `save_last_root`) seeds the start page, the
-    /// same way a cwd root does: browsed, with nothing pre-selected.
+    /// With no argument, the last root a vault was successfully opened from (persisted outside
+    /// any vault root — see `save_last_root`) seeds the start page: browsed, nothing selected.
     #[test]
     fn initial_root_and_name_falls_back_to_the_remembered_root() {
-        let (root, name) = initial_root_and_name(&default_vault_path(), None, Some("/my/vaults"));
+        let (root, name) = initial_root_and_name(&default_vault_path(), Some("/my/vaults"));
         assert_eq!(root, "/my/vaults");
         assert!(name.is_empty(), "the remembered root never pre-selects a vault, got {name:?}");
+    }
+
+    /// REGRESSION (audit 2026-07-29, M-1). The working directory must never seed the start
+    /// page — not even when it is a perfectly good folder of vaults.
+    ///
+    /// `make-shortcuts.ps1` points both Desktop shortcuts' working directory at the INSTALL
+    /// folder, and since the sample vault ships beside the executables that folder contains
+    /// `sample-vault/vault.pmv`. Under the old `argument > cwd > last_root` precedence every
+    /// shortcut launch therefore resolved to the install directory showing `sample-vault`,
+    /// and — because cwd outranked it — permanently shadowed the user's real remembered root.
+    #[test]
+    fn the_working_directory_never_seeds_the_start_page() {
+        // A cwd that IS a textbook folder of vaults, made current for this process.
+        let base = std::env::temp_dir().join(format!("pmv-nocwd-{}-{}", std::process::id(), nanos_for_test()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("sample-vault")).unwrap();
+        std::fs::write(base.join("sample-vault").join(VAULT_FILE), b"x").unwrap();
+        // It really does look like a root — otherwise this test would pass vacuously.
+        assert_eq!(discover_vaults(base.to_str().unwrap()).vaults, vec!["sample-vault".to_string()]);
+
+        let restore = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&base).unwrap();
+
+        // Nothing remembered: EMPTY, not the install folder full of practice data.
+        let (root, name) = initial_root_and_name(&default_vault_path(), None);
+        assert!(root.is_empty(), "the cwd must not seed the root, got {root:?}");
+        assert!(name.is_empty(), "...and must not pre-select a vault, got {name:?}");
+
+        // A remembered root wins outright — it can no longer be shadowed by the cwd.
+        let (root, _) = initial_root_and_name(&default_vault_path(), Some("/my/real/vaults"));
+        assert_eq!(root, "/my/real/vaults", "the remembered root must not be shadowed by the cwd");
+
+        std::env::set_current_dir(restore).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -508,37 +544,48 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// REGRESSION (audit 2026-07-29, L-1). `last_root.txt` must be read through the same
+    /// hardened path as `prefs.json`: `O_NOFOLLOW` + a hard size cap.
+    ///
+    /// It originally used `std::fs::read_to_string`, which FOLLOWS a final-component symlink
+    /// and allocates without bound — while the WRITER for the same file already used the
+    /// hardened `write_atomic`. Both halves are asserted here because the bug was precisely
+    /// that one half had the guard and the other did not.
+    #[cfg(unix)]
     #[test]
-    fn cwd_vault_root_detects_a_folder_of_vaults_only() {
-        let base = std::env::temp_dir().join(format!("pmv-cwd-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        // A root holding one vault subdirectory...
-        let root = base.join("root");
-        std::fs::create_dir_all(root.join("alpha")).unwrap();
-        std::fs::write(root.join("alpha").join(VAULT_FILE), b"x").unwrap();
-        // ...a directory that is ITSELF a vault (deliberately NOT a root)...
-        let inside = base.join("inside");
-        std::fs::create_dir_all(&inside).unwrap();
-        std::fs::write(inside.join(VAULT_FILE), b"x").unwrap();
-        // ...and a plain directory with no vault anywhere.
-        let plain = base.join("plain");
-        std::fs::create_dir_all(plain.join("docs")).unwrap();
+    fn last_root_read_refuses_a_symlink_and_caps_the_size() {
+        let base = std::env::temp_dir().join(format!("pmv-l1-{}-{}", std::process::id(), nanos_for_test()));
+        std::fs::create_dir_all(&base).unwrap();
 
-        // `cwd_vault_root` reads the real process CWD, so drive it by chdir-ing. Rust runs
-        // tests threaded and the CWD is per-PROCESS, so this test must own it — hence one
-        // test covering all three shapes rather than three racing ones.
-        let restore = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&root).unwrap();
-        let found = cwd_vault_root().expect("a folder of vaults is a root");
-        assert_eq!(found.vaults, vec!["alpha".to_string()]);
+        // (1) A symlink planted at the path is REFUSED, not read through. Before the fix this
+        // returned the target's contents, which then land in the start page's vault-root box.
+        let pointed_at = base.join("pointed-at.txt");
+        std::fs::write(&pointed_at, "/contents/of/the/symlink/target\n").unwrap();
+        let link = base.join("last_root.txt");
+        std::os::unix::fs::symlink(&pointed_at, &link).unwrap();
+        assert_eq!(load_last_root_from(&link), None, "a symlinked last_root.txt must not be followed");
 
-        std::env::set_current_dir(&inside).unwrap();
-        assert!(cwd_vault_root().is_none(), "a directory that is itself a vault is not a root");
+        // ...while a REAL file at the same path still works, so the guard did not just
+        // disable the feature.
+        std::fs::remove_file(&link).unwrap();
+        save_last_root_to(&link, "/my/vaults");
+        assert_eq!(load_last_root_from(&link), Some("/my/vaults".to_string()), "a real file still reads");
 
-        std::env::set_current_dir(&plain).unwrap();
-        assert!(cwd_vault_root().is_none(), "no vault beneath the cwd → fall back to saved/default");
+        // (2) An over-size file is refused rather than allocated. Before the fix a 1 MiB file
+        // was read whole; there was no ceiling at all.
+        let big = base.join("big.txt");
+        std::fs::write(&big, "x".repeat(MAX_LAST_ROOT_SIZE as usize + 1)).unwrap();
+        assert_eq!(load_last_root_from(&big), None, "a file past the cap must be refused, not read");
 
-        std::env::set_current_dir(restore).unwrap();
+        // A file exactly AT the cap is still fine — the cap is a ceiling, not an off-by-one.
+        let at_cap = base.join("at-cap.txt");
+        std::fs::write(&at_cap, "y".repeat(MAX_LAST_ROOT_SIZE as usize)).unwrap();
+        assert_eq!(
+            load_last_root_from(&at_cap).map(|s| s.len()),
+            Some(MAX_LAST_ROOT_SIZE as usize),
+            "exactly at the cap is accepted"
+        );
+
         let _ = std::fs::remove_dir_all(&base);
     }
 

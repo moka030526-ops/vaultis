@@ -750,16 +750,26 @@ include URGENT.) The four screens are:
    scan. The resolved path + mode are shown in the `Vault:` line.
 
    The **root** is resolved at startup by `launch::initial_root_and_name`, whose precedence is
-   **argument > cwd > remembered root > empty**: an explicitly launched vault (`vaultis DIR`)
-   always wins (root = its parent, name = its folder); otherwise a **launch directory that is
-   itself a vault root** wins (`launch::cwd_vault_root` — the cwd qualifies iff
-   `discover_vaults` finds at least one vault directly beneath it, so the `vault.pmv` marker
-   stays the app's single definition of "a vault"; a cwd that is itself a vault is *not*
-   special-cased); otherwise the **last root a vault was successfully opened from** is used,
-   the same way (`launch::load_last_root`/`save_last_root` — a single plain-text path in the
-   per-user OS data directory, written only on a successful open, never for the one-click
-   sample vault); otherwise both boxes open **empty** and the user types or pastes a root. In
-   every non-argument case **no** vault is pre-selected inside the root — only the root itself
+   **argument > remembered root > empty**: an explicitly launched vault (`vaultis DIR`)
+   always wins (root = its parent, name = its folder); otherwise the **last root a vault was
+   successfully opened from** is used (`launch::load_last_root`/`save_last_root` — a single
+   plain-text path in the per-user OS data directory, written only on a successful open, never
+   for the one-click sample vault); otherwise both boxes open **empty** and the user types or
+   pastes a root. In every non-argument case **no** vault is pre-selected inside the root —
+   only the root itself
+
+   > **The working directory is deliberately not consulted** (removed 2026-07-29). There used
+   > to be a rule between the two: a cwd that was itself a folder of vaults became the root, so
+   > `cd /my/vaults && vaultis-gui` browsed it. Shipping the sample vault turned that into a
+   > trap. `make-shortcuts.ps1` sets both Desktop shortcuts' working directory to the **install
+   > folder**, and the sample vault ships *beside the executables* — so that folder held
+   > `sample-vault/vault.pmv` and qualified as a root. Every shortcut launch resolved to the
+   > install directory showing `sample-vault`, and because the cwd outranked the remembered
+   > root it **permanently shadowed the user's real one**: `last_root.txt` was written
+   > correctly and could never win. Presenting an executor with a vault of invented practice
+   > data on every launch is the wrong default, and re-ranking would not have fixed the general
+   > problem — anything shipped next to the exe could re-trigger it. Launching a specific
+   > folder remains fully supported, explicitly: `vaultis-gui DIR`.
    is seeded, and the user always picks or types the vault name. That last-root file is the
    ONE exception to "the only file this app writes lives inside the vault root" (see the
    `prefs.json` entry below): it holds nothing but that one path, precisely because a pointer
@@ -872,9 +882,9 @@ include URGENT.) The four screens are:
    directory only when a vault is actually opened successfully (never for the one-click
    sample vault — see `GuiApp::open_sample_vault`) — nothing else lives in that file or that
    directory. The **last-opened vault name** within the root is still never persisted: the
-   root comes from the command line (`vaultis-gui DIR`), the working directory when it is a
-   folder of vaults, or that remembered root, else the start page opens empty
-   (`launch::initial_root_and_name`), and in every non-argument case the user still picks or
+   root comes from the command line (`vaultis-gui DIR`) or that remembered root, else the start
+   page opens empty (`launch::initial_root_and_name` — the working directory is deliberately
+   not consulted), and in every non-argument case the user still picks or
    types the vault name themselves. Because the root is chosen *on* the lock screen,
    `GuiApp::adopt_root_prefs` re-reads and applies `prefs.json` whenever the root changes —
    without writing, so merely browsing to a folder never creates the file there.

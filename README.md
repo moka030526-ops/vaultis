@@ -658,11 +658,12 @@ vaultis --help               Show help
   passwords. A read-only session writes **nothing** to disk. The window shows a
   `🔒 READ-ONLY` badge and hides write controls when not in edit mode.
 - Pass a path to use a specific file: `vaultis ./work-vault.pmv`.
-- **Launching from a folder of vaults** (`cd /my/vaults && vaultis`) uses that folder as
-  the start page's **Vault root**, ahead of the remembered root and the per-user default.
-  It applies only when the folder actually holds vaults — i.e. at least one sub-folder
-  with a `vault.pmv` in it, the same test the dropdown uses. An explicit `[VAULT]`
-  argument still wins over it.
+- **Where the start page opens.** The **Vault root** box is seeded from the `[VAULT]`
+  argument if you passed one, else from the last root you successfully opened a vault
+  from, else it opens **empty**. The **working directory is not used** — `cd /my/vaults
+  && vaultis` no longer changes the start page; pass the folder explicitly
+  (`vaultis /my/vaults/some-vault`) if you want a specific one. The vault *name* inside
+  the root is never pre-selected: you always pick it.
 - **`--vol PATH`** relocates the encrypted document archive (default
   `<VAULT>.vol`, kept beside the vault) — e.g. onto a removable drive:
   `vaultis --write --vol /mnt/usb/docs.vol`. Works with the UI, `extract`, and
