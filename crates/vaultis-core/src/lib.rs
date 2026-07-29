@@ -39,6 +39,10 @@ pub mod csv; // plain-CSV export of the record tabs (used by the front-ends' "Ex
 pub mod fault; // crash-safety fault-injection hooks (no-op without the feature)
 pub mod merge; // cross-vault "update from another vault" patch/plan types + diff helpers
 pub mod password; // random password generator
+// Bounded proofs (Kani/CBMC) of the untrusted-input helpers. Compiled ONLY under
+// `cargo kani`, so a normal build and a normal `cargo test` never see it.
+#[cfg(kani)]
+mod proofs;
 pub mod records; // the secret records stored in the vault
 pub mod storage; // the partitioned, crash-safe on-disk storage engine
 pub mod types; // editable category lists / shared data types

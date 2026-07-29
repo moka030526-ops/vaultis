@@ -10,6 +10,12 @@ publish = false # private application crate — never published to a registry
 [lib]
 name = "vaultis_core"
 
+# `kani` is set only by `cargo kani` (the bounded proofs in src/proofs.rs). Declare it so
+# the `unexpected_cfgs` lint does not fire on `#[cfg(kani)]` — CI runs clippy with
+# `-D warnings`, which would otherwise fail the build over a cfg that is working correctly.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [dependencies]
 argon2 = "0.5.3"
 chacha20poly1305 = "0.10.1"
