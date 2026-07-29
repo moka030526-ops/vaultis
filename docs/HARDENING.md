@@ -357,6 +357,28 @@ the leading-TAB/CR bypass (`display_safe` maps control characters to `_` before 
 a record the user never approved); and the `set -e` `A && B` patterns in the packaging
 scripts (empirically tested — a false `[[ ]]` does not abort the script).
 
+### 3.1j Tenth round — post-0.2.0 sweep of the surface that did not exist at round 9
+
+Run immediately after **Release 0.2.0**, deliberately scoped to the ~40 commits that landed
+after the 2026-07-25 rounds: the prefs move into the vault root, the new `last_root.txt`
+pointer file, the Argon2id cost env override, the shipped sample vault, and — new to this
+project — `get_vaultis.bat` **downloading a release** instead of compiling locally. Full
+write-up: [`AUDIT_2026-07-29.md`](AUDIT_2026-07-29.md).
+
+| # | Sev | Fix |
+| --- | --- | --- |
+| M-1 | Medium | **The shipped sample vault hijacked the start page on every installed launch.** An *emergent* defect from three individually reasonable decisions: `make-shortcuts.ps1:90` starts both Desktop shortcuts in the install folder; `ee99a34` ships `sample-vault/` beside the executables; and `initial_root_and_name` ranked "a cwd that is a folder of vaults" **above** the remembered root. Net effect: every shortcut launch opened rooted at the install directory showing `sample-vault`, and the user's real `last_root.txt` was written correctly but **permanently shadowed**. Fixed by removing the cwd rule outright — precedence is now **argument > last root > empty** (`cwd_vault_root`/`CwdRoot` deleted); `vaultis-gui DIR` still opens a specific folder. |
+| L-1 | Low | **`last_root.txt` was read with `std::fs::read_to_string`** — follows a final-component symlink and allocates unbounded, at UI startup. Its *writer* already used the hardened `write_atomic`; only the reader was raw, re-opening the round-1 M-2 class that round 2 had certified closed. Now reads through the same `read_bounded_nofollow` (`O_NOFOLLOW` + cap) as `prefs.json`, under a new `MAX_LAST_ROOT_SIZE` (4 KiB). |
+| L-2 | Low (coverage) | **The `last_root.txt` OS wrapper had no test at all.** `load_last_root` / `save_last_root` / `last_root_file` short-circuit under `cfg!(test)` for hermeticity, which left the wrapper reachable by no test — `cargo mutants` replaced `load_last_root` with `Some("xyzzy")` and all 671 tests stayed green. Closed with an **integration** test (where `cfg!(test)` is false inside the library) that redirects `XDG_DATA_HOME`, confirmed to kill the survivors. |
+
+Confirmed sound with no change: the KDF-cost env override (validated by the *same* gate the
+reader uses, so it cannot write a vault the reader would refuse); the read-only gate at every
+mutating entry point; the clipboard interception of egui's built-in copy; `get_vaultis.bat`'s
+refusal to install an asset with no `.sha256` or a mismatched hash. **Not verified:** the release
+zip's contents/SHA-256, the executables' subsystem and DLL imports, and the Windows Sandbox
+install — no Windows host was available; the four PowerShell scripts were parsed and linted
+instead, which CI does not do at all.
+
 ### 3.2 Investigated and refuted (no change needed)
 
 | # | Hypothesis | Why it does not hold |
