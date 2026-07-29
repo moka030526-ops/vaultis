@@ -581,10 +581,20 @@ vaultis extract [DIR] OUT [--part N]   decrypt documents into OUT: one volume or
 vaultis backup [DIR] DEST           copy the whole encrypted vault tree into DEST
 vaultis export-tree [DIR] OUT       decrypt the whole vault into a plaintext mirror
 vaultis import-tree SRC [DIR]       build a new encrypted vault from a plaintext mirror
+vaultis update-from OTHER [DIR]     pull records/documents that are newer in OTHER
+                                     (one-way, additive, four passwords); --dry-run
 vaultis compact [DIR] <what>        reclaim space: --volume and/or
                                      --json (--history-before YYYY-MM-DD | --history-all);
                                      --dry-run, --backup DEST, --no-backup
+vaultis migrate-doc-paths [DIR]     THROWAWAY one-shot path migration; --dry-run, --no-backup
+vaultis --help | -h                 print the help (its first line names the build's version)
+vaultis --version | -V              print `vaultis <version>` and exit
 ```
+
+The last two are answered by **both** binaries, from the single `launch::VERSION_LINE`
+constant — `vaultis-gui` prints the version (and a short usage naming this binary as the
+home of the subcommands) rather than treating the flag as a vault directory, which is what
+it used to do (`AUDIT_2026-07-29_round2.md`, L-1).
 
 **Dispatch.** `--write`/`--tui` are position-independent flags filtered out before
 dispatch; `--part N`/`--part=N` (`extract_part_flag`) and the compact flags
