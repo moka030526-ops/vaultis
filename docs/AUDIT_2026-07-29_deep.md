@@ -92,8 +92,19 @@ upstream (wipe the pre-image), or from vaultis pre-hashing the password itself s
 reaches `argon2` is already a non-secret digest. **Not fixed in this round**; recorded with
 its reproduction so the decision can be made deliberately.
 
-**Regression test.** `crates/vaultis-core/tests/memory_residue.rs` — already committed, and
-already failing under ASan/TSan, which is the point. It passes in a normal build.
+**Disposition (decided after this report's first draft): accepted residual**, recorded in
+[`HARDENING.md`](HARDENING.md#d-1-low--the-master-password-lingers-in-argon2s-initial-hash-buffer-accepted-residual--deep-audit-2026-07-29)
+and disclosed in `CHANGELOG.md` under 0.2.2. None of the available fixes is safe to ship:
+pre-hashing breaks every existing vault, and patching or vendoring a cryptographic
+dependency into the security core is not a same-day change. The real fix is upstream.
+
+**Regression test.** `crates/vaultis-core/tests/memory_residue.rs`. It no longer asserts
+that the KDF residue is zero — that would assert a property now knowingly not provided, and
+would leave the test red under every sanitizer, which is how a test stops being read. It
+asserts the two things still guaranteed: the **record field is zero at every stage**, and
+**no stage after the KDF adds a master-password copy**. That reads `0,0,0,0` under a normal
+allocator and `3,3,3,3` under ASan/TSan — green both ways, and red the moment anything new
+retains the password.
 
 ---
 

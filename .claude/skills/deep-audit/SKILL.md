@@ -71,9 +71,23 @@ Three child modes; the first two are controls and both must pass or the third is
 
 | mode | state at photograph time | required result | what a wrong answer means |
 |---|---|---|---|
-| `none` | sentinel derived, wiped, no vault touched | **0 hits** | the harness leaks its own needle; every number is noise |
-| `hold` | vault open, secret legitimately live | **> 0 hits** | the scanner cannot see memory; a clean `drop` proves nothing |
-| `drop` | vault created, saved, dropped, copies wiped | **0 hits** | un-zeroized plaintext survives — a real finding |
+| `none` | sentinels derived, wiped, no vault touched | **0 hits** | the harness leaks its own needle; every number is noise |
+| `hold` | vault open, secrets legitimately live | **> 0 hits** | the scanner cannot see memory; a clean `drop` proves nothing |
+| `kdf` → `create` → `record` → `drop` | staged, each dropped before the photograph | see below | attribution |
+
+Two sentinels enter by different doors — one as the **master password**, one as a **record
+field** — because "3 copies survived" is not actionable until you know which path produced
+them. The stages then localise it: in the run that found D-1, the `kdf` stage alone
+accounted for every copy and no later stage added one, which pointed straight at the
+Argon2 call rather than at serialization.
+
+**What it asserts, and the one thing it deliberately does not.** The record field must be
+zero at every stage (that is `ZeroizeOnDrop`, verified on bytes), and no stage after the
+KDF may add a master-password copy. It does *not* assert the KDF residue is zero: that is
+the accepted residual D-1, and asserting it would leave the test red under every sanitizer
+— which is how a test stops being read, and the surest way to hide the next real leak. If
+you accept a residual, encode the acceptance in the assertion and say so in the comment;
+do not delete the test and do not leave it failing.
 
 Two traps this test already fell into, both worth remembering because both produce a
 *passing* test that has checked nothing:

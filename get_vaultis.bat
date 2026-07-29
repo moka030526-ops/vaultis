@@ -5,6 +5,9 @@ REM ==========================================================================
 REM Self-contained Windows setup script for vaultis: double-click it.
 REM
 REM Downloads the latest released build and puts two shortcuts on your Desktop.
+REM Pass a tag to install that exact release instead -- get_vaultis.bat v0.2.1 --
+REM which is how you go back to a known-good version, or install the precise
+REM build a bug report is about.
 REM It does NOT compile anything: no Git, no Rust, no compiler, no Visual
 REM Studio. Building on the machine being set up was tried and abandoned --
 REM every Rust toolchain rustup can install unaided fails to LINK on a clean
@@ -37,6 +40,17 @@ REM Handing the path over in an environment variable rather than inlining %~f0
 REM into the -Command string keeps quoting out of it, so a folder containing an
 REM apostrophe or an ampersand cannot break -- or reshape -- the command line.
 set "VAULTIS_SELF=%~f0"
+
+REM An optional first argument pins the release to install, e.g.
+REM     get_vaultis.bat v0.2.1
+REM With no argument the latest release is installed, which is what a
+REM double-click does and what almost everyone wants. The pin exists for the two
+REM cases where "latest" is the wrong answer: going BACK to a known-good version,
+REM and installing the exact build a bug report is about. Handed over in an
+REM environment variable for the same reason as the path above -- so quoting in
+REM the value cannot reshape the command line. The PowerShell section validates
+REM it before it reaches a URL.
+set "VAULTIS_TAG=%~1"
 
 REM Pin the working directory to this file's folder. Nothing is written here any
 REM more, but a predictable working directory keeps relative paths in error
@@ -100,14 +114,44 @@ $AssetPattern = '^vaultis-.*-windows-x86_64\.zip$'
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\vaultis"
 
 # ==========================================
-# Find the latest release
+# Find the release to install
 # ==========================================
 
-Write-Host "Looking up the latest vaultis release..."
+# No argument -> whatever /releases/latest points at (the double-click path).
+# An argument -> that exact tag, for rolling BACK to a known-good version or for
+# installing the precise build a bug report names.
+$Tag = $env:VAULTIS_TAG
+if ($Tag) { $Tag = $Tag.Trim() }
 
-$Release = Invoke-RestMethod `
-    -Uri "https://api.github.com/repos/$Repo/releases/latest" `
-    -Headers @{ "User-Agent" = "vaultis-setup" }
+if ($Tag) {
+    # This value is about to become part of a URL, so it is validated against the
+    # shape release.sh actually produces rather than escaped and hoped for. Anything
+    # else -- a path traversal, a query string, a second URL -- is refused outright
+    # instead of being sent to api.github.com to see what happens.
+    if ($Tag -notmatch '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$') {
+        throw ("'$Tag' is not a vaultis release tag. Expected something like " +
+            "v0.2.1 (optionally with a -rc1 suffix), or no argument at all to " +
+            "install the latest release.")
+    }
+    # Tags are pushed as v-prefixed; accept "0.2.1" as well and normalise.
+    if ($Tag -notmatch '^v') { $Tag = "v$Tag" }
+
+    Write-Host "Looking up vaultis release $Tag..."
+    try {
+        $Release = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/$Repo/releases/tags/$Tag" `
+            -Headers @{ "User-Agent" = "vaultis-setup" }
+    } catch {
+        throw ("No published release is tagged $Tag. " +
+            "See https://github.com/$Repo/releases for the list.")
+    }
+} else {
+    Write-Host "Looking up the latest vaultis release..."
+
+    $Release = Invoke-RestMethod `
+        -Uri "https://api.github.com/repos/$Repo/releases/latest" `
+        -Headers @{ "User-Agent" = "vaultis-setup" }
+}
 
 $Asset = $Release.assets |
     Where-Object { $_.name -match $AssetPattern } |
@@ -224,5 +268,6 @@ Write-Host "  Two shortcuts are on your Desktop:"
 Write-Host "    vaultis (View)  - read-only"
 Write-Host "    vaultis (Edit)  - edit mode"
 Write-Host ""
-Write-Host "  Re-run this file any time to update to the latest release."
+Write-Host "  Re-run this file any time to update to the latest release,"
+Write-Host "  or pass a tag to install a specific one:  get_vaultis.bat v0.2.1"
 Write-Host "------------------------------------------------------------------------"

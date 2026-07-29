@@ -22,8 +22,16 @@
 //!   If it is not, this harness leaks its own needle and every other result is noise.
 //! * `hold` — build the vault and keep it **open**. Sentinel must be **found**. If it is
 //!   not, the scanner cannot see a live secret and a clean `drop` result proves nothing.
-//! * `drop` — build the vault, save it, drop it, wipe our own copies. This is the
-//!   measurement. Sentinel must be **gone**.
+//! * `kdf` / `create` / `record` / `drop` — the staged measurements, each dropping
+//!   everything before it is photographed. Staged so a survivor is attributable to one
+//!   step rather than to "somewhere in create -> save -> drop".
+//!
+//! Two things are asserted, and one deliberately is not. The record field must be **gone**
+//! at every stage — that is `ZeroizeOnDrop` doing its job, verified on real bytes. And no
+//! stage after the KDF may add a master-password copy. The KDF's *own* copies are the
+//! accepted residual D-1 (argon2's H0 buffer, which nothing wipes); asserting zero there
+//! would make this test permanently red under any sanitizer and teach everyone to ignore
+//! it. See the comments on the assertions, and `docs/AUDIT_2026-07-29_deep.md`.
 //!
 //! Linux-only: it reads `/proc`. `ptrace_scope=1` (the common default) permits a parent
 //! to read a direct child's memory, which is exactly the relationship used here.
@@ -100,17 +108,41 @@ fn secrets_do_not_survive_in_process_memory_after_the_vault_is_dropped() {
     // Staged, so a survivor is attributable to a stage rather than to "somewhere in
     // create -> save -> drop". Each stage drops everything before being photographed.
     let (kdf_pw, _) = measure("kdf"); // the two-password Argon2id derivation, alone
-    let (create_pw, create_rec) = measure("create"); // master password only, no record, no save
+    let (create_pw, create_rec) = measure("create"); // + OpenVault::create
     let (record_pw, record_rec) = measure("record"); // + the record, still no save
     let (save_pw, save_rec) = measure("drop"); // + save(): serialize -> encrypt -> write
 
+    // GUARANTEE 1 — vaultis's own record secrets are wiped. `Account` is
+    // `ZeroizeOnDrop`; this is the assertion that proves it on real bytes rather than
+    // trusting the derive. Strict zero, under every allocator.
     assert_eq!(
-        (kdf_pw, create_pw, create_rec, record_pw, record_rec, save_pw, save_rec),
-        (0, 0, 0, 0, 0, 0, 0),
-        "un-zeroized plaintext survived the drop (live control: master-password {hold_pw}, \
-         record-field {hold_rec}).\n  kdf:    pw={kdf_pw}\n  create: pw={create_pw} rec={create_rec}\n  record: \
-         pw={record_pw} rec={record_rec}\n  save:   pw={save_pw} rec={save_rec}\nThe first \
-         stage with a non-zero count is the one that keeps the copy."
+        (create_rec, record_rec, save_rec),
+        (0, 0, 0),
+        "a record's password field survived the drop (live control found {hold_rec}). \
+         `Account`'s ZeroizeOnDrop is not doing what it claims."
+    );
+
+    // GUARANTEE 2 — nothing AFTER the KDF adds a master-password copy.
+    //
+    // This deliberately does NOT assert `kdf_pw == 0`. That would be asserting a property
+    // the project has examined and accepted it cannot currently provide: the master
+    // password persists inside the `argon2` crate's H0 initial-hash buffer, which nothing
+    // zeroizes (deep audit 2026-07-29, D-1; HARDENING.md). Asserting zero would make this
+    // test red forever under any sanitizer, which trains people to ignore it — the one
+    // outcome guaranteed to hide the next real leak.
+    //
+    // What IS asserted is the part still fully under this codebase's control: every stage
+    // after the derivation must add exactly nothing. Under a normal allocator that reads
+    // 0 == 0 == 0 == 0; under ASan/TSan, which do not recycle freed memory, it reads
+    // 3 == 3 == 3 == 3. Either way a NEW leak — a copy taken by `create`, by the record
+    // path, or by `save`'s serialize-then-encrypt — moves one of these off `kdf_pw` and
+    // fails the test. That is the regression this test exists to catch.
+    assert_eq!(
+        (create_pw, record_pw, save_pw),
+        (kdf_pw, kdf_pw, kdf_pw),
+        "a stage AFTER key derivation added a master-password copy (kdf={kdf_pw}, \
+         create={create_pw}, record={record_pw}, save={save_pw}; live control found \
+         {hold_pw}). D-1 accounts for the KDF's own copies and nothing else — this is new."
     );
 }
 

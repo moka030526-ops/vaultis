@@ -81,6 +81,47 @@ tamper matrix, and full-crate mutation testing) on top of the static review.
   in the launching shell, or `LimitCORE=0` in a systemd unit. On a shared/managed machine, a
   system-wide `coredump` policy (e.g. `systemd-coredump` with `Storage=none`) covers it.
 
+#### D-1 (Low) — the master password lingers in argon2's initial-hash buffer (accepted residual — deep audit 2026-07-29)
+
+* **Where:** `argon2 0.5.3`, reached from `crates/vaultis-core/src/crypto.rs:362` (`derive_key`).
+* **What:** After `derive_key_chained` returns and every vaultis-owned copy is wiped, three
+  plaintext copies of the **master password** remain in freed heap. Dumping the bytes around
+  a hit decodes as `lanes ‖ outlen ‖ m_cost ‖ t_cost ‖ version ‖ type ‖ pwd_len ‖ pwd ‖
+  salt_len ‖ salt` — Argon2's **H0 initial-hash pre-image**, a buffer inside the crate that
+  nothing zeroizes. vaultis passes the password as a borrowed `&[u8]` and wipes its own
+  copies correctly; the record path is clean at every stage (0 copies).
+* **Measured, not inferred:** `crates/vaultis-core/tests/memory_residue.rs` reads a child
+  process's `/proc/<pid>/mem` from the parent and counts a run-unique sentinel. The `kdf`
+  stage alone accounts for all three copies and no later stage adds any. Both controls hold
+  (a live secret is found; the harness leaks nothing of its own). Reproduced independently
+  under **AddressSanitizer and ThreadSanitizer**, so it is not one tool's artifact.
+* **Why it is Low:** reading it requires local process-memory access, which
+  `THREAT_MODEL.md` already places out of scope, and it is the same class as F-1 above. In
+  an ordinary build the copies are overwritten by later allocations within moments — they
+  are only *observable* under an allocator that does not recycle, which is exactly why a
+  sanitizer is the instrument.
+* **Why not fixed:** there is no safe in-tree fix. Pre-hashing the password so a non-secret
+  digest reaches Argon2 would change **every derived key** and make every existing vault
+  unopenable — unacceptable in a tool with no recovery path. Patching or vendoring a
+  cryptographic dependency into the security core is not something to do without review,
+  and a git-sourced fork would also trip `cargo deny`'s source check. Enabling argon2's
+  non-default `zeroize` feature was **measured and does not address it** (the count stayed
+  at 3; that feature covers `Block` memory, not the pre-image).
+* **The real fix is upstream:** argon2 wiping its H0 pre-image. Until then this is carried
+  deliberately and disclosed in `CHANGELOG.md`.
+* **What the test now asserts,** so this acceptance cannot quietly widen: the record field
+  must be zero at every stage, and **no stage after the KDF may add a master-password
+  copy**. That invariant holds under both allocators (0 everywhere normally, 3 everywhere
+  under a sanitizer) and fails the moment anything new starts retaining the password.
+
+#### Retired assumption — "zeroize-on-drop can't be observed by a safe test"
+
+The mutation-testing note in §1 records `Key::drop` as an un-killable survivor on that
+basis. It is no longer true, and the claim should not be reused: a process cannot search
+its own memory for its own secret (the needle is itself a copy), but the **parent of a
+child that held it** can, in safe Rust. `tests/memory_residue.rs` is the working
+counterexample, and the technique generalises to any secret with a claimed lifetime.
+
 #### F-2 (Medium) — Mobile clipboard auto-clear timer died with the field
 
 * **Where:** `mobile/composeApp/src/commonMain/kotlin/com/vaultis/App.kt`.

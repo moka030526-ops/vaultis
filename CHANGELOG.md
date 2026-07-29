@@ -14,6 +14,27 @@ The full, per-finding security write-up for the hardening work below lives in
 
 Nothing yet.
 
+## [0.2.3] — 2026-07-29
+
+### Added
+
+- **`get_vaultis.bat` can install a specific release, not only the latest.** Pass a tag —
+  `get_vaultis.bat v0.2.1` — and that exact build is installed; with no argument it still
+  installs the latest, which is what a double-click does. This is how you go back to a
+  known-good version, or install the precise build a bug report is about. The tag is
+  validated against the shape the release script actually produces before it is ever put
+  in a URL, and the refusal to install an asset with no `.sha256` beside it is unchanged.
+
+### Security
+
+- **The `argon2` residual (D-1) is now a recorded, deliberate acceptance** rather than an
+  open finding: written up in [`docs/HARDENING.md`](docs/HARDENING.md) with what was
+  measured, why none of the available fixes is safe to ship (pre-hashing the password would
+  change every derived key and make every existing vault unopenable), and what the real fix
+  upstream would be. The memory-residue test now asserts the two properties still
+  guaranteed — a record's password field leaves **zero** traces, and nothing after key
+  derivation retains a copy — so the acceptance cannot quietly widen.
+
 ## [0.2.2] — 2026-07-29
 
 Two audit rounds' worth of fixes. The one to care about is `vaultis-gui --version`, which
