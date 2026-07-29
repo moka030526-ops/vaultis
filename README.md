@@ -638,37 +638,47 @@ Use the GNU cross-build only when you must produce a Windows `.exe` from Linux.)
 ## Command-line options (advanced)
 
 These are commands of the **console** `vaultis` build. For the graphical app, use
-**`vaultis-gui`** instead (same as `vaultis [VAULT]`, but with no console window on
+**`vaultis-gui`** instead (same as `vaultis [DIR]`, but with no console window on
 Windows); the `--tui` terminal UI and the subcommands below need the console build.
 
+`DIR` is the vault **directory** — the folder holding `vault.pmv`, `manifest/`, and
+`volume/` — not a file. Omit it to use the per-user default vault. `vaultis --help` is
+the authoritative list; this is the summary.
+
 ```text
-vaultis [VAULT]              Launch the graphical UI (READ-ONLY; or use vaultis-gui)
-vaultis --write [VAULT]      Launch in edit mode (create / edit / delete / upload)
-vaultis --tui [VAULT]        Launch the terminal UI instead (add --write to edit)
-vaultis --vol PATH ...       Use PATH as the document archive instead of <VAULT>.vol
-vaultis decrypt [VAULT]      Decrypt the vault and print its JSON to stdout
-vaultis extract [VAULT] DIR  Decrypt all stored documents into DIR
-vaultis backup [VAULT] DIR   Copy the encrypted vault + archive into DIR (timestamped)
-vaultis compact [VAULT] ...  Reclaim space: re-pack documents and/or trim history
-vaultis --help               Show help
+vaultis [DIR]                Launch the graphical UI (READ-ONLY; or use vaultis-gui)
+vaultis --write [DIR]        Launch in edit mode (create / edit / delete / upload)
+vaultis --tui [DIR]          Launch the terminal UI instead (add --write to edit)
+vaultis decrypt [DIR]        Decrypt the vault and print its JSON to stdout
+vaultis manifest [DIR]       Decrypt and print the document index (add --part N for one)
+vaultis extract [DIR] OUT    Decrypt all stored documents into OUT
+vaultis backup [DIR] DEST    Copy the whole encrypted vault tree into DEST (timestamped)
+vaultis export-tree [DIR] OUT  Decrypt the WHOLE vault into OUT as a plaintext mirror
+vaultis import-tree SRC [DIR]  Build a NEW encrypted vault from such a mirror
+vaultis update-from OTHER [DIR]  Pull newer records in from another vault (additive)
+vaultis compact [DIR] ...    Reclaim space: re-pack documents and/or trim history
+vaultis --help               Show help (its first line names this build's version)
+vaultis --version            Print the version of this build and exit
 ```
 
 - **Read-only by default.** The UI opens read-only; pass **`--write`** to enable
   creating, editing, deleting, uploading documents, and changing the master
   passwords. A read-only session writes **nothing** to disk. The window shows a
   `🔒 READ-ONLY` badge and hides write controls when not in edit mode.
-- Pass a path to use a specific file: `vaultis ./work-vault.pmv`.
-- **Where the start page opens.** The **Vault root** box is seeded from the `[VAULT]`
+- Pass a path to use a specific vault: `vaultis ./work-vault` (the folder, not the
+  `vault.pmv` inside it).
+- **Where the start page opens.** The **Vault root** box is seeded from the `[DIR]`
   argument if you passed one, else from the last root you successfully opened a vault
   from, else it opens **empty**. The **working directory is not used** — `cd /my/vaults
   && vaultis` no longer changes the start page; pass the folder explicitly
   (`vaultis /my/vaults/some-vault`) if you want a specific one. The vault *name* inside
   the root is never pre-selected: you always pick it.
-- **`--vol PATH`** relocates the encrypted document archive (default
-  `<VAULT>.vol`, kept beside the vault) — e.g. onto a removable drive:
-  `vaultis --write --vol /mnt/usb/docs.vol`. Works with the UI, `extract`, and
-  `backup`. The archive is cryptographically bound to its vault, so a mismatched
-  `.vol` is rejected.
+- **The documents live inside the vault folder**, in `volume/` (with their encrypted
+  index in `manifest/`), and their location is not configurable. An earlier version had
+  a `--vol PATH` flag that relocated a single `<VAULT>.vol` archive elsewhere; the
+  format-v4 redesign replaced that archive with the partitioned `volume/`, and the flag
+  was removed with it. Move or back up the **whole folder** — the three parts only mean
+  anything together.
 
 ### Decrypting / extracting at the command line
 
@@ -677,9 +687,9 @@ care); `extract` writes decrypted copies of all stored documents into a folder.
 Both prompt for the two passwords and never modify the vault.
 
 ```bash
-vaultis decrypt ./vault.pmv > backup.json        # interactive prompts
-printf 'pw1\npw2\n' | vaultis decrypt ./vault.pmv # scripted (passwords via stdin)
-vaultis extract ./vault.pmv ./out                 # documents -> ./out/...
+vaultis decrypt ./myvault > backup.json          # interactive prompts
+printf 'pw1\npw2\n' | vaultis decrypt ./myvault  # scripted (passwords via stdin)
+vaultis extract ./myvault ./out                  # documents -> ./out/...
 ```
 
 ### Compacting (reclaim space)

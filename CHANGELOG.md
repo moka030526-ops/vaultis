@@ -24,6 +24,17 @@ The full, per-finding security write-up for the hardening work below lives in
   `scripts/release.sh` already requires the release tag to match, so it names exactly one
   published build.
 
+### Fixed
+
+- **The README's command-line section still documented the pre-format-v4 CLI.** It listed
+  a `--vol PATH` flag removed with the single-`.vol` archive, called the positional
+  argument `[VAULT]` as though it were a file, and its `decrypt`/`extract` examples passed
+  `./vault.pmv` — which today resolves to `./vault.pmv/vault.pmv` and simply fails, so
+  anyone following the README verbatim could not run either command. The section now
+  matches `vaultis --help`: `DIR` is the vault *directory*, the missing subcommands
+  (`manifest`, `export-tree`, `import-tree`, `update-from`) are listed, and the `--vol`
+  bullet is replaced by one explaining where documents actually live.
+
 ## [0.2.1] — 2026-07-29
 
 A bug-fix release from the [2026-07-29 audit round](docs/AUDIT_2026-07-29.md). **If you
