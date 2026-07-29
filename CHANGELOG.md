@@ -12,6 +12,13 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.2] — 2026-07-29
+
+Two audit rounds' worth of fixes. The one to care about is `vaultis-gui --version`, which
+answered by opening a vault instead of printing a version — silently, on Windows.
+
 ### Added
 
 - **The build says which build it is.** Nothing in either binary knew its own version:
@@ -45,6 +52,20 @@ The full, per-finding security write-up for the hardening work below lives in
   matches `vaultis --help`: `DIR` is the vault *directory*, the missing subcommands
   (`manifest`, `export-tree`, `import-tree`, `update-from`) are listed, and the `--vol`
   bullet is replaced by one explaining where documents actually live.
+
+### Security
+
+- **Known residual: the master password lingers in freed memory after key derivation.**
+  A new out-of-process memory-residue test (deep audit 2026-07-29) measured what the suite
+  had only ever asserted: vaultis's own copies of your secrets *are* wiped — a record's
+  password field leaves zero traces once the vault is dropped — but the **master password**
+  survives inside the `argon2` crate's initial-hash buffer, which nothing zeroizes. Reading
+  it requires the ability to read this program's memory on your own machine, which is
+  already outside what any local encryption tool can defend against, and in an ordinary
+  build the copies are overwritten by later allocations within moments. Recorded rather
+  than quietly carried: the honest fix belongs upstream in `argon2`, and enabling that
+  crate's `zeroize` feature was measured and does **not** address it. Full detail in
+  [`docs/AUDIT_2026-07-29_deep.md`](docs/AUDIT_2026-07-29_deep.md) (D-1).
 
 ## [0.2.1] — 2026-07-29
 
