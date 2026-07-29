@@ -235,6 +235,19 @@ for other in crates/*/Cargo.toml; do
     fi
 done
 
+# `fuzz/` is a DETACHED workspace with its own lockfile, so a version bump never reaches
+# it and `cargo fuzz build` rewrites it on the next run. That matters here and nowhere
+# else: the sequence this project follows is audit (which fuzzes) -> fix -> release, so a
+# stale entry means the clean-tree check below trips on a one-line diff nobody made, in
+# the middle of cutting a release. Warn while it is still cheap to commit.
+# (audit 2026-07-29 round 2, L-3.)
+fuzz_core_version="$(awk '/^name = "vaultis-core"$/ { found = 1; next }
+                          found && /^version = / { gsub(/"/, "", $3); print $3; exit }' fuzz/Cargo.lock 2>/dev/null)"
+if [[ -n "$fuzz_core_version" && "$fuzz_core_version" != "$crate_version" ]]; then
+    echo "warning: fuzz/Cargo.lock still records vaultis-core $fuzz_core_version, not $crate_version." >&2
+    echo "         Run \`cargo +nightly fuzz build\` and commit it, or the next fuzz run dirties the tree." >&2
+fi
+
 # A prerelease tag is NOT a quiet one. release.yml calls `gh release create` without
 # --prerelease, and gh does not infer it from the tag name, so v1.0.0-rc1 publishes as
 # a normal release — which makes it /releases/latest, which is exactly what
