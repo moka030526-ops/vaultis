@@ -59,6 +59,32 @@ fn version_flag_prints_the_crate_version_and_exits_zero() {
     }
 }
 
+/// The WINDOWED binary must answer `--version`/`--help` too, rather than resolving them
+/// as a vault directory. Audit 2026-07-29 round 2, L-1: `vaultis-gui --version` used to
+/// open `--version/vault.pmv` — silently on Windows, where the GUI subsystem gives the
+/// error message nowhere to go. `vaultis-gui` only exists in a `gui`-featured build.
+#[cfg(feature = "gui")]
+#[test]
+fn the_windowed_binary_answers_version_and_help_without_opening_a_vault() {
+    for flag in ["--version", "-V"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_vaultis-gui")).arg(flag).output().expect("run gui");
+        assert!(out.status.success(), "vaultis-gui {flag} must exit 0");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            concat!("vaultis ", env!("CARGO_PKG_VERSION")),
+            "vaultis-gui {flag} must print the same line the console binary prints"
+        );
+    }
+    for flag in ["--help", "-h"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_vaultis-gui")).arg(flag).output().expect("run gui");
+        assert!(out.status.success(), "vaultis-gui {flag} must exit 0");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("USAGE:"), "got: {stdout}");
+        // It must point at the console binary for the subcommands it cannot run itself.
+        assert!(stdout.contains("vaultis --help"), "got: {stdout}");
+    }
+}
+
 #[test]
 fn too_many_positionals_is_a_usage_error_with_nonzero_exit() {
     let out = Command::new(bin()).args(["decrypt", "A", "B", "C"]).output().expect("run decrypt");

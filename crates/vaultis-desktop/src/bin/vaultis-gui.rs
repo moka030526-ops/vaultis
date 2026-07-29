@@ -18,6 +18,8 @@
 
 use std::process::ExitCode;
 
+use vaultis::launch::Interactive;
+
 fn main() -> ExitCode {
     // Everything after the program name. The windowed launcher only understands an
     // interactive launch (optional vault DIR + `--write`); CLI subcommands belong to
@@ -25,7 +27,21 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Reject a malformed command line (e.g. more than one vault DIR) before opening a window.
     let (path, writable) = match vaultis::launch::resolve_interactive(&args) {
-        Ok(v) => v,
+        Ok(Interactive::Open { path, writable }) => (path, writable),
+        // `--version` / `--help`: print and exit rather than open anything. Under the Windows
+        // GUI subsystem there is no console for this to land in, so it prints nothing there and
+        // simply exits 0 — attaching to the parent console needs `unsafe`, which this crate
+        // forbids, and the console binary is the documented place to ask. Exiting quietly still
+        // beats what this used to do, which was to open a window on a vault directory named
+        // `--version`.
+        Ok(Interactive::Version) => {
+            println!("{}", vaultis::launch::VERSION_LINE);
+            return ExitCode::SUCCESS;
+        }
+        Ok(Interactive::Help) => {
+            println!("{}", vaultis::launch::GUI_USAGE);
+            return ExitCode::SUCCESS;
+        }
         Err(e) => {
             eprintln!("vaultis error: {e}");
             return ExitCode::FAILURE;

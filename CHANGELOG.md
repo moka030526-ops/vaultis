@@ -26,6 +26,17 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ### Fixed
 
+- **`vaultis-gui --version` opened a vault instead of answering.** The console binary
+  intercepts `--help`, `-h`, `--version` and `-V`; the windowed one treated every token
+  that was not `--write` or `--tui` as the vault *directory*, so `vaultis-gui --version`
+  resolved `--version/vault.pmv` and opened the start page there. On Windows it did that
+  in complete silence, because a GUI-subsystem binary has no console for the error to
+  print to — so the one command a user would be asked to run to report their version was
+  the one that told them nothing. Both binaries now answer all four tokens from a single
+  shared constant, and `launch.rs`'s stated guarantee that the two resolve a command line
+  identically covers the flags again, not just the path. Found by the
+  [2026-07-29 round 2 audit](docs/AUDIT_2026-07-29_round2.md) (L-1).
+
 - **The README's command-line section still documented the pre-format-v4 CLI.** It listed
   a `--vol PATH` flag removed with the single-`.vol` archive, called the positional
   argument `[VAULT]` as though it were a file, and its `decrypt`/`extract` examples passed

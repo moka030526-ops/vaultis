@@ -70,20 +70,13 @@ use vaultis::gui;
 // arm, and `src/migrate_cli.rs` to remove the feature.
 mod migrate_cli;
 
-/// The build's identity: the program name plus the `vaultis` crate version from
-/// `Cargo.toml`, which `scripts/release.sh` requires the release tag to match — so
-/// this line names exactly one published build. Printed by `--version`, and shown
-/// as the first line of the help below.
-// `env!` reads an environment variable AT COMPILE TIME and expands to a string
-// literal, so this costs nothing at run time. `concat!` glues literals together,
-// which is why both of these can be `const`.
-const VERSION_LINE: &str = concat!("vaultis ", env!("CARGO_PKG_VERSION"));
-
 // `const` is a compile-time constant. `&str` is a borrowed string slice (a view
 // into text); this one points at a string literal baked into the binary. The
-// version is prepended so the help identifies the build it came from; `concat!`
-// takes literals only (not the `VERSION_LINE` const above), so the `env!` is
-// spelled out a second time here rather than reused.
+// version is prepended so the help identifies the build it came from. `env!` reads
+// an environment variable AT COMPILE TIME and expands to a string literal, and
+// `concat!` glues literals together — so this costs nothing at run time. `concat!`
+// takes literals *only*, which is why the `env!` is spelled out here rather than
+// reusing the shared `VERSION_LINE` constant that `--version` prints.
 const HELP: &str = concat!(
     "vaultis ",
     env!("CARGO_PKG_VERSION"),
@@ -297,8 +290,10 @@ fn main() -> ExitCode {
     // `--version` prints the build identity alone (the help's first line without
     // the manual), so a bug report can name the exact build. Checked after
     // `--help` so `--help --version` shows the help, which contains it anyway.
+    // The constant is shared with the windowed binary (`launch::VERSION_LINE`) so
+    // the two cannot answer this question differently.
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("{VERSION_LINE}");
+        println!("{}", vaultis::launch::VERSION_LINE);
         return ExitCode::SUCCESS;
     }
 

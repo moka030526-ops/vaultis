@@ -6,6 +6,11 @@
 //! app, so it opens *without* a command window). Keeping the path/flag logic here —
 //! instead of duplicated in each binary — guarantees `vaultis DIR` and
 //! `vaultis-gui DIR` open the same vault.
+//!
+//! That guarantee covers the *flags* as well as the path, which is why [`VERSION_LINE`]
+//! and the `--help`/`--version` handling in [`resolve_interactive`] live here too: when
+//! only the console binary knew those tokens, `vaultis-gui --version` opened a vault
+//! directory named `--version` instead of answering (audit 2026-07-29 round 2, L-1).
 
 use std::path::{Path, PathBuf};
 
@@ -306,22 +311,76 @@ pub fn discover_vaults(root: &str) -> VaultScan {
     VaultScan { vaults, warning }
 }
 
+/// This build's identity: the program name plus the `vaultis` crate version.
+///
+/// Lives here rather than in `main.rs` so the console and windowed binaries print the
+/// *same* string — `scripts/release.sh` requires the release tag to match this crate's
+/// version, so this line names exactly one published build.
+pub const VERSION_LINE: &str = concat!("vaultis ", env!("CARGO_PKG_VERSION"));
+
+/// What the windowed binary should print for `--help`. Deliberately short: the console
+/// binary owns the subcommands (and the full `--help`), because it is the one with a
+/// console to print them to.
+pub const GUI_USAGE: &str = concat!(
+    "vaultis ",
+    env!("CARGO_PKG_VERSION"),
+    " — standalone, offline, two-password encrypted estate vault
+
+USAGE:
+    vaultis-gui [DIR]        Open the graphical UI (read-only by default)
+    vaultis-gui --write [DIR]  Open it able to create/edit/delete
+    vaultis-gui --version    Print the version of this build and exit
+    vaultis-gui --help       Show this message
+
+DIR is the vault DIRECTORY (it holds vault.pmv, manifest/, and volume/); the per-user
+default is used if it is omitted. This windowed binary understands only an interactive
+launch. The CLI subcommands (decrypt, manifest, extract, backup, export-tree,
+import-tree, update-from, compact) and the terminal UI live in the console binary —
+run `vaultis --help` for those."
+);
+
+/// What a windowed-binary command line asked for.
+///
+/// `--help`/`--version` are requests to *print and exit*, not vault paths — modelled as
+/// their own variants so the caller cannot accidentally treat them as a directory, which
+/// is exactly the bug this type replaced (audit 2026-07-29 round 2, L-1).
+pub enum Interactive {
+    /// Open this vault file; `writable` is `--write`.
+    Open { path: PathBuf, writable: bool },
+    /// `--version` / `-V`.
+    Version,
+    /// `--help` / `-h`.
+    Help,
+}
+
 /// Resolve an interactive launch from the process arguments (everything *after*
-/// the program name): the `(vault path, writable)` pair.
+/// the program name).
 ///
 /// The first non-flag argument is the vault DIRECTORY (its `vault.pmv` is used);
 /// if there is none, the per-user default is used. `--write` enables mutations.
 /// This is the windowed launcher's whole command line — it has no console, so it
 /// deliberately understands only what an interactive launch needs and leaves the
 /// CLI subcommands to the console binary.
-pub fn resolve_interactive(args: &[String]) -> Result<(PathBuf, bool), String> {
+pub fn resolve_interactive(args: &[String]) -> Result<Interactive, String> {
+    // The four print-and-exit tokens, answered FIRST and in the same order as the console
+    // binary (`main.rs`), so both binaries agree on what a bare `--version` means. Before
+    // this, only the console binary knew them: `vaultis-gui --version` fell through to the
+    // positional filter below and opened a vault directory literally named `--version`,
+    // silently on Windows, where the GUI subsystem swallows the error message.
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        return Ok(Interactive::Help);
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        return Ok(Interactive::Version);
+    }
     let writable = args.iter().any(|a| a == "--write");
     // Treat ONLY the exact known flags as flags — NOT any '-'-prefixed token. A blanket
     // `starts_with('-')` filter silently ignored a vault directory whose name begins with
     // '-' (falling back to the default vault) while the console binary, which strips only the
     // exact `--write`/`--tui` tokens, treated it as the directory — so `vaultis DIR` and
     // `vaultis-gui DIR` could open DIFFERENT vaults. Matching the exact set keeps both
-    // binaries' resolution identical (the module's stated guarantee).
+    // binaries' resolution identical (the module's stated guarantee). The help/version
+    // tokens never reach here — they returned above, in both binaries.
     let positionals: Vec<&String> = args.iter().filter(|a| !matches!(a.as_str(), "--write" | "--tui")).collect();
     // At most ONE positional (the optional vault DIR). Reject extras instead of silently
     // opening the first and ignoring the rest — matching the console binary's arity checks.
@@ -333,7 +392,7 @@ pub fn resolve_interactive(args: &[String]) -> Result<(PathBuf, bool), String> {
         ));
     }
     let path = positionals.first().map(|d| vault_file(d)).unwrap_or_else(default_vault_path);
-    Ok((path, writable))
+    Ok(Interactive::Open { path, writable })
 }
 
 #[cfg(test)]
@@ -350,29 +409,74 @@ mod tests {
         assert_eq!(vault_file("/some/dir"), PathBuf::from("/some/dir/vault.pmv"));
     }
 
+    /// Unwrap an expected `Open` outcome into the `(path, writable)` pair the rest of
+    /// these assertions are written against.
+    fn opened(args: &[String]) -> (PathBuf, bool) {
+        match resolve_interactive(args) {
+            Ok(Interactive::Open { path, writable }) => (path, writable),
+            Ok(_) => panic!("expected an Open outcome for {args:?}"),
+            Err(e) => panic!("{args:?} failed to resolve: {e}"),
+        }
+    }
+
     #[test]
     fn resolve_interactive_reads_dir_and_write_flag() {
         // No args → default path, read-only.
-        let (p, w) = resolve_interactive(&[]).unwrap();
+        let (p, w) = opened(&[]);
         assert!(p.ends_with("vault.pmv"));
         assert!(!w);
 
         // A positional dir is used; flag order doesn't matter.
-        let (p, w) = resolve_interactive(&["--write".into(), "/v".into()]).unwrap();
+        let (p, w) = opened(&["--write".into(), "/v".into()]);
         assert_eq!(p, PathBuf::from("/v/vault.pmv"));
         assert!(w);
 
         // The first NON-flag argument is the directory.
-        let (p, w) = resolve_interactive(&["/v".into(), "--write".into()]).unwrap();
+        let (p, w) = opened(&["/v".into(), "--write".into()]);
         assert_eq!(p, PathBuf::from("/v/vault.pmv"));
         assert!(w);
 
         // A directory whose NAME begins with '-' is still recognized (only the exact known
         // flags are treated as flags), so this binary opens the same vault the console
         // binary would — not the silent default.
-        let (p, w) = resolve_interactive(&["-weird-dir".into()]).unwrap();
+        let (p, w) = opened(&["-weird-dir".into()]);
         assert_eq!(p, PathBuf::from("-weird-dir/vault.pmv"));
         assert!(!w);
+    }
+
+    /// The four print-and-exit tokens must be ANSWERED, never resolved as a vault
+    /// directory. Before audit 2026-07-29 round 2 (L-1) only the console binary knew
+    /// them, so `vaultis-gui --version` opened `--version/vault.pmv` — and on Windows,
+    /// where the GUI subsystem swallows stderr, it did so with no message at all.
+    #[test]
+    fn resolve_interactive_answers_help_and_version_instead_of_opening_them() {
+        for tok in ["--help", "-h"] {
+            assert!(
+                matches!(resolve_interactive(&[tok.into()]), Ok(Interactive::Help)),
+                "{tok} must be answered, not treated as a vault DIR"
+            );
+        }
+        for tok in ["--version", "-V"] {
+            assert!(
+                matches!(resolve_interactive(&[tok.into()]), Ok(Interactive::Version)),
+                "{tok} must be answered, not treated as a vault DIR"
+            );
+        }
+        // They win from any position, and over the other flags — the same precedence the
+        // console binary applies, so a shared command line means the same thing to both.
+        assert!(matches!(
+            resolve_interactive(&["/v".into(), "--write".into(), "--version".into()]),
+            Ok(Interactive::Version)
+        ));
+        assert!(
+            matches!(resolve_interactive(&["--version".into(), "--help".into()]), Ok(Interactive::Help)),
+            "--help outranks --version, as in main.rs"
+        );
+        // And a directory whose name merely RESEMBLES one of them is still a directory.
+        let Ok(Interactive::Open { path, .. }) = resolve_interactive(&["--versions".into()]) else {
+            panic!("--versions is not one of the four tokens; it is a directory name");
+        };
+        assert_eq!(path, PathBuf::from("--versions/vault.pmv"));
     }
 
     #[test]
