@@ -478,8 +478,11 @@ get_vaultis.bat v0.2.1 D:\tools    that release into D:\tools\vaultis, no prompt
 
 If you install somewhere new while an older copy is still in the default location, it
 offers to remove that one — defaulting to **no**, and removing only the files it
-installed, so anything else in that folder (and every vault, wherever you keep them)
-is left alone.
+installed. That includes the old `sample-vault`, which is this package's throwaway
+practice vault and arrives fresh with every install. **Any other vault is left strictly
+alone:** a directory holding `vault.pmv`, `manifest`, `volume` or `vaultis.lock` is never
+deleted, never overwritten, and never installed into, so a real vault kept anywhere —
+including inside an install folder — survives untouched.
 
 `get_vaultis.bat` is itself included in the install, so an installed copy can update or
 relocate itself without fetching the script again.
