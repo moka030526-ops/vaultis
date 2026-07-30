@@ -237,7 +237,59 @@ else {
     }
 }
 
+$InstallDir = [IO.Path]::GetFullPath($InstallDir)
 Write-Host "Installing to: $InstallDir"
+
+# ==========================================
+# Find previous installations
+# ==========================================
+
+# The Desktop shortcuts ARE the register of past installs. make-shortcuts.ps1 sets
+# TargetPath to the exe it installed, so the parent of that path is where a previous copy
+# lives -- including a custom location this script could not otherwise guess. (An earlier
+# version of this comment claimed a previous custom location was "unknowable"; it is not,
+# it is written on the Desktop.)
+#
+# Read NOW, before the install: make-shortcuts.ps1 runs later and rewrites both shortcuts
+# to point at the new location, after which the old path is genuinely gone.
+$ShortcutNames = @('vaultis (View)', 'vaultis (Edit)')
+
+function Get-ShortcutInstallDir {
+    $Found = @()
+    $Desktop = [Environment]::GetFolderPath('Desktop')
+    if (-not $Desktop) { return $Found }
+    # WScript.Shell is how a .lnk is read without extra dependencies; if it is
+    # unavailable for any reason, fall back to knowing nothing rather than failing the
+    # install over a convenience feature.
+    $Shell = $null
+    try { $Shell = New-Object -ComObject WScript.Shell } catch { $Shell = $null }
+    if (-not $Shell) { return $Found }
+    foreach ($Name in $ShortcutNames) {
+        $Lnk = Join-Path $Desktop "$Name.lnk"
+        if (-not (Test-Path -LiteralPath $Lnk)) { continue }
+        $Target = $null
+        try { $Target = $Shell.CreateShortcut($Lnk).TargetPath } catch { $Target = $null }
+        if (-not $Target) { continue }
+        $Dir = Split-Path -Parent $Target
+        if ($Dir) { $Found += $Dir }
+    }
+    return $Found
+}
+
+# Candidates: whatever the shortcuts point at, plus the per-user default (which may hold an
+# install that no shortcut currently names). Anything that is not actually an install, or is
+# the directory being installed into right now, is dropped.
+$PriorInstallDirs = @()
+foreach ($Candidate in (@(Get-ShortcutInstallDir) + @($DefaultInstallDir))) {
+    if (-not $Candidate) { continue }
+    $Full = $null
+    try { $Full = [IO.Path]::GetFullPath($Candidate) } catch { $Full = $null }
+    if (-not $Full) { continue }
+    # -eq on strings is case-insensitive in PowerShell, which is what Windows paths want.
+    if ($Full -eq $InstallDir) { continue }
+    if ($PriorInstallDirs -contains $Full) { continue }
+    if (Test-IsVaultisInstall $Full) { $PriorInstallDirs += $Full }
+}
 
 # ==========================================
 # Find the release to install
@@ -443,82 +495,63 @@ else {
 }
 
 # ==========================================
-# Offer to remove an install left behind at the default location
+# Offer to remove previous installations
 # ==========================================
 
-# Only the default location can be checked -- there is no register of past installs, so a
-# previous custom location is unknowable. Defaults to NO, like every other destructive step
-# in this project: an accidental Enter must not delete anything.
+# Every install found earlier that is not the one just written. The Desktop shortcuts have
+# already been re-pointed at the new location by make-shortcuts.ps1 above, so there is no
+# shortcut work to do here -- only the leftover files.
 #
-# What it removes is the old install FOLDER and the two Desktop shortcuts, which now point
-# at a folder that is about to stop existing. It does not touch vaults: those live wherever
-# you chose, never under the install directory, and nothing here goes looking for them.
-if ($InstallDir -ne $DefaultInstallDir -and (Test-IsVaultisInstall $DefaultInstallDir)) {
+# Defaults to NO, like every destructive step in this project, and an unattended run
+# (Read-Host at end-of-input) therefore declines. Deleting an installation because nobody
+# was present to say no is not acceptable.
+foreach ($Prior in $PriorInstallDirs) {
     Write-Host ""
-    Write-Host "There is still an older vaultis installed at:"
-    Write-Host "  $DefaultInstallDir"
-    Write-Host "Its Desktop shortcuts point there, not at the copy just installed."
-    Write-Host "Your vaults are stored elsewhere and are NOT affected either way."
-    # Same EOF handling as the folder prompt, and note what it means here: an unattended
-    # run declines. A destructive step must never happen because nobody was there to say no.
+    Write-Host "An older vaultis installation is still here:"
+    Write-Host "  $Prior"
+    Write-Host "The Desktop shortcuts now point at the copy just installed, not that one."
+    Write-Host "Your vaults are NOT affected either way."
     $Answer = ''
     try { $Answer = Read-Host "Delete that older installation? [y/N]" } catch { $Answer = '' }
 
-    if ($Answer -match '^[Yy]') {
-        # Remove only the files this package installs, then the folder itself if that
-        # leaves it empty -- NOT a recursive delete of the whole directory. Someone may
-        # have put a vault inside the install folder, and in a program with no recovery
-        # path a stray `Remove-Item -Recurse` is how you destroy an estate. Anything not
-        # on the owned list is left exactly where it is, and the folder stays with it.
-        $Failed = @()
-        $KeptVaults = @()
-        foreach ($Name in $OwnedNames) {
-            $Victim = Join-Path $DefaultInstallDir $Name
-            if (-not (Test-Path -LiteralPath $Victim)) { continue }
-            # The guard, applied to every directory before it is deleted. The shipped
-            # sample vault is the one deliberate exception (see $SampleVaultName); any
-            # OTHER vault found in an install folder -- under any name -- survives.
-            if ($Name -ne $SampleVaultName -and (Test-LooksLikeVault $Victim)) {
-                $KeptVaults += $Name
-                continue
-            }
-            Remove-Item -LiteralPath $Victim -Recurse -Force -ErrorAction SilentlyContinue
-            if (Test-Path -LiteralPath $Victim) { $Failed += $Name }
+    if ($Answer -notmatch '^[Yy]') {
+        Write-Host "Left it alone."
+        continue
+    }
+
+    # Remove only the files this package installs, and only those that are not vaults --
+    # except the shipped sample vault, which is ours (see $SampleVaultName). Then remove
+    # the folder ONLY if that left it empty. Never a recursive delete of the directory:
+    # someone may keep a vault in there, and in a program with no recovery path a stray
+    # `Remove-Item -Recurse` is how an estate is destroyed.
+    $Failed = @()
+    $KeptVaults = @()
+    foreach ($Name in $OwnedNames) {
+        $Victim = Join-Path $Prior $Name
+        if (-not (Test-Path -LiteralPath $Victim)) { continue }
+        if ($Name -ne $SampleVaultName -and (Test-LooksLikeVault $Victim)) {
+            $KeptVaults += $Name
+            continue
         }
-        if ($KeptVaults.Count -gt 0) {
-            Write-Host ("Kept (these are vaults, so they were not touched): " +
-                ($KeptVaults -join ', '))
-        }
-        if ($Failed.Count -gt 0) {
-            Write-Warning ("Could not remove: " + ($Failed -join ', ') +
-                " -- if vaultis is still open from there, close it and delete them by hand.")
-        }
-        $Leftover = @(Get-ChildItem -LiteralPath $DefaultInstallDir -Force -ErrorAction SilentlyContinue)
-        if ($Leftover.Count -eq 0) {
-            Remove-Item -LiteralPath $DefaultInstallDir -Force -ErrorAction SilentlyContinue
-            Write-Host "Removed $DefaultInstallDir"
-        }
-        else {
-            Write-Host ("Removed the vaultis files from $DefaultInstallDir, but kept the " +
-                "folder: it still contains " + $Leftover.Count + " item(s) this installer " +
-                "did not put there.")
-        }
-        # The shortcuts are re-created below/above by make-shortcuts.ps1 for the NEW
-        # location, so removing the stale ones is only needed if they were named
-        # differently. Remove by the names this project creates, and only those.
-        foreach ($Link in 'vaultis (View).lnk', 'vaultis (Edit).lnk') {
-            $Lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) $Link
-            if (Test-Path -LiteralPath $Lnk) {
-                Remove-Item -LiteralPath $Lnk -Force -ErrorAction SilentlyContinue
-            }
-        }
-        Write-Host "Re-creating shortcuts for the new location..."
-        if (Test-Path -LiteralPath $ShortcutScript) {
-            & $ShortcutScript -InstallDir $InstallDir
-        }
+        Remove-Item -LiteralPath $Victim -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $Victim) { $Failed += $Name }
+    }
+    if ($KeptVaults.Count -gt 0) {
+        Write-Host ("  kept (these are vaults, so they were not touched): " +
+            ($KeptVaults -join ', '))
+    }
+    if ($Failed.Count -gt 0) {
+        Write-Warning ("Could not remove: " + ($Failed -join ', ') +
+            " -- if vaultis is still open from there, close it and delete them by hand.")
+    }
+    $Leftover = @(Get-ChildItem -LiteralPath $Prior -Force -ErrorAction SilentlyContinue)
+    if ($Leftover.Count -eq 0) {
+        Remove-Item -LiteralPath $Prior -Force -ErrorAction SilentlyContinue
+        Write-Host "  removed $Prior"
     }
     else {
-        Write-Host "Left it alone. Both installations are now present."
+        Write-Host ("  removed the vaultis files from $Prior, but kept the folder: it " +
+            "still contains " + $Leftover.Count + " item(s) this installer did not put there.")
     }
 }
 

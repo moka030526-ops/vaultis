@@ -476,9 +476,10 @@ get_vaultis.bat v0.2.1             that exact release — the way back to a know
 get_vaultis.bat v0.2.1 D:\tools    that release into D:\tools\vaultis, no prompt
 ```
 
-If you install somewhere new while an older copy is still in the default location, it
-offers to remove that one — defaulting to **no**, and removing only the files it
-installed. That includes the old `sample-vault`, which is this package's throwaway
+If you install somewhere new while an older copy is still around, it offers to remove that
+one — defaulting to **no**, and removing only the files it installed. It finds a previous
+install by reading the Desktop shortcuts, whose target *is* the folder it was installed
+into, so a copy in a custom location is found too and not just one in the default place. That includes the old `sample-vault`, which is this package's throwaway
 practice vault and arrives fresh with every install. **Any other vault is left strictly
 alone:** a directory holding `vault.pmv`, `manifest`, `volume` or `vaultis.lock` is never
 deleted, never overwritten, and never installed into, so a real vault kept anywhere —
