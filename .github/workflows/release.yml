@@ -71,6 +71,11 @@ jobs:
           Copy-Item packaging/icons/vaultis-locked.ico    $Stage
           Copy-Item packaging/icons/vaultis-unlocked.ico  $Stage
           Copy-Item packaging/windows/make-shortcuts.ps1  $Stage
+          # Shipped so an installed copy can update or relocate itself without going back
+          # to GitHub for the script first -- `get_vaultis.bat v0.2.4` from the install
+          # folder upgrades in place. It is also why the installer skips overwriting the
+          # copy that is currently executing.
+          Copy-Item get_vaultis.bat                       $Stage
 
           # The single-writer lock file the seeder leaves behind. It is session state, not
           # vault content: shipping one would put a stale lock in every install, and the
@@ -81,7 +86,7 @@ jobs:
           # A dead "Sample vault" button is invisible until a user clicks where it isn't.
           foreach ($Required in 'vaultis.exe', 'vaultis-gui.exe', 'vaultis-locked.ico',
                                 'vaultis-unlocked.ico', 'make-shortcuts.ps1',
-                                'sample-vault/vault.pmv') {
+                                'get_vaultis.bat', 'sample-vault/vault.pmv') {
               if (-not (Test-Path -LiteralPath "$Stage/$Required")) {
                   throw "the staged package is missing $Required"
               }

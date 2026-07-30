@@ -457,14 +457,37 @@ data, so it's fine if it's lost:
 
 **On Windows, you do not need to build anything.** Double-click
 [`get_vaultis.bat`](get_vaultis.bat): it downloads the latest release, verifies it
-against its published SHA-256, installs it under `%LOCALAPPDATA%\Programs\vaultis`,
-and creates both Desktop shortcuts. No Git, no Rust, no compiler, no elevation.
+against its published SHA-256, installs it, and creates both Desktop shortcuts. No Git,
+no Rust, no compiler, no elevation.
+
+It asks where to install. **Press Enter** for the usual per-user location,
+`%LOCALAPPDATA%\Programs\vaultis` — that is where per-user applications belong on
+Windows, and unlike a Downloads-relative install it is not somewhere people
+periodically empty. Type a folder instead and vaultis goes into a `vaultis` subfolder
+of it (so it never scatters files through a directory you keep other things in);
+give a folder that *already* holds vaultis and it upgrades that copy in place.
+
+Both answers can be given on the command line, which is also what an unattended run
+needs:
+
+```text
+get_vaultis.bat                    latest release, prompts for the folder
+get_vaultis.bat v0.2.1             that exact release — the way back to a known-good build
+get_vaultis.bat v0.2.1 D:\tools    that release into D:\tools\vaultis, no prompt
+```
+
+If you install somewhere new while an older copy is still in the default location, it
+offers to remove that one — defaulting to **no**, and removing only the files it
+installed, so anything else in that folder (and every vault, wherever you keep them)
+is left alone.
+
+`get_vaultis.bat` is itself included in the install, so an installed copy can update or
+relocate itself without fetching the script again.
 
 The install includes a **sample vault** — a complete, filled-in practice vault of
 invented data, in a `sample-vault` folder beside the binaries. The lock screen's
 "Sample vault" button opens it in one click, from either shortcut. Never put anything
-real in it: its two passwords are the publicly-known `sample1` / `sample2`, and
-re-running `get_vaultis.bat` to update replaces the whole folder.
+real in it: its two passwords are the publicly-known `sample1` / `sample2`.
 
 > The Windows binaries are built in CI — see
 > [`.github/workflows/release.yml`](.github/workflows/release.yml) — because building

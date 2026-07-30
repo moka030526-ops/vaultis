@@ -107,6 +107,18 @@ tamper matrix, and full-crate mutation testing) on top of the static review.
   and a git-sourced fork would also trip `cargo deny`'s source check. Enabling argon2's
   non-default `zeroize` feature was **measured and does not address it** (the count stayed
   at 3; that feature covers `Block` memory, not the pre-image).
+* **A mitigation was tried and rejected on the evidence (2026-07-30):** overwriting the
+  stack after the KDF returns (an `#[inline(never)]` fn with a 32 KiB zeroed local — no
+  `unsafe`, no change to any derived key). It made **no measurable difference**: 3 copies
+  before and after under default ASan; 0 both with *and without* it once
+  `detect_stack_use_after_return=0` put locals back on the real stack. The zero came from
+  the ASan setting, not the scrub, and the control run is what proved it. Reverted rather
+  than shipped as unverifiable security code.
+* **That measurement also narrows this finding.** ASan's use-after-return detection exists
+  to keep dead stack frames alive; with it off — the arrangement a shipped binary actually
+  has — ordinary stack reuse clears the copies unaided. So the exposure on a real stack is
+  short-lived rather than durable, and the claim that two sanitizers agreeing rules out an
+  artifact needs qualifying: preserving dead memory is a property they *share*.
 * **The real fix is upstream:** argon2 wiping its H0 pre-image. Until then this is carried
   deliberately and disclosed in `CHANGELOG.md`.
 * **What the test now asserts,** so this acceptance cannot quietly widen: the record field

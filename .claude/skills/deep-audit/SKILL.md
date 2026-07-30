@@ -49,6 +49,18 @@ result. Three more matter especially here:
    still live*, then "no secret found after drop" means the scanner is broken, not that
    the code is clean. Every such test here ships with its control, and the control's
    result gets reported alongside the measurement.
+4. **A *fix* needs its own control, and this is where you will be fooled.** When a
+   mitigation makes the number go to zero, run the identical configuration with the
+   mitigation *removed* before believing it. The D-1 stack scrub produced a clean 0 and
+   was minutes from being committed as a verified fix; the control showed the 0 came
+   entirely from an `ASAN_OPTIONS` change made in the same step, and the scrub did
+   nothing. Changing the instrument and the code at once, then attributing the result to
+   the code, is the single easiest way to ship security theatre from a real measurement.
+5. **The instrument's configuration is part of the finding.** ASan's
+   `detect_stack_use_after_return` deliberately keeps dead stack frames alive. Residue that
+   only appears with it on is residue a shipped binary does not have. Record the exact
+   options every number was taken under, and check whether a finding survives the
+   instrument being configured like production.
 
 ## 1. Memory residue — do dropped secrets actually leave RAM?
 

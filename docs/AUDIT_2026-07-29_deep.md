@@ -76,6 +76,37 @@ just the derived key — outlives its use, in a buffer nothing wipes. It is the 
 F-1 ("plaintext fragments across freed heap that may persist until overwritten"), now on
 the KDF path.
 
+**Follow-up (2026-07-30): a mitigation was attempted, measured, and rejected — and the
+measurement narrowed the finding.**
+
+Since the buffer is a stack local with no reachable pointer, the one fix available without
+forking `argon2` was to overwrite the stack region after the KDF returns: an
+`#[inline(never)]` function with a 32 KiB zeroed local, which costs nothing, changes no
+derived key, and needs no `unsafe`. Under default ASan it changed nothing (3 copies before,
+3 after). With `ASAN_OPTIONS=detect_stack_use_after_return=0` the count went to **0** — and
+the control run, *same setting, scrub removed*, also reported **0**. The zero came from the
+ASan option, not from the scrub. It was reverted rather than shipped.
+
+| configuration | with scrub | without scrub |
+|---|---:|---:|
+| ASan, default (`detect_stack_use_after_return=1`) | 3 | 3 |
+| ASan, `detect_stack_use_after_return=0` (locals on the real stack) | 0 | **0** |
+| ordinary build | 0 | 0 |
+
+**What that second row means for D-1 itself.** ASan's use-after-return detection moves each
+function's locals into a per-thread pool that deliberately keeps dead frames alive — that is
+its whole purpose. Turn it off, so locals sit on the real stack the way they do in a shipped
+binary, and the copies are gone with no help at all: ordinary stack reuse overwrites them
+almost immediately. So the three copies are visible *because* the instrument preserves dead
+frames, and the practical exposure window on a real stack is very short. The earlier
+sentence in this report — that ASan and TSan agreeing means it is "not one tool's artifact"
+— needs that qualification: both tools share the property of preserving dead memory, and
+that shared property is what makes the copies observable.
+
+D-1 stays a recorded residual: the password *is* written to a buffer nothing wipes, which is
+worth knowing and worth fixing upstream. But it is a short-lived exposure on a real stack,
+not a durable one, and no in-tree mitigation for it can currently be demonstrated to work.
+
 **Visible only with a non-recycling allocator, and that is not a caveat that dismisses it.**
 In a normal build the same test reports **0** at every dropped stage — later allocations
 overwrite the buffer. Under ASan (quarantine) the copies persist and are counted; the
