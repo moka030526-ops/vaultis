@@ -490,7 +490,10 @@ relocate itself without fetching the script again.
 The install includes a **sample vault** — a complete, filled-in practice vault of
 invented data, in a `sample-vault` folder beside the binaries. The lock screen's
 "Sample vault" button opens it in one click, from either shortcut. Never put anything
-real in it: its two passwords are the publicly-known `sample1` / `sample2`.
+real in it: its two passwords are the publicly-known `sample1` / `sample2`, and
+**installing or updating replaces it with a fresh copy**, so anything you did in it is
+discarded. (It is replaced rather than merged into, deliberately: a half-updated vault —
+new records file, leftover document partitions from the old one — would not open at all.)
 
 > The Windows binaries are built in CI — see
 > [`.github/workflows/release.yml`](.github/workflows/release.yml) — because building

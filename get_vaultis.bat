@@ -380,14 +380,35 @@ try {
                 continue
             }
         }
-        # Never write into an existing vault. `Copy-Item -Recurse -Force` MERGES a
-        # directory, overwriting same-named files inside it -- so copying the package's
-        # pristine sample-vault over one already on disk would replace that vault's
-        # vault.pmv, manifest/ and volume/ with the shipped ones. If you have been
-        # practising in it, that is your data gone. Keep what is there.
-        if ($Item.PSIsContainer -and (Test-LooksLikeVault $Target)) {
-            Write-Host "  keeping the existing $($Item.Name) (it is a vault -- not overwriting it)"
-            continue
+        if ($Item.PSIsContainer -and (Test-Path -LiteralPath $Target)) {
+            if ($Item.Name -eq $SampleVaultName) {
+                # Refresh the shipped practice vault: DELETE then copy, never merge.
+                #
+                # `Copy-Item -Recurse -Force` onto an existing directory merges into it --
+                # same-named files are overwritten, but files present only at the
+                # destination survive. For a vault that is the worst of both: the package's
+                # sample-vault carries vault.pmv + manifest/manifest.0 + volume/vol.0 all
+                # keyed to a freshly generated salt, so any extra partitions an older
+                # sample had grown (vol.1, manifest.1, from documents added while
+                # practising) would be left behind encrypted under the PREVIOUS key --
+                # undecryptable files in a directory the storage engine scans. Removing the
+                # old directory first is what makes "the new sample vault" actually mean
+                # that.
+                Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $Target) {
+                    throw ("Could not replace the old $($Item.Name) in $InstallDir. If " +
+                        "vaultis has that sample vault open, close it and run this again " +
+                        "-- continuing would merge the new practice vault into the old " +
+                        "one and leave it unopenable.")
+                }
+                Write-Host "  replacing $($Item.Name) with the one from this release"
+            }
+            elseif (Test-LooksLikeVault $Target) {
+                # Any OTHER vault in the install folder is left strictly alone -- not
+                # merged into, not deleted. It is not ours.
+                Write-Host "  keeping the existing $($Item.Name) (it is a vault -- not touching it)"
+                continue
+            }
         }
         # -Force overwrites files. Directories merge, which is what an upgrade over an
         # existing install wants for anything that is not a vault.
