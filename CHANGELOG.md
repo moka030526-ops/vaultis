@@ -14,6 +14,51 @@ The full, per-finding security write-up for the hardening work below lives in
 
 Nothing yet.
 
+## [0.2.4] — 2026-07-30
+
+An installer release: `get_vaultis.bat` can now be told **where** to put things, and it no
+longer deletes a directory to do it. Nothing in the program itself changed — 0.2.3 vaults
+open in 0.2.4 and the other way round.
+
+### Added
+
+- **You choose the install folder.** The installer asks. Press **Enter** for the usual
+  per-user location (`%LOCALAPPDATA%\Programs\vaultis`), or type a folder and vaultis goes
+  into a `vaultis` subfolder inside it — so it never scatters files through a directory you
+  keep other things in. Point it at a folder that already holds vaultis and it upgrades that
+  copy in place. Both answers work on the command line too, which is what an unattended
+  install needs: `get_vaultis.bat v0.2.1 D:\tools`.
+- **`get_vaultis.bat` now ships inside the release**, so an installed copy can update or
+  relocate itself without fetching the script again.
+
+### Fixed
+
+- **The installer would have erased a folder it was pointed at.** It deleted the
+  destination outright and then extracted into it — safe only while the destination was a
+  folder it had created itself. With a folder you can now choose, answering the prompt with
+  `.` from your Downloads folder would have deleted Downloads. The download is now unpacked
+  into a temporary staging folder and only the files the package actually contains are
+  placed at the destination; the staging folder is removed afterwards, including when the
+  install fails.
+
+### Security
+
+- **A vault is never deleted, never overwritten, and never installed into.** Any directory
+  holding `vault.pmv`, `manifest`, `volume` or `vaultis.lock` is left strictly alone, so a
+  vault kept anywhere — including inside an install folder — survives an install or an
+  update untouched. The single exception is this package's own `sample-vault`, the throwaway
+  practice vault, which is **replaced** with the current one on every install: anything you
+  did in it is discarded. It is replaced rather than merged into, deliberately — a
+  half-updated vault (new records file, leftover document partitions from the old one) would
+  not open at all.
+
+### Note
+
+The installer is substantially rewritten and, unlike the program, it is **not covered by the
+test suite** — there is no Windows machine in the development environment, so its logic was
+verified piece by piece rather than by running the real install. If it misbehaves, the
+previous installer is one command away: `get_vaultis.bat v0.2.3`.
+
 ## [0.2.3] — 2026-07-29
 
 ### Added
