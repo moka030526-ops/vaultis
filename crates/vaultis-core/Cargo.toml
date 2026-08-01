@@ -1,6 +1,6 @@
 [package]
 name = "vaultis-core"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 publish = false # private application crate — never published to a registry
 # The headless, security-critical core: data model, on-disk format, crypto, and

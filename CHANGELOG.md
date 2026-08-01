@@ -14,6 +14,30 @@ The full, per-finding security write-up for the hardening work below lives in
 
 Nothing yet.
 
+## [0.2.5] — 2026-08-01
+
+A housekeeping release. **Nothing in the program changed** — no production code was
+touched, so 0.2.4 vaults open in 0.2.5 and the other way round, and the crypto, storage
+and key-derivation paths are identical.
+
+### Changed
+
+- **The test suites moved out of the implementation files.** Eighteen inline
+  `#[cfg(test)]` modules across sixteen files are now separate `*_tests.rs` files, pulled
+  back in by `#[cfg(test)] #[path = "…"] mod tests;`. `vault.rs` was 8092 lines of which
+  58% were tests; it is now 3324.
+
+  They stay *inner* modules rather than moving to `tests/`, because they exercise private
+  items — the vault header parser, the decode path, and storage's untrusted-input frame
+  parsers — which a separate test crate cannot name. Moving them would mean marking those
+  internals `pub` purely to be testable, widening the audited surface for a filing
+  preference.
+
+  Coverage is unchanged and was verified rather than assumed: 728 `#[test]` functions
+  before and after, 717 passing across 18 binaries (including the 24 force-kill
+  crash-recovery tests), `clippy -D warnings` clean, and `cargo mutants` still generates
+  zero mutants inside test code.
+
 ## [0.2.4] — 2026-07-30
 
 An installer release: `get_vaultis.bat` can now be told **where** to put things, and it no
