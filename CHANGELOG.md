@@ -14,6 +14,22 @@ The full, per-finding security write-up for the hardening work below lives in
 
 Nothing yet.
 
+## [0.2.6] — 2026-08-02
+
+A documentation-only release. **Nothing in the program's code changed** — the
+in-app manual (Help) is the only thing touched, so 0.2.5 vaults open in 0.2.6 and
+the other way round, and the crypto, storage and key-derivation paths are
+identical.
+
+### Changed
+
+- **Rewrote the "Backups and recovery" help topic** into "Back up the vault — this
+  is not optional": it now leads with why an offline app makes this computer the
+  only copy, urges keeping backups in more than one physical place, and adds
+  step-by-step instructions for the Config button, a manual folder-by-folder copy
+  (`vault.pmv`, `manifest/`, `volume/`), and scripting `vaultis backup` with
+  cron / Task Scheduler.
+
 ## [0.2.5] — 2026-08-01
 
 A housekeeping release. **Nothing in the program changed** — no production code was

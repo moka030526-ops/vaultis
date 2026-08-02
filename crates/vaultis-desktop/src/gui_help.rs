@@ -1039,7 +1039,7 @@ pub(crate) const TOPICS: &[Topic] = &[
                 "Copies the whole encrypted vault and its document archive into a new, \
                  timestamped folder under whichever destination you give it — that destination box \
                  also accepts a quoted, pasted path. Nothing is decrypted in the process. See \
-                 “Backups and recovery” for the full picture.",
+                 “Back up the vault — this is not optional” for the full picture.",
             ),
             Block::Sub("Storage — volume size"),
             Block::P(
@@ -1059,7 +1059,7 @@ pub(crate) const TOPICS: &[Topic] = &[
                 "Redundancy only protects you against a single DAMAGED file — it does nothing at \
                  all if the disk itself is lost, stolen, or destroyed in a fire. It is a safety net \
                  for corruption, not a substitute for keeping real backups stored somewhere else \
-                 entirely. See “Backups and recovery”.",
+                 entirely. See “Back up the vault — this is not optional”.",
             ),
             Block::Sub("Sync types from records"),
             Block::P(
@@ -1110,21 +1110,57 @@ pub(crate) const TOPICS: &[Topic] = &[
     Topic {
         id: "backups",
         section: "Settings & maintenance",
-        title: "Backups and recovery",
-        blurb: "What to actually copy, how often, and — importantly — the one thing no backup in the world can save you from.",
+        title: "Back up the vault — this is not optional",
+        blurb: "vaultis is deliberately offline, which means this computer alone holds your only copy. What \"backed up\" actually requires, and exactly what to copy if you do it by hand.",
         body: &[
             Block::P(
-                "The Backup button in Config copies the ENTIRE encrypted vault — the record file, \
-                 the manifest, and the whole document archive — into a new, timestamped folder. \
-                 Nothing is decrypted along the way, so a backup is exactly as safe to store \
-                 anywhere as the vault itself already is.",
+                "vaultis never uploads anything, on purpose — that is what makes it safe. But it \
+                 means this one computer holds the only copy of your vault. If this disk dies, this \
+                 laptop is stolen, or this house burns down, and no other copy exists anywhere, \
+                 everything inside is gone as completely as if it had been shredded — there is no \
+                 undo. Backing up is not a step for later; without it, this vault is one accident \
+                 away from being nobody's inheritance at all.",
             ),
-            Block::Sub("A simple routine worth actually following"),
+            Block::Sub("Keep it in more than one place, not just one backup"),
+            Block::P(
+                "A single backup sitting on a USB drive next to the computer protects you from a \
+                 damaged file, but not from a fire, flood, or burglary that takes both at once. Keep \
+                 at least two backup copies on separate physical media, and put at least one of them \
+                 somewhere genuinely apart from this computer — a safe-deposit box, a different \
+                 building, a trusted relative's or your executor's own storage. A backup that lives \
+                 beside the machine it protects is barely better than no backup.",
+            ),
+            Block::Sub("The easy way — the Backup button in Config"),
+            Block::Steps(&[
+                "Open ⚙ Config.",
+                "Under Backup, type or paste the destination folder — a USB drive, external disk, or \
+                 any folder outside this vault's own — the box also accepts a pasted, quoted path.",
+                "Click Backup. vaultis copies the whole encrypted vault into a new, timestamped \
+                 folder under that destination and tells you where it landed. Nothing is decrypted; \
+                 the copy is exactly as protected as the vault itself.",
+            ]),
+            Block::Sub("Doing it by hand, without the button"),
+            Block::P(
+                "A vault is a folder, not a single file, so a manual backup means copying the entire \
+                 folder — never pieces of it. Inside it are three things that only make sense \
+                 together: vault.pmv (the record file), manifest/ (the index of your uploaded \
+                 documents), and volume/ (the documents themselves). Copy all three, with their \
+                 names unchanged, to wherever your backup lives. Leaving even one piece behind — say, \
+                 vault.pmv without volume/ — gives you a vault that opens but is missing every \
+                 attached document. This is the same operation the Backup button performs; doing it \
+                 by hand with your file manager, cp, rsync, or robocopy works exactly as well.",
+            ),
+            Block::Sub("Scripting it — the command line"),
+            Block::P(
+                "`vaultis backup [DIR] DEST` performs this same whole-folder copy, needs no \
+                 passwords, and can be wired into an unattended scheduled job — cron on Linux/macOS, \
+                 Task Scheduler on Windows — so backups happen on a schedule instead of depending on \
+                 remembering to click a button. See “Command line” under Reference.",
+            ),
             Block::Bullets(&[
                 "Back the vault up after any session where you changed something.",
-                "Keep at least one copy on separate physical media from your computer, and ideally one copy off-site entirely (a different building, a safe-deposit box, a trusted relative's house).",
-                "Always back up the whole vault FOLDER, not pieces of it. A vault.pmv file without its matching volume/ folder has your records but none of your actual documents.",
-                "Test a backup every so often by opening it read-only, just to confirm it actually works. A backup you have never tested opening is a hope, not a real backup.",
+                "Test a backup every so often by opening it read-only, just to confirm it actually \
+                 works. A backup you have never tested opening is a hope, not a real backup.",
             ]),
             Block::Warn(
                 "Your two passwords are NOT stored inside the backup — they never are, anywhere. A \
