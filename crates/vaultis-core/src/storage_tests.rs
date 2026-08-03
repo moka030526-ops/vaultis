@@ -1302,9 +1302,12 @@ fn turning_redundancy_off_removes_the_manifest_spares() {
     s.put("a", "/a", b"body", 1, &key).unwrap();
     let mirror = dir.join("manifest").join("manifest.0.mirror");
     assert!(mirror.exists());
+    // Recording the depth is side-effect-free (audit 2026-08-03 A-1) — the next manifest
+    // commit is what clears the spare, and later writes never bring it back.
     s.set_redundancy(0);
-    assert!(!mirror.exists(), "the spare is deleted the moment redundancy is turned off");
     s.put("b", "/b", b"body", 1, &key).unwrap();
+    assert!(!mirror.exists(), "the next commit clears the spare once redundancy is off");
+    s.put("c", "/c", b"body", 1, &key).unwrap();
     assert!(!mirror.exists(), "and later writes do not bring it back");
 }
 
@@ -1368,4 +1371,105 @@ fn a_stale_spare_manifest_takes_the_newer_frame_for_a_repeated_id() {
     let s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
     assert_eq!(s.ids().count(), 1, "one id, not two entries for it");
     assert_eq!(&*s.read("a", &key).unwrap(), b"second-version", "the newer frame wins");
+}
+
+/// AUDIT 2026-08-03 A-2: a resync must not read unboundedly.
+///
+/// The attempt cap bounds how MANY decrypt attempts a damaged region costs, but not how
+/// big each one is, and a frame may legitimately be up to `MAX_DOC_SIZE`. A volume whose
+/// bytes all decode as plausible large lengths — crafted, or a big file damaged across a
+/// wide region — cost 128 attempts of up to 64 MiB each, ~8 GiB of reads per damaged
+/// region (measured: 3.3 s for a 64 MiB volume, growing with the file).
+/// `RESYNC_READ_BUDGET` bounds the bytes instead.
+///
+/// Asserted by COUNTING the bytes the scan reads rather than by timing it: the bound is
+/// a property of the code, and a wall-clock assertion would really be measuring the disk
+/// and whatever else the machine is running.
+#[test]
+fn a_crafted_volume_cannot_make_a_rebuild_read_unboundedly() {
+    /// A `Read + Seek` that tallies every byte handed out.
+    struct Counting {
+        inner: std::io::Cursor<Vec<u8>>,
+        bytes: u64,
+    }
+    impl Read for Counting {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.bytes += n as u64;
+            Ok(n)
+        }
+    }
+    impl Seek for Counting {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    // 64 MiB where every 4-byte window decodes to a large, in-range, in-file frame
+    // length (0x00300000 = 3 MiB), so every candidate offset looks plausible and each
+    // decrypt attempt must read 3 MiB before the AEAD rejects it.
+    let mut buf = Vec::with_capacity(64 * 1024 * 1024);
+    while buf.len() < 64 * 1024 * 1024 {
+        buf.extend_from_slice(&[0x00, 0x00, 0x30, 0x00]);
+    }
+    let len = buf.len() as u64;
+    let mut f = Counting { inner: std::io::Cursor::new(buf), bytes: 0 };
+    let key = fast_key();
+    let m = scan_volume(&mut f, len, &key, &volume_aad("v", 0));
+
+    assert!(m.entries.is_empty(), "nothing in this volume authenticates");
+    // Budget, plus one frame of overshoot (the in-flight attempt is always allowed to
+    // finish), plus the 64 KiB window read itself and some slack for prefix reads.
+    let ceiling = RESYNC_READ_BUDGET + MAX_DOC_SIZE + 1024 * 1024;
+    assert!(
+        f.bytes < ceiling,
+        "a crafted volume made the rebuild read {} bytes (ceiling {ceiling})",
+        f.bytes
+    );
+}
+
+/// The budget must not cost a legitimate large document its recovery: damage that takes
+/// out a frame's length prefix, followed by a genuinely big frame, must still resync.
+#[test]
+fn the_resync_budget_still_recovers_a_large_document() {
+    let dir = tmp_dir("resync-budget-large");
+    let key = fast_key();
+    let mut s = VolumeStore::open(&dir, &key, "v", u64::MAX).unwrap();
+    s.put("small", "/small", b"x", 1, &key).unwrap();
+    let big = vec![0xC3u8; 12 * 1024 * 1024]; // comfortably past RESYNC_READ_BUDGET
+    s.put("big", "/big", &big, 2, &key).unwrap();
+    let frames: Vec<(u64, u64)> = s.manifests[0].entries.iter().map(|e| (e.offset, e.length)).collect();
+    drop(s);
+
+    // Damage the SMALL frame's length prefix, so the fast path (step over the damaged
+    // frame by its own length) has nothing usable and the byte-wise walk has to find
+    // the large frame that follows. A frame whose own prefix is destroyed is gone for
+    // good — the scan cannot know its size — so the damage goes on the small one.
+    corrupt_volume(&dir, frames[0].0, 8);
+    std::fs::remove_file(dir.join("manifest").join("manifest.0")).unwrap();
+
+    let s = VolumeStore::open(&dir, &key, "v", u64::MAX).unwrap();
+    let ids: Vec<&str> = s.ids().collect();
+    assert!(ids.contains(&"big"), "a large frame after the damage must still be found: {ids:?}");
+    assert_eq!(s.read("big", &key).unwrap().len(), 12 * 1024 * 1024);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// AUDIT 2026-08-03 A-1: the spare copies are removed only by an explicit call, so
+/// `set_redundancy` cannot delete anything — which is what makes it safe for
+/// `open_inner` to call on a read-only open.
+#[test]
+fn setting_the_redundancy_depth_never_deletes_anything() {
+    let dir = tmp_dir("redundancy-no-side-effect");
+    let key = fast_key();
+    let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    s.set_redundancy(1);
+    s.put("a", "/a", b"body", 1, &key).unwrap();
+    let mirror = dir.join("manifest").join("manifest.0.mirror");
+    assert!(mirror.exists());
+    s.set_redundancy(0);
+    assert!(mirror.exists(), "recording the depth must not touch the disk");
+    s.drop_manifest_mirrors();
+    assert!(!mirror.exists(), "the explicit call is what removes them");
+    std::fs::remove_dir_all(&dir).ok();
 }
