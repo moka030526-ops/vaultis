@@ -129,6 +129,45 @@ cargo mutants -p vaultis-core                            # a full-crate round (h
 A surviving mutant is a lead: either a missing assertion, or a genuinely equivalent
 mutant. Say which, and write the kill-test for the former.
 
+**Run it in chunks, and reclaim disk between them.** `cargo-mutants` rebuilds the crate
+per mutant, and a full matrix run has already left `target/` at tens of gigabytes by the
+time the audit reaches this phase. The 2026-08-03 round lost a mutation run to a
+full-disk linker failure at 25 of 77 mutants and had to report the round as partial —
+which is the outcome this exists to prevent. Check headroom *before* starting, and chunk
+the run so a stall costs one chunk rather than the whole thing:
+
+```bash
+df -h .                                    # < ~25 GiB free? clean before starting, not after
+cargo clean -p vaultis -p vaultis-core -p vaultis-ffi   # keeps third-party deps compiled
+rm -rf target/debug/incremental target/release/incremental
+
+# Count the mutants first (--list builds nothing), then work through them in shards,
+# reclaiming disk between each. Shards are 0-INDEXED: with n=4 they are 0/4 .. 3/4,
+# and `--shard 4/4` is an error.
+total=$(cargo mutants --in-diff /tmp/round.diff -p vaultis-core --list | wc -l)
+chunks=$(( (total + 19) / 20 ))            # ~20 mutants per chunk
+mkdir -p /tmp/mutants-chunks
+for i in $(seq 0 $((chunks - 1))); do
+    cargo mutants --in-diff /tmp/round.diff -p vaultis-core --timeout 300 --shard "$i/$chunks"
+    for f in caught missed unviable timeout; do
+        cp "mutants.out/$f.txt" "/tmp/mutants-chunks/$i-$f.txt" 2>/dev/null
+    done
+    rm -rf target/debug/incremental        # the fastest-growing part
+    df -h . | tail -1                      # stop early if this is still falling
+done
+cat /tmp/mutants-chunks/*-missed.txt       # the round's actual survivors
+```
+
+`--shard i/n` slices the same mutant list deterministically, so the shards together cover
+exactly the set `--list` counted. **`mutants.out/` is overwritten by every run** — copy
+`caught.txt` / `missed.txt` out between chunks, or the earlier chunks' results are gone and
+the round cannot state its own totals.
+
+If a run is stopped early anyway, report it as partial with the exact count tested
+(`Found N mutants` in the log, versus the lines in `caught.txt` + `missed.txt` +
+`unviable.txt`), and do **not** repeat this project's "no surviving mutant" claim on a
+partial run — that claim reads as coverage the round did not get.
+
 Optional but valuable when the round touches the crypto or storage core:
 
 ```bash
