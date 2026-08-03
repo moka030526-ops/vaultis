@@ -488,8 +488,17 @@ fn wrong_key_cannot_read_blob() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A single flipped bit mid-volume, with the manifest gone, must cost exactly the frame
+/// it landed in.
+///
+/// This test used to assert the opposite — that the rebuild STOPPED there, discarding
+/// every later frame as well. That was safe but needlessly lossy: those frames are
+/// intact and authentic, and dropping them from the index is what turns one bad byte
+/// into a vault that will not open (a record still pointing at a dropped document fails
+/// the `referenced ⊆ stored` check). The scan now steps over the damage and carries on,
+/// admitting only frames that pass their AEAD tag.
 #[test]
-fn mid_file_corrupt_frame_stops_rebuild_at_last_good() {
+fn mid_file_corrupt_frame_is_skipped_and_later_frames_still_recover() {
     let dir = tmp_dir("midcorrupt");
     let key = fast_key();
     let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
@@ -512,7 +521,9 @@ fn mid_file_corrupt_frame_stops_rebuild_at_last_good() {
     std::fs::write(dir.join("manifest/manifest.0"), b"x").unwrap();
     let s2 = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
     assert!(s2.contains("a"), "frames before the corruption recover");
-    assert!(!s2.contains("b") && !s2.contains("c"), "the scan stops at the corrupt frame");
+    assert!(!s2.contains("b"), "the corrupt frame itself is never admitted");
+    assert!(s2.contains("c"), "the scan resynchronises past the damage instead of giving up");
+    assert_eq!(&*s2.read("c", &key).unwrap(), b"charlie", "and the recovered frame really reads");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -1114,4 +1125,247 @@ fn mut_harden_file_chmods_to_0600() {
         "harden_file_fd must chmod the file to 0600"
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Byte offsets of every frame in partition 0, in order, plus the file length — so a
+/// test can aim damage at a frame's middle or exactly across a frame boundary.
+fn frame_offsets(dir: &Path, key: &Key, vault_id: &str) -> (Vec<(u64, u64)>, u64) {
+    let path = dir.join("volume").join("vol.0");
+    let len = std::fs::metadata(&path).unwrap().len();
+    let mut f = File::open(&path).unwrap();
+    let m = scan_volume(&mut f, len, key, &volume_aad(vault_id, 0));
+    (m.entries.iter().map(|e| (e.offset, e.length)).collect(), len)
+}
+
+/// Overwrite `len` bytes at `at` in partition 0's volume with garbage — simulating rot,
+/// a torn write, or a bad sector.
+fn corrupt_volume(dir: &Path, at: u64, len: usize) {
+    let path = dir.join("volume").join("vol.0");
+    let mut f = OpenOptions::new().write(true).open(&path).unwrap();
+    f.seek(SeekFrom::Start(at)).unwrap();
+    f.write_all(&vec![0xEE; len]).unwrap();
+    f.sync_all().unwrap();
+}
+
+/// Damage INSIDE one document's frame, with the manifest intact.
+///
+/// The manifest gives every document an exact offset and length, so the store never has
+/// to guess where anything lives: the damaged document fails its authentication check
+/// and reports corrupt, and every other document reads normally. Nothing else is lost —
+/// the manifest itself is untouched, so all four documents stay indexed and the vault
+/// still opens.
+#[test]
+fn corruption_inside_one_frame_costs_only_that_document() {
+    let dir = tmp_dir("rot-in-frame");
+    let key = fast_key();
+    let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    for (id, body) in [("a", b'A'), ("b", b'B'), ("c", b'C'), ("d", b'D')] {
+        s.put(id, &format!("/{id}"), &vec![body; 500], 1, &key).unwrap();
+    }
+    drop(s);
+
+    // Aim at the middle of the SECOND frame's ciphertext.
+    let (frames, _) = frame_offsets(&dir, &key, "v");
+    let (off, len) = frames[1];
+    corrupt_volume(&dir, off + len / 2, 32);
+
+    let s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    assert_eq!(s.ids().count(), 4, "the manifest is intact, so every document is still indexed");
+    assert!(s.read("b", &key).is_err(), "the damaged document fails its authentication check");
+    for id in ["a", "c", "d"] {
+        assert_eq!(s.read(id, &key).unwrap().len(), 500, "{id} is unaffected by damage to another frame");
+    }
+}
+
+/// Damage SPANNING the boundary between two frames, with the manifest intact.
+///
+/// Both frames the damage touches are lost — one loses ciphertext, the next loses the
+/// length prefix that says how big it is — but the manifest's stored offsets mean the
+/// frames after them are still addressed exactly, so they read normally.
+#[test]
+fn corruption_across_a_frame_boundary_costs_only_the_two_frames_it_touches() {
+    let dir = tmp_dir("rot-boundary");
+    let key = fast_key();
+    let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    for (id, body) in [("a", b'A'), ("b", b'B'), ("c", b'C'), ("d", b'D')] {
+        s.put(id, &format!("/{id}"), &vec![body; 500], 1, &key).unwrap();
+    }
+    drop(s);
+
+    // Straddle the b/c boundary: the last bytes of b's frame and the first of c's
+    // (c's 4-byte length prefix included).
+    let (frames, _) = frame_offsets(&dir, &key, "v");
+    let boundary = frames[1].0 + frames[1].1;
+    assert_eq!(boundary, frames[2].0, "frames are contiguous, so this really is the boundary");
+    corrupt_volume(&dir, boundary - 16, 32);
+
+    let s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    assert_eq!(s.ids().count(), 4, "the manifest is intact, so every document is still indexed");
+    assert!(s.read("b", &key).is_err(), "the frame whose tail was hit is unreadable");
+    assert!(s.read("c", &key).is_err(), "the frame whose head was hit is unreadable");
+    assert_eq!(s.read("a", &key).unwrap().len(), 500, "the frame before the damage is fine");
+    assert_eq!(s.read("d", &key).unwrap().len(), 500, "the frame after the damage is fine");
+}
+
+/// The same in-frame damage with the manifest ALSO lost — the case that has to fall back
+/// to scanning the volume. The scan must step over the damaged frame and keep going:
+/// before it did, one rotted frame discarded every LATER frame too, and any record still
+/// pointing at one of them made the whole vault refuse to open.
+#[test]
+fn rebuild_steps_over_a_damaged_frame_instead_of_stopping() {
+    let dir = tmp_dir("rebuild-in-frame");
+    let key = fast_key();
+    let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    for (id, body) in [("a", b'A'), ("b", b'B'), ("c", b'C'), ("d", b'D')] {
+        s.put(id, &format!("/{id}"), &vec![body; 500], 1, &key).unwrap();
+    }
+    drop(s);
+
+    let (frames, _) = frame_offsets(&dir, &key, "v");
+    let (off, len) = frames[1];
+    corrupt_volume(&dir, off + len / 2, 32);
+    std::fs::remove_file(dir.join("manifest").join("manifest.0")).unwrap();
+
+    let s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    let ids: Vec<&str> = s.ids().collect();
+    assert!(!ids.contains(&"b"), "the damaged frame cannot be recovered: {ids:?}");
+    for id in ["a", "c", "d"] {
+        assert!(ids.contains(&id), "{id} must survive damage to an unrelated frame: {ids:?}");
+        assert_eq!(s.read(id, &key).unwrap().len(), 500);
+    }
+}
+
+/// Rebuilding when the damage spans a frame BOUNDARY — the harder resync. The next
+/// frame's own length prefix is part of the damage, so stepping over it by length is
+/// impossible; the scan has to find the following frame by looking for one that
+/// authenticates.
+#[test]
+fn rebuild_resyncs_after_damage_spanning_two_frames() {
+    let dir = tmp_dir("rebuild-boundary");
+    let key = fast_key();
+    let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    for (id, body) in [("a", b'A'), ("b", b'B'), ("c", b'C'), ("d", b'D')] {
+        s.put(id, &format!("/{id}"), &vec![body; 500], 1, &key).unwrap();
+    }
+    drop(s);
+
+    let (frames, _) = frame_offsets(&dir, &key, "v");
+    let boundary = frames[1].0 + frames[1].1;
+    corrupt_volume(&dir, boundary - 16, 32);
+    std::fs::remove_file(dir.join("manifest").join("manifest.0")).unwrap();
+
+    let s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    let ids: Vec<&str> = s.ids().collect();
+    assert!(!ids.contains(&"b") && !ids.contains(&"c"), "both damaged frames are gone: {ids:?}");
+    assert!(ids.contains(&"a"), "the frame before the damage survives: {ids:?}");
+    assert!(ids.contains(&"d"), "the scan resynchronised past the damage: {ids:?}");
+    assert_eq!(s.read("d", &key).unwrap().len(), 500, "and the recovered entry really reads");
+}
+
+/// With redundancy on, a manifest that is lost or damaged is recovered from its spare
+/// copy — which holds the SAME entries, so nothing is lost at all. That is the whole
+/// point of keeping it: the fallback (scanning the volume) can only index frames it can
+/// still read, so it would have dropped the document sitting in the damaged frame.
+#[test]
+fn a_lost_manifest_is_recovered_from_its_spare_not_a_lossy_scan() {
+    let dir = tmp_dir("manifest-spare");
+    let key = fast_key();
+    let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    s.set_redundancy(1);
+    for (id, body) in [("a", b'A'), ("b", b'B'), ("c", b'C')] {
+        s.put(id, &format!("/{id}"), &vec![body; 500], 1, &key).unwrap();
+    }
+    drop(s);
+    assert!(dir.join("manifest").join("manifest.0.mirror").exists(), "the spare is written beside the manifest");
+
+    // Lose the manifest AND damage a frame, so a scan-based rebuild would drop "b".
+    let (frames, _) = frame_offsets(&dir, &key, "v");
+    corrupt_volume(&dir, frames[1].0 + frames[1].1 / 2, 32);
+    std::fs::remove_file(dir.join("manifest").join("manifest.0")).unwrap();
+
+    let s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    let ids: Vec<&str> = s.ids().collect();
+    assert_eq!(ids.len(), 3, "the spare restored every entry, including the damaged one: {ids:?}");
+    assert!(s.read("b", &key).is_err(), "its bytes are still damaged — the index is what was recovered");
+    assert_eq!(s.read("a", &key).unwrap().len(), 500);
+    assert_eq!(s.read("c", &key).unwrap().len(), 500);
+}
+
+/// Turning redundancy off removes the spares, so the setting genuinely stops leaving
+/// extra encrypted copies of the index on disk.
+#[test]
+fn turning_redundancy_off_removes_the_manifest_spares() {
+    let dir = tmp_dir("manifest-spare-off");
+    let key = fast_key();
+    let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    s.set_redundancy(2);
+    s.put("a", "/a", b"body", 1, &key).unwrap();
+    let mirror = dir.join("manifest").join("manifest.0.mirror");
+    assert!(mirror.exists());
+    s.set_redundancy(0);
+    assert!(!mirror.exists(), "the spare is deleted the moment redundancy is turned off");
+    s.put("b", "/b", b"body", 1, &key).unwrap();
+    assert!(!mirror.exists(), "and later writes do not bring it back");
+}
+
+/// A spare manifest that LAGS the volume must not cost the newer documents.
+///
+/// The live manifest is committed first and the spare written after it, so a failure in
+/// that gap leaves a spare describing one commit ago while the volume already holds the
+/// newer frames. Recovering from it verbatim would drop those documents from the index —
+/// and worse, its short `end_offset` is the next append point, so the following upload
+/// would overwrite frames that are still perfectly good. The region the spare does not
+/// cover is scanned and merged instead.
+#[test]
+fn a_stale_spare_manifest_is_topped_up_from_the_volume() {
+    let dir = tmp_dir("manifest-spare-stale");
+    let key = fast_key();
+    let mirror = dir.join("manifest").join("manifest.0.mirror");
+
+    let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    s.set_redundancy(1);
+    s.put("a", "/a", b"alpha", 1, &key).unwrap();
+    // Keep the spare as it stands now — this is the "spare write failed" state.
+    let stale = std::fs::read(&mirror).unwrap();
+    s.put("b", "/b", b"bravo", 2, &key).unwrap();
+    s.put("c", "/c", b"charlie", 3, &key).unwrap();
+    let true_end = s.manifests[0].end_offset;
+    drop(s);
+
+    // Live manifest lost, spare frozen at the state after "a" only.
+    std::fs::write(&mirror, &stale).unwrap();
+    std::fs::remove_file(dir.join("manifest").join("manifest.0")).unwrap();
+
+    let s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    let ids: Vec<&str> = s.ids().collect();
+    assert_eq!(ids.len(), 3, "the frames the stale spare did not know about were merged in: {ids:?}");
+    assert_eq!(&*s.read("b", &key).unwrap(), b"bravo");
+    assert_eq!(&*s.read("c", &key).unwrap(), b"charlie");
+    assert_eq!(
+        s.manifests[0].end_offset, true_end,
+        "the append point must land past the newest frame, never inside it"
+    );
+}
+
+/// The same lag, but the newer frame is an UPDATE of a document the stale spare already
+/// lists: the merged entry must be the newer frame, not the one the spare remembers.
+#[test]
+fn a_stale_spare_manifest_takes_the_newer_frame_for_a_repeated_id() {
+    let dir = tmp_dir("manifest-spare-stale-update");
+    let key = fast_key();
+    let mirror = dir.join("manifest").join("manifest.0.mirror");
+
+    let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    s.set_redundancy(1);
+    s.put("a", "/a", b"first-version", 1, &key).unwrap();
+    let stale = std::fs::read(&mirror).unwrap();
+    s.put("a", "/a", b"second-version", 2, &key).unwrap(); // appends a newer frame
+    drop(s);
+
+    std::fs::write(&mirror, &stale).unwrap();
+    std::fs::remove_file(dir.join("manifest").join("manifest.0")).unwrap();
+
+    let s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    assert_eq!(s.ids().count(), 1, "one id, not two entries for it");
+    assert_eq!(&*s.read("a", &key).unwrap(), b"second-version", "the newer frame wins");
 }

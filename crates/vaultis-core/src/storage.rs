@@ -163,6 +163,14 @@ pub struct VolumeStore {
     manifests: Vec<Manifest>,
     /// id -> location, rebuilt from `manifests` after each change.
     index: BTreeMap<String, Located>,
+    /// The vault's in-place redundancy depth (§12.8), mirrored here so a manifest
+    /// commit knows whether to keep a spare copy beside it. `0` = off, the default.
+    /// Set by the vault after opening (see [`VolumeStore::set_redundancy`]) — the
+    /// value itself lives in `vault.settings.redundancy`, which this layer cannot see.
+    ///
+    /// Only the WRITE side consults it: recovery always tries an existing spare,
+    /// whatever the setting says now, because a spare on disk can only help.
+    redundancy: u32,
 }
 
 // `impl VolumeStore { .. }` attaches methods to the struct. Methods taking `&self`
@@ -186,6 +194,7 @@ impl VolumeStore {
             max_size: max_size.max(1),      // clamp to >= 1 to avoid a zero cap
             manifests: Vec::new(),          // empty growable vec
             index: BTreeMap::new(),         // empty ordered map
+            redundancy: 0,                  // off until the vault tells us otherwise
         };
 
         // Load contiguous partitions 0,1,2,... stopping at the first absent one.
@@ -218,7 +227,7 @@ impl VolumeStore {
                 Err(StorageError::Corrupt(_) | StorageError::Crypto(_) | StorageError::Json(_))
                     if vpath.exists() =>
                 {
-                    store.rebuild_manifest(part, key)?
+                    store.recover_manifest(part, key)?
                 }
                 // A *missing* manifest (file absent) but present volume → also rebuild.
                 // But a manifest that IS present and failed for a transient/operational
@@ -226,7 +235,7 @@ impl VolumeStore {
                 // propagate it rather than discard a valid manifest — and its
                 // authoritative `end_offset` — via a lossy volume scan that silently
                 // drops every frame past the first unreadable one.
-                Err(_) if vpath.exists() && !mpath.exists() => store.rebuild_manifest(part, key)?,
+                Err(_) if vpath.exists() && !mpath.exists() => store.recover_manifest(part, key)?,
                 Err(e) => return Err(e),
             };
             store.manifests.push(manifest); // append to the vec
@@ -262,6 +271,44 @@ impl VolumeStore {
     }
     fn volume_path(&self, part: u32) -> PathBuf {
         self.volume_dir.join(format!("vol.{part}"))
+    }
+
+    /// The spare copy of partition `part`'s manifest, kept beside it when redundancy
+    /// is on (§12.8). Same contents as the live file, encrypted independently (its own
+    /// random nonce), so one damaged sector cannot land on the same bytes in both.
+    fn manifest_mirror_path(&self, part: u32) -> PathBuf {
+        self.manifest_dir.join(format!("manifest.{part}.mirror"))
+    }
+
+    /// Set the in-place redundancy depth this store writes at (`0` = off). Called by
+    /// the vault after opening and whenever the setting changes; turning it off also
+    /// removes the spares, so disabling the feature stops leaving copies on disk.
+    pub fn set_redundancy(&mut self, depth: u32) {
+        self.redundancy = depth;
+        if depth == 0 {
+            self.drop_manifest_mirrors();
+        }
+    }
+
+    /// Remove every partition's spare manifest (redundancy turned off, or the copies
+    /// are about to be rewritten under a new key). Best-effort by design: a spare that
+    /// cannot be deleted is stale, not dangerous — recovery AEAD-verifies what it uses.
+    pub fn drop_manifest_mirrors(&self) {
+        for part in 0..self.manifests.len() as u32 {
+            let _ = fs::remove_file(self.manifest_mirror_path(part));
+        }
+    }
+
+    /// Rewrite every partition's spare manifest from the loaded manifests. Used after a
+    /// rekey/compaction commit so the configured protection is back immediately rather
+    /// than at the next document write, mirroring `OpenVault::refresh_redundancy_copies`.
+    pub fn refresh_manifest_mirrors(&self, key: &Key) {
+        if self.redundancy == 0 {
+            return;
+        }
+        for (part, manifest) in self.manifests.iter().enumerate() {
+            self.write_manifest_mirror(part as u32, manifest, key);
+        }
     }
 
     /// Rebuild the in-memory id → location index from the loaded manifests.
@@ -541,7 +588,13 @@ impl VolumeStore {
     // --- Manifest I/O --------------------------------------------------------
 
     fn load_manifest(&self, part: u32, key: &Key) -> Result<Manifest, StorageError> {
-        let path = self.manifest_path(part);
+        self.load_manifest_at(&self.manifest_path(part), part, key)
+    }
+
+    /// Load a manifest for partition `part` from an explicit `path` — the live
+    /// `manifest.<part>` or its spare copy. The AEAD binds vault id + partition, not the
+    /// filename, so the spare verifies under exactly the same AAD as the file it copies.
+    fn load_manifest_at(&self, path: &Path, part: u32, key: &Key) -> Result<Manifest, StorageError> {
         // Reject a symlinked manifest and CAP THE READ ITSELF — not just a pre-stat. A plain
         // `fs::metadata` cap + `fs::read` both FOLLOW a symlink and leave a stat-then-read
         // gap: a `manifest.N` swapped for a symlink to `/dev/zero` (whose stat size is 0, so
@@ -549,14 +602,14 @@ impl VolumeStore {
         // `symlink_metadata` does not follow the link (cheap early reject + over-size reject
         // without a big read); the bounded O_NOFOLLOW read closes the residual open-time
         // TOCTOU, matching `vault::read_bounded` and `append_frame`.
-        let meta = fs::symlink_metadata(&path)?;
+        let meta = fs::symlink_metadata(path)?;
         if meta.file_type().is_symlink() {
             return Err(StorageError::Corrupt(format!("manifest.{part} is a symlink")));
         }
         if meta.len() > MAX_MANIFEST_SIZE {
             return Err(StorageError::TooLarge);
         }
-        let raw = read_file_bounded_nofollow(&path, MAX_MANIFEST_SIZE)?;
+        let raw = read_file_bounded_nofollow(path, MAX_MANIFEST_SIZE)?;
         if raw.len() < NONCE_LEN {
             return Err(StorageError::Corrupt(format!("manifest.{part} truncated")));
         }
@@ -577,9 +630,10 @@ impl VolumeStore {
         Ok(manifest)
     }
 
-    /// Write `manifest.<part>` atomically: temp → fsync → rename → fsync dir.
-    fn commit_manifest(&self, part: u32, manifest: &Manifest, key: &Key) -> Result<(), StorageError> {
-        self.ensure_dirs()?;
+    /// Encrypt `manifest` for partition `part` into its on-disk form (`nonce ‖ ciphertext`).
+    /// Called once per copy so the live file and its spare each get a FRESH random nonce —
+    /// two independent ciphertexts of the same contents, never a byte-for-byte duplicate.
+    fn encode_manifest(&self, part: u32, manifest: &Manifest, key: &Key) -> Result<Vec<u8>, StorageError> {
         let plain = Zeroizing::new(serde_json::to_vec(manifest)?); // serialize to JSON bytes, wiped after
         // `random_bytes::<NONCE_LEN>()` is a generic call: `::<N>` picks the array
         // length at compile time, returning `[u8; NONCE_LEN]`.
@@ -589,7 +643,92 @@ impl VolumeStore {
         let mut blob = Vec::with_capacity(NONCE_LEN + ct.len());
         blob.extend_from_slice(&nonce); // on-disk layout: nonce ‖ ciphertext
         blob.extend_from_slice(&ct);
-        write_atomic(&self.manifest_path(part), &blob) // last expression = return value (no `;`)
+        Ok(blob)
+    }
+
+    /// Write `manifest.<part>` atomically: temp → fsync → rename → fsync dir.
+    ///
+    /// That rename is the storage layer's commit point. The spare copy is written only
+    /// AFTER it succeeds, so a failed commit can never leave a spare that is newer than
+    /// the manifest it stands in for — the same ordering `save_internal` uses for the
+    /// vault file's own copies. Keeping the spare is best-effort: it must not fail a
+    /// document write, because the authoritative manifest is already durable by then.
+    fn commit_manifest(&self, part: u32, manifest: &Manifest, key: &Key) -> Result<(), StorageError> {
+        self.ensure_dirs()?;
+        let blob = self.encode_manifest(part, manifest, key)?;
+        write_atomic(&self.manifest_path(part), &blob)?;
+        if self.redundancy > 0 {
+            self.write_manifest_mirror(part, manifest, key);
+        } else {
+            // Redundancy off: drop any spare left over from when it was on, so the
+            // setting genuinely stops leaving extra encrypted copies on disk.
+            let _ = fs::remove_file(self.manifest_mirror_path(part));
+        }
+        Ok(())
+    }
+
+    /// Best-effort spare copy of a just-committed manifest. Errors are dropped on
+    /// purpose — see [`Self::commit_manifest`].
+    fn write_manifest_mirror(&self, part: u32, manifest: &Manifest, key: &Key) {
+        if let Ok(blob) = self.encode_manifest(part, manifest, key) {
+            let _ = write_atomic(&self.manifest_mirror_path(part), &blob);
+        }
+    }
+
+    /// Get partition `part`'s manifest back when the live file is unusable (missing,
+    /// corrupt, or written under a key it does not verify against).
+    ///
+    /// Prefers the spare copy: it holds the SAME contents as the file it replaces, so
+    /// recovering from it loses nothing at all. Rebuilding from the volume is the
+    /// fallback, and a lossier one — the scan can only index frames it can still read,
+    /// so damage in the volume costs entries the spare would have kept.
+    ///
+    /// A spare is accepted only if it agrees with the volume it indexes: `end_offset`
+    /// past the end of the volume file would send the next append into a hole beyond
+    /// EOF, so such a copy is rejected in favour of the scan.
+    ///
+    /// A spare may also be BEHIND the volume. The live manifest is committed first and
+    /// the spare written after it, so a failure (or a crash) in that gap leaves a spare
+    /// describing one commit ago while the volume already holds the newer frames. Taking
+    /// it at face value would be the worst kind of wrong: its short `end_offset` is the
+    /// next append point, so the following upload would overwrite those newer frames, and
+    /// any record pointing at one of them would fail the open-time `referenced ⊆ stored`
+    /// check first. So the region the spare does not cover is scanned and merged in.
+    fn recover_manifest(&self, part: u32, key: &Key) -> Result<Manifest, StorageError> {
+        let volume_len = fs::metadata(self.volume_path(part)).map(|m| m.len()).unwrap_or(0);
+        if let Ok(mut m) = self.load_manifest_at(&self.manifest_mirror_path(part), part, key)
+            && m.end_offset <= volume_len
+        {
+            if m.end_offset < volume_len {
+                self.merge_volume_tail(&mut m, part, key)?;
+            }
+            return Ok(m);
+        }
+        self.rebuild_manifest(part, key)
+    }
+
+    /// Scan the volume past `m.end_offset` and fold whatever authentic frames are there
+    /// into `m`, so a spare manifest that lags the volume still yields the complete
+    /// index. Later frames win for a repeated id (an update appends a newer frame), which
+    /// is the same last-write-wins rule [`scan_volume`] applies within a scan.
+    fn merge_volume_tail(&self, m: &mut Manifest, part: u32, key: &Key) -> Result<(), StorageError> {
+        let mut f = File::open(self.volume_path(part))?;
+        let file_len = f.metadata()?.len();
+        let aad = volume_aad(&self.vault_id, part);
+        let tail = scan_volume_from(&mut f, file_len, m.end_offset, key, &aad);
+        for e in tail.entries {
+            m.entries.retain(|x| x.id != e.id); // the newer frame supersedes the older entry
+            m.entries.push(e);
+        }
+        // Never move the append point backwards: `max` keeps it at the end of the last
+        // frame either source could see.
+        m.end_offset = m.end_offset.max(tail.end_offset);
+        // The same cap `load_manifest` and the rebuild enforce — a merge must not be the
+        // one path that admits an over-count manifest into memory.
+        if m.entries.len() > MAX_MANIFEST_ENTRIES {
+            return Err(StorageError::TooLarge);
+        }
+        Ok(())
     }
 
     /// Reconstruct a partition manifest by scanning its self-describing volume up
@@ -631,7 +770,17 @@ fn reject_over_cap(manifest: Manifest, max_entries: usize) -> Result<Manifest, S
 // that can be read and seeked (a real `File`, or an in-memory `Cursor` in tests/fuzz).
 // Returns a `Manifest` directly (never errors): it stops at the first bad frame.
 fn scan_volume<R: Read + Seek>(f: &mut R, file_len: u64, key: &Key, aad: &[u8]) -> Manifest {
-    let mut offset = 0u64;
+    scan_volume_from(f, file_len, 0, key, aad)
+}
+
+/// [`scan_volume`] starting at an arbitrary `start` offset rather than the beginning.
+///
+/// Used to read only the region a recovered manifest does not already account for —
+/// see [`VolumeStore::merge_volume_tail`]. Frames are self-describing and never move,
+/// so a scan that begins at a frame boundary is exactly as sound as one from byte 0.
+fn scan_volume_from<R: Read + Seek>(f: &mut R, file_len: u64, start: u64, key: &Key, aad: &[u8]) -> Manifest {
+    let mut offset = start;
+    let mut resyncs = 0u32; // damaged regions stepped over so far (bounded, see MAX_RESYNCS)
     // Last write wins for a repeated id (updates append a newer frame).
     let mut latest: BTreeMap<String, ManifestEntry> = BTreeMap::new(); // id -> newest entry seen
     let mut order: Vec<String> = Vec::new(); // preserve first-seen order of ids
@@ -657,8 +806,21 @@ fn scan_volume<R: Read + Seek>(f: &mut R, file_len: u64, key: &Key, aad: &[u8]) 
                 }
                 offset += frame_len; // advance to the next frame
             }
-            // Torn/garbage/foreign frame → end of valid data.
-            Err(_) => break, // `_` matches any error without naming it
+            // A frame that will not decrypt. It used to end the scan outright, which
+            // meant one rotted frame in the middle of a volume cost every LATER frame
+            // too — they are intact on disk, but nothing indexes them any more, and a
+            // record still pointing at one of them makes the whole vault refuse to open.
+            // Step over the damage instead and carry on; `resync_to_next_frame` only
+            // returns an offset whose frame actually passes its AEAD tag, so nothing
+            // unauthenticated can be admitted by resyncing.
+            Err(_) => {
+                if resyncs >= MAX_RESYNCS {
+                    break; // a volume this damaged is a restore-from-backup case
+                }
+                let Some(next) = resync_to_next_frame(f, file_len, offset, key, aad) else { break };
+                resyncs += 1;
+                offset = next;
+            }
         }
     }
     // Reassemble entries in first-seen order: `into_iter()` consumes `order` (moving
@@ -666,6 +828,88 @@ fn scan_volume<R: Read + Seek>(f: &mut R, file_len: u64, key: &Key, aad: &[u8]) 
     // `collect()` gathers the results into a Vec.
     let entries: Vec<ManifestEntry> = order.into_iter().filter_map(|id| latest.remove(&id)).collect();
     Manifest { seq: 1, end_offset: offset, entries }
+}
+
+/// How far past a damaged frame [`resync_to_next_frame`] will look for the next good
+/// one, how many decrypt attempts it will spend doing so, and how many separate damaged
+/// regions one scan will step over.
+///
+/// All three exist to bound the work: the search is what makes a scan of a hostile or
+/// thoroughly garbled volume super-linear, and `scan_volume` is reachable from untrusted
+/// input (it is a fuzz target). Sized for the failure this is actually for — localized
+/// rot, a torn write, a bad sector — not for reassembling a shredded file.
+const RESYNC_WINDOW: u64 = 64 * 1024;
+const RESYNC_ATTEMPTS: u32 = 128;
+const MAX_RESYNCS: u32 = 64;
+
+/// The offset of the next frame after `from` that decrypts, or `None` if there is no
+/// such frame within [`RESYNC_WINDOW`] bytes.
+///
+/// Two candidate sources, cheapest first:
+/// 1. the damaged frame's own length prefix — intact whenever the rot landed in the
+///    ciphertext, which points exactly at the next frame for the price of one attempt;
+/// 2. otherwise every byte offset in the window whose length prefix is even plausible,
+///    which is what recovers the case where the damage spans a frame BOUNDARY and takes
+///    the next frame's length prefix with it.
+///
+/// A candidate is accepted only by passing its AEAD tag, so a wrong guess cannot admit
+/// forged or misaligned data — it just costs an attempt. Always returns an offset
+/// strictly greater than `from`, so the caller's scan cannot stall.
+fn resync_to_next_frame<R: Read + Seek>(
+    f: &mut R,
+    file_len: u64,
+    from: u64,
+    key: &Key,
+    aad: &[u8],
+) -> Option<u64> {
+    // (1) The fast path: trust only the length, and only far enough to try one frame.
+    if let Ok(total) = frame_total_len(f, from)
+        && let Some(next) = from.checked_add(total)
+        && next > from
+        && next < file_len
+        && read_frame_at(f, file_len, next, 0, key, aad).is_ok()
+    {
+        return Some(next);
+    }
+
+    // (2) The byte-wise walk. Read the window once rather than seeking per candidate:
+    // the prefix check is then a cheap slice read, and only a plausible length costs a
+    // decrypt attempt.
+    let start = from.checked_add(1)?;
+    let end = start.saturating_add(RESYNC_WINDOW).min(file_len);
+    let span = end.checked_sub(start)?;
+    if span < FRAME_PREFIX_LEN {
+        return None;
+    }
+    let mut window = vec![0u8; span as usize];
+    f.seek(SeekFrom::Start(start)).ok()?;
+    f.read_exact(&mut window).ok()?;
+
+    let mut attempts = 0u32;
+    // `saturating_sub` keeps the range empty (rather than wrapping) on a window too
+    // short to hold a prefix — already guarded above, but this must not underflow.
+    for i in 0..window.len().saturating_sub(FRAME_PREFIX_LEN as usize) {
+        if attempts >= RESYNC_ATTEMPTS {
+            break;
+        }
+        // The 4-byte length prefix at this offset, read straight out of the window.
+        let len_bytes: [u8; 4] = window[i..i + 4].try_into().ok()?;
+        let frame_len = u32::from_le_bytes(len_bytes) as u64;
+        // The same bounds `read_frame_at` enforces, applied here first so an absurd
+        // length costs a comparison instead of a decrypt.
+        if frame_len < NONCE_LEN as u64 || frame_len > MAX_DOC_SIZE + 4096 {
+            continue;
+        }
+        let at = start.saturating_add(i as u64);
+        if at.saturating_add(FRAME_PREFIX_LEN).saturating_add(frame_len) > file_len {
+            continue;
+        }
+        attempts += 1;
+        if read_frame_at(f, file_len, at, 0, key, aad).is_ok() {
+            return Some(at);
+        }
+    }
+    None
 }
 
 // --- Frame & AAD helpers -----------------------------------------------------

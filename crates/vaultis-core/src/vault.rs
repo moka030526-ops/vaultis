@@ -424,7 +424,10 @@ impl OpenVault {
         vault.categories = TypeLists::with_defaults();
         vault.audit.push(Change::new("vault_created", String::new()));
 
-        let storage = VolumeStore::open(&dir, &key, &vault.id, vault.settings.volume_max_size)?;
+        let mut storage = VolumeStore::open(&dir, &key, &vault.id, vault.settings.volume_max_size)?;
+        // The store keeps a spare copy of each manifest when redundancy is on; it cannot
+        // see `settings`, so the depth is handed to it here and on every later change.
+        storage.set_redundancy(vault.settings.redundancy);
 
         // Construct the struct, moving each local into the matching field. After
         // this, those locals are owned by `open` and can't be used again.
@@ -493,7 +496,7 @@ impl OpenVault {
         // missing — surface a clear, retryable `RekeyPending` rather than an alarming
         // Crypto/`ArchiveMismatch`. Best-effort: re-checking `.rekey` catches the
         // in-flight case (a rekey that fully completed mid-read is the rare tail).
-        let storage = match VolumeStore::open(&dir, &key, &vault.id, vault.settings.volume_max_size) {
+        let mut storage = match VolumeStore::open(&dir, &key, &vault.id, vault.settings.volume_max_size) {
             Ok(s) => s,
             Err(e) => {
                 if dir.join(REKEY_DIR).exists() {
@@ -502,6 +505,10 @@ impl OpenVault {
                 return Err(e.into());
             }
         };
+        // Hand the store the redundancy depth (it cannot read `settings` itself), so
+        // every manifest it commits from here keeps a spare copy beside it — or, at
+        // depth 0, so it clears any spare a previously-enabled session left behind.
+        storage.set_redundancy(vault.settings.redundancy);
         // Consistency: every document a record references must be present.
         // `for id in ...` iterates the returned Vec, binding each element to `id`.
         for id in referenced_doc_ids(&vault) {
@@ -1050,6 +1057,9 @@ impl OpenVault {
             let _ = write_bytes_atomic(&bak_path(&self.path, 1), &bytes);
         }
         prune_generations_above(&self.path, depth);
+        // The document index's spares were swapped out with the old manifest directory
+        // (rekey/compact replace it wholesale), so write them again under the new key.
+        self.storage.refresh_manifest_mirrors(&self.key);
     }
 
     /// Set the in-place redundancy depth (§12.8): `0` = off, `N >= 1` = keep a
@@ -1062,6 +1072,11 @@ impl OpenVault {
         let depth = depth.min(MAX_REDUNDANCY);
         self.vault.settings.redundancy = depth;
         self.vault.audit.push(Change::new("redundancy_changed", depth.to_string()));
+        // Apply the change to the document index's spare copies too: turning it off
+        // deletes them, turning it on writes them now rather than at the next upload
+        // (matching `refresh_redundancy_copies` for the vault file's own copies).
+        self.storage.set_redundancy(depth);
+        self.storage.refresh_manifest_mirrors(&self.key);
         self.save()
     }
 
@@ -1245,7 +1260,10 @@ impl OpenVault {
         self.vault = staged_vault;
         self.previous_generation = self.vault.generation;
         match VolumeStore::open(&dir, &self.key, &self.vault.id, self.vault.settings.volume_max_size) {
-            Ok(store) => {
+            Ok(mut store) => {
+                // A freshly opened store defaults to redundancy off; tell it the setting
+                // again or the manifests it commits after this would drop their spares.
+                store.set_redundancy(self.vault.settings.redundancy);
                 self.storage = store;
                 // commit_rekey cleared the old-key redundancy copies; regenerate them
                 // under the NEW key NOW so the configured protection isn't absent in
