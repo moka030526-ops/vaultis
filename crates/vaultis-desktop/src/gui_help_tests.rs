@@ -121,6 +121,9 @@ fn every_documented_feature_is_findable_by_search() {
         // The sample vault the build script produces.
         ("sample vault", "demo-vault"),
         ("sample1", "demo-vault"),
+        // What a crash or a failed save does to the vault, and the optional spare copies.
+        ("power cut", "interrupted"),
+        ("rotating spare", "interrupted"),
         // Long-standing behaviour that is easy to miss.
         ("trim all fields", "editing"),
         ("before tax bucket", "tab-summary"),
@@ -177,4 +180,14 @@ fn troubleshooting_covers_the_failure_users_actually_hit() {
     let hits = search("read-only");
     assert!(hits.len() >= 2, "read-only must be documented in more than one place");
     assert!(!search("password rejected").is_empty() || !search("passwords are rejected").is_empty());
+}
+
+/// Backing up is the one thing the owner of a brand-new vault has to set up BEFORE it holds
+/// anything they cannot afford to lose — an offline vault's only copy is the one on this
+/// disk. It is therefore filed under Getting started, not left in Settings & maintenance
+/// where a first-time reader would not reach it until the vault already mattered.
+#[test]
+fn backing_up_is_filed_under_getting_started() {
+    let t = TOPICS.iter().find(|t| t.id == "backups").expect("the manual has a backup article");
+    assert_eq!(t.section, "Getting started", "the backup article belongs in Getting started");
 }

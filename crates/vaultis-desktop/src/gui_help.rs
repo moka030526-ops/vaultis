@@ -305,6 +305,76 @@ pub(crate) const TOPICS: &[Topic] = &[
         ],
     },
     Topic {
+        id: "backups",
+        section: "Getting started",
+        title: "Back up the vault — this is not optional",
+        blurb: "vaultis is deliberately offline, which means this computer alone holds your only copy. What \"backed up\" actually requires, and exactly what to copy if you do it by hand.",
+        body: &[
+            Block::P(
+                "vaultis never uploads anything, on purpose — that is what makes it safe. But it \
+                 means this one computer holds the only copy of your vault. If this disk dies, this \
+                 laptop is stolen, or this house burns down, and no other copy exists anywhere, \
+                 everything inside is gone as completely as if it had been shredded — there is no \
+                 undo. Backing up is not a step for later; without it, this vault is one accident \
+                 away from being nobody's inheritance at all.",
+            ),
+            Block::Sub("Keep it in more than one place, not just one backup"),
+            Block::P(
+                "A single backup sitting on a USB drive next to the computer protects you from a \
+                 damaged file, but not from a fire, flood, or burglary that takes both at once. Keep \
+                 at least two backup copies on separate physical media, and put at least one of them \
+                 somewhere genuinely apart from this computer — a safe-deposit box, a different \
+                 building, a trusted relative's or your executor's own storage. A backup that lives \
+                 beside the machine it protects is barely better than no backup.",
+            ),
+            Block::Sub("The easy way — the Backup button in Config"),
+            Block::Steps(&[
+                "Open ⚙ Config.",
+                "Under Backup, type or paste the destination folder — a USB drive, external disk, or \
+                 any folder outside this vault's own — the box also accepts a pasted, quoted path.",
+                "Click Backup. vaultis copies the whole encrypted vault into a new, timestamped \
+                 folder under that destination and tells you where it landed. Nothing is decrypted; \
+                 the copy is exactly as protected as the vault itself.",
+            ]),
+            Block::Sub("Doing it by hand, without the button"),
+            Block::P(
+                "A vault is a folder, not a single file, so a manual backup means copying the entire \
+                 folder — never pieces of it. Inside it are three things that only make sense \
+                 together: vault.pmv (the record file), manifest/ (the index of your uploaded \
+                 documents), and volume/ (the documents themselves). Copy all three, with their \
+                 names unchanged, to wherever your backup lives. Leaving even one piece behind — say, \
+                 vault.pmv without volume/ — gives you a vault that opens but is missing every \
+                 attached document. This is the same operation the Backup button performs; doing it \
+                 by hand with your file manager, cp, rsync, or robocopy works exactly as well.",
+            ),
+            Block::Sub("Scripting it — the command line"),
+            Block::P(
+                "`vaultis backup [DIR] DEST` performs this same whole-folder copy, needs no \
+                 passwords, and can be wired into an unattended scheduled job — cron on Linux/macOS, \
+                 Task Scheduler on Windows — so backups happen on a schedule instead of depending on \
+                 remembering to click a button. See “Command line” under Reference.",
+            ),
+            Block::Bullets(&[
+                "Back the vault up after any session where you changed something.",
+                "Test a backup every so often by opening it read-only, just to confirm it actually \
+                 works. A backup you have never tested opening is a hope, not a real backup.",
+            ]),
+            Block::Warn(
+                "Your two passwords are NOT stored inside the backup — they never are, anywhere. A \
+                 perfect backup paired with a forgotten password is exactly as unrecoverable as a \
+                 lost vault with no backup at all. Store the passwords with the same care you give \
+                 the data itself, somewhere your executor will genuinely be able to find them.",
+            ),
+            Block::Sub("Recovering from a backup"),
+            Block::P(
+                "To restore, simply copy a backup folder back to wherever you keep vaults and open \
+                 it exactly like any other vault. If redundancy is turned on (see “Config: every \
+                 setting explained”), a damaged vault.pmv can sometimes even be repaired IN PLACE \
+                 from its mirrored copies, without needing to reach for a backup at all.",
+            ),
+        ],
+    },
+    Topic {
         id: "readonly",
         section: "Getting started",
         title: "Read-only vs. write mode",
@@ -421,6 +491,183 @@ pub(crate) const TOPICS: &[Topic] = &[
                  failure can never be missed just because your eyes happened to be somewhere else \
                  on screen. Dismiss the banner with its button, or simply do something that \
                  succeeds and it clears on its own.",
+            ),
+        ],
+    },
+    Topic {
+        id: "interrupted",
+        section: "Getting started",
+        title: "If a save fails or the power goes out",
+        blurb: "What happens to your vault when a save fails, the battery dies, or the program is stopped partway through a change — and exactly what you find the next time you open it.",
+        body: &[
+            Block::P(
+                "Every change vaultis makes to your vault is all-or-nothing. There is no state in \
+                 which half an edit landed, no half-written vault, and nothing you have to repair \
+                 by hand afterwards. This article explains what that means in practice, because \
+                 the moment you most want to know it is the moment it has just happened.",
+            ),
+            Block::Sub("How a change is actually written"),
+            Block::P(
+                "The new version of your records is written BESIDE the old one, under a temporary \
+                 name, and pushed all the way down onto the physical disk. Only then is it swapped \
+                 into place, in a single step the operating system guarantees cannot be interrupted \
+                 halfway through. Until that swap the vault on disk is entirely the old version; \
+                 after it, entirely the new one. Nothing ever reads or writes a half-finished vault.",
+            ),
+            Block::Sub("A save that fails while you are sitting at the screen"),
+            Block::P(
+                "A red banner appears across the top of the window carrying the real reason — \
+                 usually a full disk, sometimes a permissions problem on the vault's folder. The \
+                 vault on disk is untouched, your typing is still sitting in the form, and \
+                 “⚠ unsaved changes” is still showing in the strip along the bottom. Clear whatever \
+                 caused it, click 💾 Save again, and it commits normally. Close the window instead \
+                 and that one unsaved edit is the only thing you lose.",
+            ),
+            Block::Sub("A crash, a power cut, or a program that is killed"),
+            Block::P(
+                "The same outcome, without the banner: whatever had committed is there, whatever \
+                 had not is not. There is no repair step to run and no \"recovering, please wait\" \
+                 to sit through — you simply open the vault again.",
+            ),
+            Block::Rows(&[
+                (
+                    "You were editing a record",
+                    "The vault exactly as it was before that save. Everything you had saved earlier \
+                     is untouched.",
+                ),
+                (
+                    "You were uploading a document",
+                    "The document is either fully there or not there at all. An interrupted upload \
+                     can leave an unused encrypted block behind — it wastes a little space and \
+                     nothing else, and the `compact` tool reclaims it. See “Keeping the vault small”.",
+                ),
+                (
+                    "You were updating from another vault",
+                    "Nothing at all is merged. The whole batch commits in one step at the very end, \
+                     so an interruption leaves your vault exactly as it was; simply run the update \
+                     again. See “Updating from another vault”.",
+                ),
+                (
+                    "You were changing your two passwords",
+                    "Either the old pair still works or the new pair does — never a mixture, and \
+                     never a vault that neither pair can open. vaultis finishes or discards the \
+                     half-done change by itself the next time you unlock. See “The two passwords”.",
+                ),
+            ]),
+            Block::Note(
+                "An interrupted password change is the one case that needs a moment's attention: \
+                 the tidying-up has to write, so it happens on the next unlock in WRITE mode. \
+                 Opening read-only will tell you a password change is pending and ask you to reopen \
+                 with write access. See “Read-only vs. write mode”.",
+            ),
+            Block::Sub("The rotating spare copies"),
+            Block::P(
+                "There is one optional extra, switched off unless you ask for it, that changes what \
+                 an interruption can cost you. Under ⚙ Config, “Vault file redundancy” asks vaultis \
+                 to keep spare encrypted copies of the small record file right beside the live one. \
+                 There are two kinds: a MIRROR of what the vault holds right now, encrypted \
+                 separately from scratch, and a rotating set of the previous few versions.",
+            ),
+            Block::P(
+                "They rotate on every save. The version a save replaces is copied into the newest \
+                 spare slot; whatever was in that slot shifts down one; and the oldest of all falls \
+                 off the end and is deleted. Ask for three and you always have the last three \
+                 versions of your records sitting next to the live one.",
+            ),
+            Block::P(
+                "Two details exist so this can only ever help you. The rotation happens only AFTER \
+                 the new version has successfully committed, so a save that fails never disturbs \
+                 the spares. And a version that has itself gone bad on the disk is never let into \
+                 the rotation — allowing it would push a good copy off the end and put an \
+                 unreadable one in its place.",
+            ),
+            Block::Sub("Exactly what the spares cover"),
+            Block::P(
+                "A vault is three things in one folder, and they are not all protected the same \
+                 way. This is the part worth knowing before you rely on it:",
+            ),
+            Block::Rows(&[
+                (
+                    "Your entries (the record file)",
+                    "A mirror of the current version PLUS the rotating previous versions described \
+                     above. Everything you type lives here: notes, instructions, accounts and their \
+                     passwords, assets, property, tax entries, the links between them, and each \
+                     record's history.",
+                ),
+                (
+                    "The document index",
+                    "A mirror only — one spare copy of the current index, rewritten whenever a \
+                     document is added or removed. No rotation, deliberately: an older index would \
+                     describe a shorter vault than the one on disk, and where the index is truly \
+                     lost, reading back through the documents themselves recovers more than a stale \
+                     copy would.",
+                ),
+                (
+                    "The uploaded documents",
+                    "Nothing. They are the large part of a vault — one scanned deed can dwarf \
+                     everything else in it — so copying them on every save is not something the \
+                     program can sensibly do. A damaged document comes back from your backup, or \
+                     not at all.",
+                ),
+            ]),
+            Block::Sub("When the spares get used"),
+            Block::P(
+                "If the live record file cannot be read when you unlock, vaultis tries the spares on \
+                 its own: the mirror first, since it holds the very same contents and so costs you \
+                 nothing, then the previous versions, newest first. Each one has to prove it is \
+                 genuine and undamaged before it is accepted. If one works, the vault simply opens, \
+                 and the status line says it was recovered rather than opened normally. A damaged \
+                 index is recovered the same way, from its own spare, without your seeing anything \
+                 at all.",
+            ),
+            Block::Note(
+                "There is no undo button, but the spares are the nearest thing to one. They are \
+                 ordinary files named vault.pmv.mirror, vault.pmv.bak1, vault.pmv.bak2 and so on, \
+                 sitting in the vault folder; going back to one deliberately means closing the app \
+                 and renaming the one you want over vault.pmv yourself. Every save also raises the \
+                 vault's generation number by one, and the status line shows that number when you \
+                 unlock — which is how you can tell at a glance that you have landed on an older \
+                 version than you expected.",
+            ),
+            Block::Warn(
+                "These copies sit on the same disk as the vault, so they protect against a damaged \
+                 FILE, never against a lost, stolen, or dead DRIVE. They also cost space and leave \
+                 more encrypted material lying around. And changing your two passwords throws the \
+                 old spares away and writes fresh ones under the new passwords, so a spare from \
+                 before a password change can never be used. See “Back up the vault — this is not \
+                 optional”.",
+            ),
+            Block::Sub("What survives damage to the documents"),
+            Block::P(
+                "Since the documents themselves have no spare copy, it is worth knowing exactly \
+                 what damage to them costs. If bytes inside the stored documents go bad — bit rot \
+                 on an ageing disk, a bad sector, a copy that was interrupted — the loss is \
+                 confined, not total:",
+            ),
+            Block::Bullets(&[
+                "Everything you typed survives, in full. Records are kept in the record file, not \
+                 among the documents, so your notes, logins, passwords, assets, property, tax \
+                 entries and history are untouched by any amount of damage to the documents.",
+                "Every OTHER document survives. Each one is sealed on its own and found at an exact \
+                 position recorded in the index, so damage to one document's bytes cannot spread to \
+                 the next.",
+                "The damaged document itself does not survive. There is no second copy inside the \
+                 vault to fall back on. It comes back from a backup, or it does not come back.",
+                "The vault still opens, and still lists the damaged document. You meet the problem \
+                 only when you open or export that one file, and it says so plainly rather than \
+                 handing you a scrambled copy.",
+                "The index is not a weak point here: if it is damaged too, vaultis reads back \
+                 through the documents themselves to rebuild it, stepping over the damaged part \
+                 rather than giving up at it.",
+            ]),
+            Block::Warn(
+                "Restoring a damaged document means going to your backup — there is no in-vault \
+                 repair for one, and no setting that changes this. And if a document a record \
+                 points at goes missing ENTIRELY — a folder copied in pieces, files someone tidied \
+                 up — the vault refuses to open at all until it is put back, deliberately, because \
+                 a vault quietly missing pieces is worse than one that says so. Both are why a \
+                 backup has to be the WHOLE vault folder and never a few files out of it. See \
+                 “Back up the vault — this is not optional”.",
             ),
         ],
     },
@@ -1053,7 +1300,10 @@ pub(crate) const TOPICS: &[Topic] = &[
                 "Keeps extra encrypted backup copies of the small vault file sitting right beside \
                  it: one same-generation mirror, plus a number of previous generations you choose \
                  — which doubles as a built-in \"undo\" for your very last save if something goes \
-                 wrong with it. Set it to 0 to turn this off entirely.",
+                 wrong with it. The document index gets a spare copy of its own at the same time \
+                 (one mirror, no previous generations). Set it to 0 to turn this off entirely, \
+                 which also deletes any copies already written. See “If a save fails or the power \
+                 goes out” for exactly what these cover and what they do not.",
             ),
             Block::Warn(
                 "Redundancy only protects you against a single DAMAGED file — it does nothing at \
@@ -1104,76 +1354,6 @@ pub(crate) const TOPICS: &[Topic] = &[
                 "After an update finishes, run \"Sync types from records\" in Config if the \
                  records that came in use type or subtype words your own vault's lists do not have \
                  yet.",
-            ),
-        ],
-    },
-    Topic {
-        id: "backups",
-        section: "Settings & maintenance",
-        title: "Back up the vault — this is not optional",
-        blurb: "vaultis is deliberately offline, which means this computer alone holds your only copy. What \"backed up\" actually requires, and exactly what to copy if you do it by hand.",
-        body: &[
-            Block::P(
-                "vaultis never uploads anything, on purpose — that is what makes it safe. But it \
-                 means this one computer holds the only copy of your vault. If this disk dies, this \
-                 laptop is stolen, or this house burns down, and no other copy exists anywhere, \
-                 everything inside is gone as completely as if it had been shredded — there is no \
-                 undo. Backing up is not a step for later; without it, this vault is one accident \
-                 away from being nobody's inheritance at all.",
-            ),
-            Block::Sub("Keep it in more than one place, not just one backup"),
-            Block::P(
-                "A single backup sitting on a USB drive next to the computer protects you from a \
-                 damaged file, but not from a fire, flood, or burglary that takes both at once. Keep \
-                 at least two backup copies on separate physical media, and put at least one of them \
-                 somewhere genuinely apart from this computer — a safe-deposit box, a different \
-                 building, a trusted relative's or your executor's own storage. A backup that lives \
-                 beside the machine it protects is barely better than no backup.",
-            ),
-            Block::Sub("The easy way — the Backup button in Config"),
-            Block::Steps(&[
-                "Open ⚙ Config.",
-                "Under Backup, type or paste the destination folder — a USB drive, external disk, or \
-                 any folder outside this vault's own — the box also accepts a pasted, quoted path.",
-                "Click Backup. vaultis copies the whole encrypted vault into a new, timestamped \
-                 folder under that destination and tells you where it landed. Nothing is decrypted; \
-                 the copy is exactly as protected as the vault itself.",
-            ]),
-            Block::Sub("Doing it by hand, without the button"),
-            Block::P(
-                "A vault is a folder, not a single file, so a manual backup means copying the entire \
-                 folder — never pieces of it. Inside it are three things that only make sense \
-                 together: vault.pmv (the record file), manifest/ (the index of your uploaded \
-                 documents), and volume/ (the documents themselves). Copy all three, with their \
-                 names unchanged, to wherever your backup lives. Leaving even one piece behind — say, \
-                 vault.pmv without volume/ — gives you a vault that opens but is missing every \
-                 attached document. This is the same operation the Backup button performs; doing it \
-                 by hand with your file manager, cp, rsync, or robocopy works exactly as well.",
-            ),
-            Block::Sub("Scripting it — the command line"),
-            Block::P(
-                "`vaultis backup [DIR] DEST` performs this same whole-folder copy, needs no \
-                 passwords, and can be wired into an unattended scheduled job — cron on Linux/macOS, \
-                 Task Scheduler on Windows — so backups happen on a schedule instead of depending on \
-                 remembering to click a button. See “Command line” under Reference.",
-            ),
-            Block::Bullets(&[
-                "Back the vault up after any session where you changed something.",
-                "Test a backup every so often by opening it read-only, just to confirm it actually \
-                 works. A backup you have never tested opening is a hope, not a real backup.",
-            ]),
-            Block::Warn(
-                "Your two passwords are NOT stored inside the backup — they never are, anywhere. A \
-                 perfect backup paired with a forgotten password is exactly as unrecoverable as a \
-                 lost vault with no backup at all. Store the passwords with the same care you give \
-                 the data itself, somewhere your executor will genuinely be able to find them.",
-            ),
-            Block::Sub("Recovering from a backup"),
-            Block::P(
-                "To restore, simply copy a backup folder back to wherever you keep vaults and open \
-                 it exactly like any other vault. If redundancy is turned on (see “Config: every \
-                 setting explained”), a damaged vault.pmv can sometimes even be repaired IN PLACE \
-                 from its mirrored copies, without needing to reach for a backup at all.",
             ),
         ],
     },
