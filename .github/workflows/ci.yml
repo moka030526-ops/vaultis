@@ -68,6 +68,23 @@ jobs:
       # license or registry.
       - run: cargo install cargo-deny --locked
       - run: cargo deny check
+      # `fuzz/` is a DETACHED workspace with its own lockfile recording the path
+      # dependency's version, so a release bump never reaches it and the next
+      # `cargo fuzz build` rewrites it — dirtying the tree mid-audit or mid-release.
+      # Audit 2026-07-29 round 2 (L-3) put a warning in scripts/release.sh, but the
+      # three releases after it were cut without running that script and the lockfile
+      # still said 0.2.4 at 0.2.7 (audit 2026-08-03, A-3). A check that runs on every
+      # push does not depend on which path a release took.
+      - name: fuzz/Cargo.lock records the current crate version
+        run: |
+          want="$(awk '/^\[package\]/ { p = 1; next } p && /^version = / { gsub(/"/, "", $3); print $3; exit }' crates/vaultis-core/Cargo.toml)"
+          got="$(awk '/^name = "vaultis-core"$/ { f = 1; next } f && /^version = / { gsub(/"/, "", $3); print $3; exit }' fuzz/Cargo.lock)"
+          if [ "$want" != "$got" ]; then
+            echo "::error::fuzz/Cargo.lock records vaultis-core $got, but the crate is $want."
+            echo "Run 'cargo +nightly fuzz build' and commit fuzz/Cargo.lock."
+            exit 1
+          fi
+          echo "fuzz/Cargo.lock agrees with vaultis-core $want"
 
   windows:
     name: windows build (real link)
