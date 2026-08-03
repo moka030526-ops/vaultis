@@ -14,6 +14,66 @@ The full, per-finding security write-up for the hardening work below lives in
 
 Nothing yet.
 
+## [0.2.7] — 2026-08-03
+
+A bug-fix and resilience release. Vault files are unchanged and fully compatible
+both ways — 0.2.6 vaults open in 0.2.7 and the other way round — and the crypto and
+key-derivation paths are identical. The one new on-disk file (`manifest.<N>.mirror`)
+is written only when the optional redundancy setting is on, and older versions ignore
+it: the partition scan requires an all-digit suffix, so it is never mistaken for a
+partition.
+
+### Fixed
+
+- **The GUI's "unsaved changes" warning never cleared after a save.** Editing any
+  record lit `⚠ unsaved changes — click 💾 Save first` in the footer, and clicking
+  💾 Save left it lit for the rest of the session, on every tab. `records::upsert`
+  stamps `updated_at` and appends the field diffs to the record's history as it
+  writes, so the stored record is never identical to the edit buffer that produced
+  it — and that is exactly what the indicator compared. A successful save now
+  re-reads the just-written record back into the form, at all fourteen
+  upsert-then-persist sites (the eight tab Save buttons plus the document
+  attach/remove paths). A FAILED save deliberately keeps the warning: the change is
+  in memory but not on disk, so "click Save first" is still the right advice. The
+  record-history panel under the form now refreshes on save too, instead of showing
+  the pre-save trail until the record was reselected.
+
+### Added
+
+- **A spare copy of each document-index manifest**, under the existing redundancy
+  setting (still off by default). Each partition manifest keeps one mirror beside it,
+  encrypted independently with its own nonce so a damaged sector cannot land on the
+  same bytes in both. Written only after the authoritative commit, best-effort, and
+  deleted when redundancy is turned off. A mirror only, no generation ring: an older
+  index describes a shorter volume, and its `end_offset` is the next append point.
+
+  A spare that lags the volume — the live manifest commits first, so a failure in
+  that gap leaves one — is topped up by scanning the region it does not cover rather
+  than taken at face value, which would have dropped the newer documents from the
+  index and handed back an append point that the next upload would have overwritten
+  good frames from.
+
+### Changed
+
+- **A damaged volume frame no longer costs every frame after it.** When a manifest
+  is lost, the index is rebuilt by scanning the self-describing volume, and that scan
+  stopped at the first frame that would not decrypt — so one rotted byte could take a
+  whole partition's documents with it, and any record still pointing at one of them
+  made the vault refuse to open (`referenced ⊄ stored`). The scan now resynchronises
+  past the damage: over the frame by its own length prefix where that survived,
+  otherwise by walking forward a bounded window for a frame that authenticates. Only
+  frames passing their AEAD tag are admitted, and the window, attempt and region caps
+  keep a hostile or badly garbled volume linear (it is a fuzz target).
+
+- **The manual: backups moved into Getting started**, alongside "The two passwords",
+  so a first-time reader meets the rule before the vault holds anything they cannot
+  lose. A new article, **"If a save fails or the power goes out"**, closes that
+  section: how a change is actually written, what a failed save looks like from the
+  chair, what you find next time for each kind of interruption, what the rotating
+  spare copies do and do not cover, and what survives damage to the stored documents
+  (everything you typed, and every other document — the damaged one comes back from a
+  backup or not at all).
+
 ## [0.2.6] — 2026-08-02
 
 A documentation-only release. **Nothing in the program's code changed** — the
