@@ -1473,3 +1473,33 @@ fn setting_the_redundancy_depth_never_deletes_anything() {
     assert!(!mirror.exists(), "the explicit call is what removes them");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// AUDIT 2026-08-03 A-5 (kill-test): `refresh_manifest_mirrors` had no coverage at all —
+/// `cargo mutants` replaced its whole body with `()`, and flipped its `redundancy == 0`
+/// guard to `!=`, and the suite stayed green both times. It is the path that restores the
+/// spares after a rekey or a compaction, so "it silently does nothing" is exactly the
+/// failure that would leave a vault without the protection its settings claim.
+#[test]
+fn refreshing_the_spares_covers_partitions_that_already_exist() {
+    let dir = tmp_dir("refresh-mirrors");
+    let key = fast_key();
+    let mirror = dir.join("manifest").join("manifest.0.mirror");
+
+    // Redundancy off: a write leaves no spare.
+    let mut s = VolumeStore::open(&dir, &key, "v", DEFAULT_VOLUME_MAX_SIZE).unwrap();
+    s.put("a", "/a", b"body", 1, &key).unwrap();
+    assert!(!mirror.exists(), "no spare while redundancy is off");
+
+    // Turning it on and refreshing writes spares for partitions that ALREADY exist,
+    // without waiting for the next document write.
+    s.set_redundancy(1);
+    s.refresh_manifest_mirrors(&key);
+    assert!(mirror.exists(), "refresh must write the spare for an existing partition");
+
+    // And at depth 0 it must write nothing — the guard, in the other direction.
+    std::fs::remove_file(&mirror).unwrap();
+    s.set_redundancy(0);
+    s.refresh_manifest_mirrors(&key);
+    assert!(!mirror.exists(), "refresh at depth 0 must write nothing");
+    std::fs::remove_dir_all(&dir).ok();
+}
