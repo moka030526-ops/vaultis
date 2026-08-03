@@ -280,14 +280,16 @@ impl VolumeStore {
         self.manifest_dir.join(format!("manifest.{part}.mirror"))
     }
 
-    /// Set the in-place redundancy depth this store writes at (`0` = off). Called by
-    /// the vault after opening and whenever the setting changes; turning it off also
-    /// removes the spares, so disabling the feature stops leaving copies on disk.
+    /// Set the in-place redundancy depth this store writes at (`0` = off).
+    ///
+    /// Records the depth and NOTHING else. It used to delete the spares when handed a
+    /// depth of 0, which made it a write — and `open_inner` calls it on every open,
+    /// including a READ-ONLY one, so opening a vault read-only could delete files in the
+    /// vault folder (audit 2026-08-03 A-1). Removing spares is now an explicit, separate
+    /// call ([`Self::drop_manifest_mirrors`]) that only write paths make, so the
+    /// read-only guarantee does not depend on remembering to check a flag here.
     pub fn set_redundancy(&mut self, depth: u32) {
         self.redundancy = depth;
-        if depth == 0 {
-            self.drop_manifest_mirrors();
-        }
     }
 
     /// Remove every partition's spare manifest (redundancy turned off, or the copies
@@ -842,6 +844,26 @@ const RESYNC_WINDOW: u64 = 64 * 1024;
 const RESYNC_ATTEMPTS: u32 = 128;
 const MAX_RESYNCS: u32 = 64;
 
+/// Cumulative frame bytes one resync will READ before giving up.
+///
+/// The attempt cap alone bounds the number of decrypt attempts but not their size, and
+/// a frame may legitimately be up to [`MAX_DOC_SIZE`]. A volume whose bytes all decode
+/// as plausible large lengths — crafted, or simply a big file damaged across a wide
+/// region — therefore cost 128 × up to 64 MiB of reads per damaged region: measured at
+/// 3.3 s for a 64 MiB volume, and it scales with the file (audit 2026-08-03 A-2).
+///
+/// Sized at twice [`MAX_DOC_SIZE`] on purpose. The budget is spent only by attempts that
+/// FAIL, and the bytes a walk crosses on the way to a good frame are damaged or random —
+/// so a budget near one document's size can be exhausted by an unlucky run of plausible
+/// lengths in that garbage BEFORE reaching a legitimate maximum-size frame, losing it.
+/// Two documents' worth leaves room for that while still bounding one damaged region at
+/// roughly a second of reads instead of the ~8 GiB the unbudgeted walk allowed.
+///
+/// The residual is bounded and never silent corruption: if a walk does exhaust its
+/// budget, the frames beyond it are simply not indexed by that rebuild, exactly as if the
+/// scan had stopped — and a spare manifest, when there is one, avoids the scan entirely.
+const RESYNC_READ_BUDGET: u64 = 2 * MAX_DOC_SIZE;
+
 /// The offset of the next frame after `from` that decrypts, or `None` if there is no
 /// such frame within [`RESYNC_WINDOW`] bytes.
 ///
@@ -886,6 +908,7 @@ fn resync_to_next_frame<R: Read + Seek>(
     f.read_exact(&mut window).ok()?;
 
     let mut attempts = 0u32;
+    let mut spent = 0u64; // frame bytes read by attempts that failed, see RESYNC_READ_BUDGET
     // `saturating_sub` keeps the range empty (rather than wrapping) on a window too
     // short to hold a prefix — already guarded above, but this must not underflow.
     for i in 0..window.len().saturating_sub(FRAME_PREFIX_LEN as usize) {
@@ -904,10 +927,19 @@ fn resync_to_next_frame<R: Read + Seek>(
         if at.saturating_add(FRAME_PREFIX_LEN).saturating_add(frame_len) > file_len {
             continue;
         }
+        // Stop once the FAILED attempts have read enough. The test is on what has
+        // already been spent, never on how big this candidate is: a genuine document can
+        // be up to MAX_DOC_SIZE, and refusing to try it for being large would lose
+        // exactly the frame the resync exists to find. The overshoot is therefore one
+        // frame — bounded by MAX_DOC_SIZE — and only a RUN of large failures is cut off.
+        if spent > RESYNC_READ_BUDGET {
+            break;
+        }
         attempts += 1;
         if read_frame_at(f, file_len, at, 0, key, aad).is_ok() {
             return Some(at);
         }
+        spent = spent.saturating_add(frame_len);
     }
     None
 }

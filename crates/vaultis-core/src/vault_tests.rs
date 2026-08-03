@@ -4786,3 +4786,35 @@ fn enospc_during_merge_save_poisons_handle_and_does_not_persist() {
     cleanup(&s_path);
     cleanup(&c_path);
 }
+
+/// AUDIT 2026-08-03 A-1 (reproduction): a READ-ONLY open must not delete files in the
+/// vault directory. `open_inner` hands the store the redundancy depth unconditionally,
+/// and `set_redundancy(0)` deletes every manifest spare — so opening read-only a vault
+/// whose settings say 0 while spares exist on disk WRITES to the vault folder.
+///
+/// The reachable state comes from `set_redundancy` itself: it writes the spares before
+/// `save()`, so a save that fails (full disk) leaves spares on disk with the on-disk
+/// setting still 0.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn audit_a1_read_only_open_must_not_delete_manifest_spares() {
+    let path = tmp_path("audit-a1");
+    let mirror = path.parent().unwrap().join("manifest").join("manifest.0.mirror");
+    {
+        let mut v = OpenVault::create(path.clone(), b"a", b"b", fast()).unwrap();
+        let src = path.parent().unwrap().join("doc.txt");
+        std::fs::write(&src, b"body").unwrap();
+        v.add_document("loc", "doc.txt", &src).unwrap();
+        // Turn redundancy on, with the vault save forced to fail: the spares reach disk
+        // (they are written first), the setting does not.
+        crate::fault::fail_at("vault.write", 1);
+        let _ = v.set_redundancy(2);
+        crate::fault::clear();
+    }
+    assert!(mirror.exists(), "precondition: a spare is on disk");
+    let v = OpenVault::open_with(path.clone(), b"a", b"b", true).unwrap();
+    assert_eq!(v.redundancy(), 0, "precondition: the saved setting is still 0");
+    drop(v);
+    assert!(mirror.exists(), "a read-only open must not delete anything in the vault folder");
+    cleanup(&path);
+}

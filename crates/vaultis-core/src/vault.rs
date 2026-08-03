@@ -1074,9 +1074,15 @@ impl OpenVault {
         self.vault.audit.push(Change::new("redundancy_changed", depth.to_string()));
         // Apply the change to the document index's spare copies too: turning it off
         // deletes them, turning it on writes them now rather than at the next upload
-        // (matching `refresh_redundancy_copies` for the vault file's own copies).
+        // (matching `refresh_redundancy_copies` for the vault file's own copies). Both
+        // side effects are explicit here — this path is write-gated by the check above,
+        // which is what makes them safe to perform (audit 2026-08-03 A-1).
         self.storage.set_redundancy(depth);
-        self.storage.refresh_manifest_mirrors(&self.key);
+        if depth == 0 {
+            self.storage.drop_manifest_mirrors();
+        } else {
+            self.storage.refresh_manifest_mirrors(&self.key);
+        }
         self.save()
     }
 
