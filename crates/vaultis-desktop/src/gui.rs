@@ -1066,6 +1066,11 @@ fn section_heading(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
 /// `export_status_messages_are_flagged_as_caveats`.
 const EXPORT_CAVEAT_PREFIX: &str = "⚠ UNENCRYPTED";
 
+/// The footer's live "the form holds changes the vault does not" indicator, shown whenever
+/// [`GuiApp::has_unsaved_edits`] is true (see the status panel in `ui_top_level`). A named
+/// constant so the tests assert on the SAME string the footer draws.
+const UNSAVED_WARNING: &str = "⚠ unsaved changes — click 💾 Save first";
+
 /// Whether a status message is the plaintext-on-disk caveat raised by an export
 /// (`export_doc_to_config_dir` and the tab-CSV path). Drawn in red wherever the status
 /// is shown, so it does not read as just another quiet "Saved."-style confirmation.
@@ -1731,6 +1736,39 @@ impl GuiApp {
                 .is_some_and(|r| v.general_documents.iter().find(|s| s.id == r.id) != Some(r)),
             // Summary is a read-only computed view; it has no edit buffer to lose.
             Tab::Summary => false,
+        }
+    }
+
+    /// Re-read the record open in `tab`'s form back out of the vault, so the edit buffer
+    /// holds exactly what was just written.
+    ///
+    /// Call after a SUCCESSFUL [`Self::persist`] that upserted that buffer — every tab's
+    /// Save, and the document attach/remove paths, which persist the record→document link
+    /// on the spot. [`records::upsert`] stamps `updated_at` and appends the field diffs to
+    /// the record's history, so the STORED record is never identical to the buffer that
+    /// produced it: without this write-back [`Self::has_unsaved_edits`] compared the two,
+    /// found them different, and left the footer's [`UNSAVED_WARNING`] lit for the rest of
+    /// the session — telling the user their saved work was still unsaved. (It also leaves
+    /// the History panel under the form showing the pre-save trail.)
+    ///
+    /// Only on success: after a FAILED save the vault holds the change but the disk does
+    /// not, and the warning — "click 💾 Save first" — is still the right advice.
+    fn sync_edit_buffer(&mut self, tab: Tab) {
+        // `self.vault` and the `edit_*` buffers are disjoint fields, so the shared borrow
+        // of one and the exclusive borrow of the other coexist.
+        let Some(ov) = self.vault.as_ref() else { return };
+        let v = &ov.vault;
+        match tab {
+            Tab::Urgent => sync_from_saved(&mut self.edit_urgent, &v.urgent),
+            Tab::Instructions => sync_from_saved(&mut self.edit_instruction, &v.instructions),
+            Tab::TrustWill => sync_from_saved(&mut self.edit_trustwill, &v.trust_wills),
+            Tab::Assets => sync_from_saved(&mut self.edit_asset, &v.assets),
+            Tab::Accounts => sync_from_saved(&mut self.edit_account, &v.accounts),
+            Tab::RealEstate => sync_from_saved(&mut self.edit_realestate, &v.real_estate),
+            Tab::Taxes => sync_from_saved(&mut self.edit_taxfiling, &v.tax_filings),
+            Tab::GeneralDocuments => sync_from_saved(&mut self.edit_general, &v.general_documents),
+            // Summary is a read-only computed view — no edit buffer, nothing to sync.
+            Tab::Summary => {}
         }
     }
 
@@ -3356,6 +3394,9 @@ impl GuiApp {
                 }
                 if self.persist() {
                     self.status = "Saved.".into();
+                    // Show what was written (see `sync_edit_buffer`), or the footer keeps
+                    // warning that the record the user just saved is unsaved.
+                    self.sync_edit_buffer(Tab::Urgent);
                 }
             }
             FormAction::Delete => self.delete_current(Tab::Urgent),
@@ -3437,6 +3478,10 @@ impl GuiApp {
                 }
                 if self.persist() {
                     self.status = "Saved.".into();
+                    // Re-read the stored record into the form: `upsert` stamped its
+                    // timestamp and history, so without this the buffer stays "different
+                    // from the vault" forever and the footer warning never clears.
+                    self.sync_edit_buffer(Tab::Instructions);
                 }
                 // On failure persist() has already set the "Save failed: …" status.
             }
@@ -3520,6 +3565,7 @@ impl GuiApp {
                 }
                 if self.persist() {
                     self.status = "Saved.".into();
+                    self.sync_edit_buffer(Tab::TrustWill);
                 }
                 // On failure persist() has already set the "Save failed: …" status.
             }
@@ -3599,6 +3645,7 @@ impl GuiApp {
                 }
                 if self.persist() {
                     self.status = "Saved.".into();
+                    self.sync_edit_buffer(Tab::GeneralDocuments);
                 }
             }
             FormAction::Delete => self.delete_current(Tab::GeneralDocuments),
@@ -3839,6 +3886,7 @@ impl GuiApp {
                     }
                     if self.persist() {
                         self.status = "Saved.".into();
+                        self.sync_edit_buffer(Tab::Assets);
                     }
                     // On failure persist() has already set the "Save failed: …" status.
                 }
@@ -4489,6 +4537,7 @@ impl GuiApp {
                     }
                     if self.persist() {
                         self.status = "Saved.".into();
+                        self.sync_edit_buffer(Tab::Accounts);
                     }
                     // On failure persist() has already set the "Save failed: …" status.
                 }
@@ -4654,6 +4703,7 @@ impl GuiApp {
                 }
                 if self.persist() {
                     self.status = "Saved.".into();
+                    self.sync_edit_buffer(Tab::RealEstate);
                 }
                 // On failure persist() has already set the "Save failed: …" status.
             }
@@ -4753,6 +4803,7 @@ impl GuiApp {
                 }
                 if self.persist() {
                     self.status = "Saved.".into();
+                    self.sync_edit_buffer(Tab::Taxes);
                 }
                 // On failure persist() has already set the "Save failed: …" status.
             }
@@ -4817,6 +4868,7 @@ impl GuiApp {
                 self.clear_doc_inputs();
                 if self.persist() {
                     self.status = "Document uploaded to the encrypted volume.".into();
+                    self.sync_edit_buffer(Tab::RealEstate);
                 }
             }
             ReDocReq::Export(i) => {
@@ -4839,6 +4891,7 @@ impl GuiApp {
                 if !self.persist() {
                     return;
                 }
+                self.sync_edit_buffer(Tab::RealEstate);
                 if let Some(id) = id
                     && let Some(ov) = self.vault.as_mut()
                     && let Err(e) = ov.remove_document(&id)
@@ -4997,6 +5050,9 @@ impl GuiApp {
                         let _ = ov.remove_document(&old);
                     }
                     self.status = "Document uploaded to the encrypted volume.".into();
+                    // The upsert above wrote the whole record, not just the link, so the
+                    // form must be re-read from the vault like any other save.
+                    self.sync_edit_buffer(target.tab());
                 }
                 // On failure persist() has already set the "Save failed: …" status.
             }
@@ -5043,6 +5099,8 @@ impl GuiApp {
                 if !self.persist() {
                     return; // persist() already set the "Save failed" status
                 }
+                // Saved: the form shows the record as stored (see `sync_edit_buffer`).
+                self.sync_edit_buffer(target.tab());
                 // Three-part let-chain: there is an id, the vault is open, and the
                 // blob removal failed — only then report the cleanup error.
                 if let Some(id) = id
@@ -5118,6 +5176,7 @@ impl GuiApp {
                 self.clear_doc_inputs();
                 if self.persist() {
                     self.status = "Document uploaded to the encrypted volume.".into();
+                    self.sync_edit_buffer(Tab::Taxes);
                 }
                 // On failure persist() has already set the "Save failed: …" status.
             }
@@ -5143,6 +5202,7 @@ impl GuiApp {
                 if !self.persist() {
                     return; // persist() already set the "Save failed" status
                 }
+                self.sync_edit_buffer(Tab::Taxes);
                 if let Some(id) = id
                     && let Some(ov) = self.vault.as_mut()
                     && let Err(e) = ov.remove_document(&id)
@@ -5490,6 +5550,19 @@ enum DocTarget {
     General,
 }
 
+impl DocTarget {
+    /// The tab whose form owns this target — the edit buffer [`GuiApp::upsert_doc_target`]
+    /// writes into the vault, and so the one to re-read afterwards
+    /// ([`GuiApp::sync_edit_buffer`]).
+    fn tab(self) -> Tab {
+        match self {
+            DocTarget::TrustWill => Tab::TrustWill,
+            DocTarget::Asset => Tab::Assets,
+            DocTarget::General => Tab::GeneralDocuments,
+        }
+    }
+}
+
 // Implement eframe's `App` trait so `GuiApp` can be driven by the framework.
 // eframe calls `ui()` on every frame to (re)draw the whole window.
 impl eframe::App for GuiApp {
@@ -5623,7 +5696,7 @@ impl GuiApp {
                     // documented somewhere they may never open.
                     if self.has_unsaved_edits() {
                         ui.label(
-                            egui::RichText::new("⚠ unsaved changes — click 💾 Save first")
+                            egui::RichText::new(UNSAVED_WARNING)
                                 .small()
                                 .strong()
                                 .color(egui::Color32::from_rgb(200, 90, 20)),
@@ -6792,6 +6865,20 @@ fn password_field(
 // such records. `.to_string()` makes an owned `String` from the borrowed id.
 fn label_list<R: Record>(list: &[R]) -> Vec<(String, String)> {
     list.iter().map(|r| (r.id().to_string(), r.label())).collect()
+}
+
+/// Copy the record `buf` is editing back out of `saved` (the vault's own list), replacing
+/// the buffer with the stored copy. The per-tab dispatcher is [`GuiApp::sync_edit_buffer`],
+/// which documents when this may be called and why it must be.
+///
+/// A no-op if the buffer is empty or its id is not in `saved` — a record deleted from
+/// under the form leaves the buffer as the user's only remaining copy of that editing
+/// session, so it is never dropped on the floor here.
+fn sync_from_saved<R: Record>(buf: &mut Option<R>, saved: &[R]) {
+    let Some(cur) = buf.as_ref() else { return };
+    let Some(stored) = saved.iter().find(|s| s.id() == cur.id()) else { return };
+    // Assigning drops the old buffer, which zeroizes the secrets it held.
+    *buf = Some(stored.clone());
 }
 
 /// Best-effort clearing of the system clipboard on exit.

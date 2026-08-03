@@ -2497,3 +2497,86 @@ fn merge_preview_wrong_password_gives_generic_error() {
     cleanup(&s_path);
     cleanup(&c_path);
 }
+
+/// Clicking 💾 Save must clear the footer's unsaved-changes warning: `records::upsert`
+/// stamps `updated_at` and appends the field diffs to the record's history, so the STORED
+/// record is never identical to the edit buffer that produced it — and `has_unsaved_edits`
+/// compares the two. Before the save wrote the stored copy back into the buffer, the
+/// warning stayed lit forever after the first edit, telling the user their saved work was
+/// still unsaved (and the History panel under the form kept showing the pre-save trail).
+#[test]
+fn saving_a_record_clears_the_unsaved_changes_warning() {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let (mut app, path) = app_unlocked("unsavedclear");
+    app.tab = Tab::Instructions;
+    let mut r = Instruction::new().unwrap();
+    r.title = "Executor".into();
+    {
+        let ov = app.vault.as_mut().unwrap();
+        records::upsert(&mut ov.vault.instructions, r);
+        ov.save().unwrap();
+    }
+    // Load the saved record into the form, then change a field — the user typing.
+    app.edit_instruction = app.vault.as_ref().unwrap().vault.instructions.first().cloned();
+    app.edit_instruction.as_mut().unwrap().description = "call the lawyer first".into();
+    assert!(app.has_unsaved_edits(), "an edited buffer is unsaved");
+
+    let app = std::cell::RefCell::new(app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.run();
+    assert_eq!(h.query_all_by_label(UNSAVED_WARNING).count(), 1, "the warning shows before saving");
+
+    h.get_by_label("💾 Save").click();
+    h.run();
+
+    assert_eq!(app.borrow().status, "Saved.");
+    assert!(!app.borrow().has_unsaved_edits(), "the buffer matches the record just written");
+    assert_eq!(h.query_all_by_label(UNSAVED_WARNING).count(), 0, "the warning clears once saved");
+    // The save reached disk, and the form now shows the record as stored (history included).
+    let stored = app.borrow().vault.as_ref().unwrap().vault.instructions[0].clone();
+    assert_eq!(stored.description, "call the lawyer first");
+    assert_eq!(app.borrow().edit_instruction.as_ref().unwrap(), &stored, "form holds the saved copy");
+    cleanup(&path);
+}
+
+/// The other half of the rule above: a save that FAILED must leave the warning up. The
+/// record is in the in-memory vault (the upsert ran) but not on disk, so re-reading the
+/// buffer there would clear the warning on a record the user still has to save — the one
+/// case where "click 💾 Save first" is exactly the right advice.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn a_failed_save_keeps_the_unsaved_changes_warning() {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let (mut app, path) = app_unlocked("unsavedkeep");
+    app.tab = Tab::Instructions;
+    let mut r = Instruction::new().unwrap();
+    r.title = "Executor".into();
+    {
+        let ov = app.vault.as_mut().unwrap();
+        records::upsert(&mut ov.vault.instructions, r);
+        ov.save().unwrap();
+    }
+    app.edit_instruction = app.vault.as_ref().unwrap().vault.instructions.first().cloned();
+    app.edit_instruction.as_mut().unwrap().description = "call the lawyer first".into();
+
+    let app = std::cell::RefCell::new(app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.run();
+    crate::fault::fail_at("vault.write", 1);
+    h.get_by_label("💾 Save").click();
+    h.run();
+    crate::fault::clear();
+
+    assert!(app.borrow().status.contains("Save failed"), "status: {}", app.borrow().status);
+    assert!(app.borrow().has_unsaved_edits(), "the edit did not reach disk — still unsaved");
+    assert_eq!(h.query_all_by_label(UNSAVED_WARNING).count(), 1, "the warning stays after a failed save");
+    cleanup(&path);
+}
