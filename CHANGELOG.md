@@ -14,6 +14,56 @@ The full, per-finding security write-up for the hardening work below lives in
 
 Nothing yet.
 
+## [0.2.8] — 2026-08-03
+
+An audit release: everything here comes from the 2026-08-03 round
+([`docs/AUDIT_2026-08-03.md`](docs/AUDIT_2026-08-03.md)), which went after the storage
+changes 0.2.7 had shipped hours earlier and found two defects in them. Vault files are
+unchanged and compatible both ways with 0.2.7 and 0.2.6, and the crypto and
+key-derivation paths are identical.
+
+### Fixed
+
+- **A read-only open deleted the document index's spare copies** (audit A-1, Medium).
+  `open_inner` handed the store the redundancy depth on every open, and recording a depth
+  of 0 was treated as an instruction to delete every `manifest.<N>.mirror` — so opening a
+  vault whose saved setting is 0, while spares exist on disk, *wrote* to the vault folder,
+  on a read-only open. That state is reachable: the spares are written before the settings
+  save, so a save that fails (a full disk) leaves exactly it.
+
+  It matters because read-only is the common case rather than the rare one — the desktop
+  opens read-only by default and the phone app is read-only always. Nothing unique was
+  ever at risk: the deleted files are redundant copies and the primary index is untouched.
+  Recording the depth is now side-effect-free, and removing spares is an explicit call
+  that only write-gated paths make.
+
+- **A crafted or badly damaged volume could make a rebuild read gigabytes** (audit A-2,
+  Low). The volume scan's resynchronisation capped how *many* decrypt attempts a damaged
+  region costs but not how *big* each one is, and a frame may be up to 64 MiB — so a
+  volume whose bytes decode as plausible large lengths cost up to ~8 GiB of reads per
+  damaged region (measured: 3.3 s for a 64 MiB volume, and it grows with the file). The
+  bytes are now bounded as well as the attempts, which leaves the symptom — a vault that
+  seems to hang while opening — where it belongs, which is nowhere.
+
+- **`event-listener` bumped to 5.4.2**, clearing RUSTSEC-2026-0221 (audit A-4). The
+  advisory is an unsoundness rather than an exploitable flaw and reached this project only
+  through the desktop GUI's Linux accessibility stack, but it had never been triaged and
+  carried no justification in `.cargo/audit.toml`, which is what that file exists for.
+  `cargo audit` now reports nothing at all.
+
+### Changed
+
+- **CI checks that `fuzz/Cargo.lock` records the current crate version** (audit A-3). The
+  detached fuzz workspace's lockfile goes stale at every release bump; the previous round
+  addressed that with a warning inside `scripts/release.sh`, and the three releases after
+  it were cut without running that script, so the warning never fired and the lockfile sat
+  three versions behind. The check now runs on every push, whatever path a release takes.
+
+- **Test coverage for the spare-manifest refresh** (audit A-5). Mutation testing replaced
+  the whole body of `refresh_manifest_mirrors` with nothing, and separately inverted its
+  guard, and the suite stayed green both times — so the path that restores the spares after
+  a password change or a compaction was, in effect, untested.
+
 ## [0.2.7] — 2026-08-03
 
 A bug-fix and resilience release. Vault files are unchanged and fully compatible
