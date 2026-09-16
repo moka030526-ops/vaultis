@@ -25,8 +25,10 @@ rows ignored rather than lost (they are preserved on a round-trip only if the ol
 build does not re-save).
 
 Audited before tagging — [`docs/AUDIT_2026-09-16.md`](docs/AUDIT_2026-09-16.md). That
-round found one High and five Low in this work and in the tree around it; all but the CI
-Android-build fix are resolved below, and none of it ever reached a published release.
+round found one High and six Low in this work and in the tree around it; all are resolved,
+and none of it ever reached a published release. Three of the seven were red CI jobs, one
+of them the Android build that compiles the mobile viewer's Kotlin — so this release's
+mobile change had never been compiled when the round started.
 
 ### Security
 
