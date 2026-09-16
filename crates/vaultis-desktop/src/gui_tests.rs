@@ -2996,3 +2996,50 @@ fn zakat_save_cannot_mask_a_newer_edit_from_another_vault() {
     cleanup(&pa);
     cleanup(&pb);
 }
+
+/// AUDIT 2026-09-16 F-2: the ledger stays selectable and announceable in a READ-ONLY
+/// session — the desktop's default mode and the mobile viewer's only mode.
+///
+/// `TextEdit::interactive(false)` blocks edits but also drops the widget out of the
+/// accessibility tree, so the values could not be selected, copied, or read by a screen
+/// reader. The Taxes tab is the control: it uses the program's normal read-only field.
+#[test]
+fn zakat_values_stay_selectable_in_a_read_only_session() {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let path = tmp("zkro");
+    let mut ov = OpenVault::create(path.clone(), b"a", b"b", fast()).unwrap();
+    let mut z = ZakatEntry::new().unwrap();
+    z.ramadan_year = "1446".into();
+    z.amount_due = "4000".into();
+    z.amount_paid = "1000".into();
+    records::upsert(&mut ov.vault.zakat, z);
+    ov.save().unwrap();
+
+    let mut app = GuiApp::new(path.clone(), false);
+    app.vault = Some(ov);
+    app.screen = Screen::Main;
+    app.writable = false;
+    app.sync_edit_buffer(Tab::Zakat);
+    app.tab = Tab::Zakat;
+
+    let app = std::cell::RefCell::new(app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.try_run().expect("the read-only Zakat tab settles");
+
+    for want in ["1446", "4000", "1000"] {
+        assert_eq!(
+            h.query_all_by_label(want).count(),
+            1,
+            "`{want}` must be reachable (selectable/copyable/announceable) in read-only"
+        );
+    }
+    // The write affordances are still correctly absent.
+    assert_eq!(h.query_all_by_label("💾 Save").count(), 0);
+    assert_eq!(h.query_all_by_label("➕ New Year").count(), 0);
+    assert_eq!(h.query_all_by_label("🗑").count(), 0);
+    cleanup(&path);
+}

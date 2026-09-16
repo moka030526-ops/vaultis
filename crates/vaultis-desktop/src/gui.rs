@@ -4985,27 +4985,9 @@ impl GuiApp {
                         // same-width text fields per row would otherwise collide across rows
                         // and share focus/undo state. The record id is stable for the row's
                         // whole life, so the salt survives adding and deleting other rows.
-                        ui.add(
-                            egui::TextEdit::singleline(&mut r.ramadan_year)
-                                .id_salt(("zakat_year", &r.id))
-                                .hint_text("1446")
-                                .desired_width(120.0)
-                                .interactive(writable),
-                        );
-                        ui.add(
-                            egui::TextEdit::singleline(&mut r.amount_due)
-                                .id_salt(("zakat_due", &r.id))
-                                .hint_text("0")
-                                .desired_width(140.0)
-                                .interactive(writable),
-                        );
-                        ui.add(
-                            egui::TextEdit::singleline(&mut r.amount_paid)
-                                .id_salt(("zakat_paid", &r.id))
-                                .hint_text("0")
-                                .desired_width(140.0)
-                                .interactive(writable),
-                        );
+                        zakat_cell(ui, ("zakat_year", &r.id), &mut r.ramadan_year, writable, 120.0, "1446");
+                        zakat_cell(ui, ("zakat_due", &r.id), &mut r.amount_due, writable, 140.0, "0");
+                        zakat_cell(ui, ("zakat_paid", &r.id), &mut r.amount_paid, writable, 140.0, "0");
                         // The derived column. `None` = at least one amount is non-blank and
                         // does not parse, so there is no honest number to show.
                         match r.remaining() {
@@ -6424,6 +6406,37 @@ fn config_heading(ui: &mut egui::Ui, text: &str) {
 /// can stay in the palette without threading a color through every call.
 fn ui_accent(ui: &egui::Ui) -> egui::Color32 {
     ui.visuals().selection.stroke.color
+}
+
+/// One editable cell of the Zakat table.
+///
+/// Read-only mode deliberately does NOT use `TextEdit::interactive(false)` (audit
+/// 2026-09-16 F-2): that removes the widget from the accessibility tree entirely, so the
+/// value cannot be selected, copied, or announced by a screen reader. Read-only is the
+/// desktop's DEFAULT mode and the mobile viewer's ONLY mode — it is the session in which an
+/// heir actually reads this ledger — so losing those affordances there is worse than losing
+/// them anywhere else. It falls back instead to the same immutable-but-selectable field the
+/// rest of the program uses; see [`field_singleline`] for why binding an immutable buffer
+/// beats disabling the widget.
+///
+/// The per-cell `id_salt` only matters for the editable case: three same-width text fields
+/// per row would otherwise collide across rows and share focus and undo state. The record id
+/// is stable for the row's whole life, so the salt survives adding and deleting other rows.
+fn zakat_cell(
+    ui: &mut egui::Ui,
+    salt: (&str, &str),
+    value: &mut String,
+    writable: bool,
+    width: f32,
+    hint: &str,
+) {
+    if writable {
+        ui.add(
+            egui::TextEdit::singleline(value).id_salt(salt).hint_text(hint).desired_width(width),
+        );
+    } else {
+        read_only_value(ui, value);
+    }
 }
 
 /// A "View" row toggle drawn inside its own visible border.
