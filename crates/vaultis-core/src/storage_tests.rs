@@ -1418,12 +1418,14 @@ fn a_crafted_volume_cannot_make_a_rebuild_read_unboundedly() {
     let m = scan_volume(&mut f, len, &key, &volume_aad("v", 0));
 
     assert!(m.entries.is_empty(), "nothing in this volume authenticates");
-    // Budget, plus one frame of overshoot (the in-flight attempt is always allowed to
-    // finish), plus the 64 KiB window read itself and some slack for prefix reads.
-    let ceiling = RESYNC_READ_BUDGET + MAX_DOC_SIZE + 1024 * 1024;
+    // A LITERAL ceiling, not one computed from `RESYNC_READ_BUDGET`. Expressing it in
+    // terms of the constant under test made the assertion move with the bug: mutating the
+    // budget moved the ceiling with it, so the test could never fail (audit A-6). 256 MiB
+    // is the budget (128 MiB) plus one maximum-size frame of overshoot, plus slack.
+    const CEILING: u64 = 256 * 1024 * 1024;
     assert!(
-        f.bytes < ceiling,
-        "a crafted volume made the rebuild read {} bytes (ceiling {ceiling})",
+        f.bytes < CEILING,
+        "a crafted volume made the rebuild read {} bytes (ceiling {CEILING})",
         f.bytes
     );
 }
@@ -1501,5 +1503,185 @@ fn refreshing_the_spares_covers_partitions_that_already_exist() {
     s.set_redundancy(0);
     s.refresh_manifest_mirrors(&key);
     assert!(!mirror.exists(), "refresh at depth 0 must write nothing");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A `Read + Seek` over an in-memory volume that tallies every byte handed out, so a test
+/// can assert on WORK DONE rather than on elapsed time.
+///
+/// The resync helper is a cost-control layer — the fast path, the plausibility gate, the
+/// attempt/region caps and the read budget. None of it decides what is *recovered*: that
+/// is settled downstream by the AEAD, which is why mutating any of it leaves every
+/// recovery assertion green (audit 2026-08-03 A-6). Counting bytes is what makes those
+/// properties observable.
+struct CountingVolume {
+    inner: std::io::Cursor<Vec<u8>>,
+    bytes: u64,
+}
+
+impl CountingVolume {
+    fn new(bytes: Vec<u8>) -> Self {
+        CountingVolume { inner: std::io::Cursor::new(bytes), bytes: 0 }
+    }
+}
+
+impl Read for CountingVolume {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.bytes += n as u64;
+        Ok(n)
+    }
+}
+
+impl Seek for CountingVolume {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+/// Build a real volume of `n` documents of `body_len` bytes each in partition 0, and
+/// return its bytes plus each frame's `(offset, length)`.
+fn built_volume(tag: &str, n: usize, body_len: usize, key: &Key) -> (Vec<u8>, Vec<(u64, u64)>) {
+    let dir = tmp_dir(tag);
+    let mut s = VolumeStore::open(&dir, key, "v", u64::MAX).unwrap();
+    let body = vec![0x5Au8; body_len];
+    for i in 0..n {
+        s.put(&format!("d{i}"), &format!("/d{i}"), &body, 1, key).unwrap();
+    }
+    let frames = s.manifests[0].entries.iter().map(|e| (e.offset, e.length)).collect();
+    drop(s);
+    let bytes = std::fs::read(dir.join("volume").join("vol.0")).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    (bytes, frames)
+}
+
+/// AUDIT 2026-08-03 A-6: the fast path must actually be taken.
+///
+/// When only a frame's ciphertext rots, its length prefix still points exactly at the
+/// next frame, and the resync tries that one candidate first. Disabling that path (the
+/// `next > from` / `next < file_len` guards) is invisible to every recovery assertion,
+/// because the byte-wise walk finds the same frame — it just reads far more to get there.
+#[test]
+fn the_resync_fast_path_keeps_ordinary_damage_cheap() {
+    let key = fast_key();
+    let (mut bytes, frames) = built_volume("fastpath-cost", 6, 4096, &key);
+    // Rot inside the second frame's ciphertext, leaving its length prefix intact.
+    let (off, len) = frames[1];
+    for b in bytes.iter_mut().skip((off + len / 2) as usize).take(32) {
+        *b = 0xEE;
+    }
+
+    let total = bytes.len() as u64;
+    let mut f = CountingVolume::new(bytes);
+    let m = scan_volume(&mut f, total, &key, &volume_aad("v", 0));
+
+    assert_eq!(m.entries.len(), 5, "every frame but the damaged one is recovered");
+    // Reading the volume through once, plus the damaged frame retried, plus one window.
+    // The byte-wise walk over the same damage costs several times this.
+    // Measured on this fixture: 29,095 bytes with the fast path (the volume read once,
+    // plus the damaged frame and its successor re-read), against 49,859 with it disabled
+    // — the byte-wise walk pulls a whole window and re-reads candidates. Half the volume
+    // again sits cleanly between the two; a looser bound does not separate them, which is
+    // how the first version of this test passed against the mutant it was written for.
+    assert!(
+        f.bytes < total + total / 2,
+        "the fast path was not taken: read {} bytes for a {total}-byte volume",
+        f.bytes
+    );
+}
+
+/// AUDIT 2026-08-03 A-6: the plausibility gate must keep an absurd length cheap.
+///
+/// Before paying for a decrypt attempt the walk checks the advertised length against the
+/// same bounds `read_frame_at` enforces. Weakening that check (`||` to `&&`, or either
+/// comparison) still recovers exactly the same frames — it just turns every offset in the
+/// window into a full frame read.
+#[test]
+fn the_plausibility_gate_keeps_absurd_lengths_cheap() {
+    let key = fast_key();
+    // Every 4-byte window decodes to 0x30000000 (~805 MB): far past MAX_DOC_SIZE, so the
+    // gate must reject each one without reading anything.
+    let mut bytes = Vec::with_capacity(2 * 1024 * 1024);
+    while bytes.len() < 2 * 1024 * 1024 {
+        bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x30]);
+    }
+    let total = bytes.len() as u64;
+    let mut f = CountingVolume::new(bytes);
+    let m = scan_volume(&mut f, total, &key, &volume_aad("v", 0));
+
+    assert!(m.entries.is_empty(), "nothing here authenticates");
+    // One 64 KiB window plus a handful of prefix reads. A gate that admits these lengths
+    // reads whole frames instead, which is orders of magnitude more.
+    assert!(f.bytes < 1024 * 1024, "the gate let absurd lengths through: read {} bytes", f.bytes);
+}
+
+/// AUDIT 2026-08-03 A-6: the cap on how many damaged regions one scan will step over.
+///
+/// `MAX_RESYNCS` is the bound that keeps a thoroughly shredded volume from being walked
+/// end to end. Nothing observed it: with the counter never incrementing, every recovery
+/// test still passed, because stepping over MORE damage only ever finds more frames.
+#[test]
+fn a_scan_stops_after_max_resyncs_damaged_regions() {
+    let key = fast_key();
+    let n = 2 * MAX_RESYNCS as usize + 12; // comfortably more damaged regions than the cap
+    let (mut bytes, frames) = built_volume("resync-cap", n, 64, &key);
+    // Damage every other frame's ciphertext, so each one costs exactly one resync.
+    let mut damaged = 0;
+    for (off, len) in frames.iter().step_by(2) {
+        for b in bytes.iter_mut().skip((off + len / 2) as usize).take(8) {
+            *b = 0xEE;
+        }
+        damaged += 1;
+    }
+    assert!(damaged > MAX_RESYNCS as usize, "the test must exceed the cap to test it");
+
+    let total = bytes.len() as u64;
+    let mut f = CountingVolume::new(bytes);
+    let m = scan_volume(&mut f, total, &key, &volume_aad("v", 0));
+
+    let intact = n - damaged;
+    assert!(
+        m.entries.len() < intact,
+        "the scan stepped over {} regions without hitting the cap ({} of {intact} frames)",
+        damaged,
+        m.entries.len()
+    );
+    assert!(m.entries.len() >= MAX_RESYNCS as usize / 2, "it must still recover what it can");
+}
+
+/// AUDIT 2026-08-03 A-6: the entry cap in the stale-spare merge, at its exact boundary.
+///
+/// `merge_volume_tail` re-applies the `MAX_MANIFEST_ENTRIES` cap so a merge cannot be the
+/// one path that admits an over-count manifest. Both boundary mutants survived — nothing
+/// tested a manifest at, or one past, the cap.
+#[test]
+fn the_merge_entry_cap_is_exact() {
+    let dir = tmp_dir("merge-cap");
+    let key = fast_key();
+    let mut s = VolumeStore::open(&dir, &key, "v", u64::MAX).unwrap();
+    s.put("seed", "/seed", b"x", 1, &key).unwrap();
+    let end = s.manifests[0].end_offset; // the whole volume is already accounted for
+
+    let entry = |i: usize| ManifestEntry {
+        id: format!("x{i}"),
+        path: format!("/x{i}"),
+        size: 1,
+        offset: 0,
+        length: 1,
+        uploaded_at: 0,
+    };
+
+    // Exactly at the cap: allowed.
+    let mut at_cap =
+        Manifest { seq: 1, end_offset: end, entries: (0..MAX_MANIFEST_ENTRIES).map(entry).collect() };
+    assert!(s.merge_volume_tail(&mut at_cap, 0, &key).is_ok(), "exactly MAX_MANIFEST_ENTRIES is allowed");
+
+    // One past it: refused.
+    let mut over_cap =
+        Manifest { seq: 1, end_offset: end, entries: (0..=MAX_MANIFEST_ENTRIES).map(entry).collect() };
+    assert!(
+        matches!(s.merge_volume_tail(&mut over_cap, 0, &key), Err(StorageError::TooLarge)),
+        "one past the cap must be refused"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
