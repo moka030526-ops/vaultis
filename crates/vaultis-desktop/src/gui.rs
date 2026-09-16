@@ -5073,9 +5073,40 @@ impl GuiApp {
         for r in self.edit_zakat.iter_mut() {
             r.trim_fields();
         }
-        let rows = self.edit_zakat.clone();
+        // ONLY the rows whose content actually changed (audit 2026-09-16 F-1).
+        //
+        // `records::upsert` opens with `set_updated_at(now)` unconditionally, and
+        // `updated_at` is not decoration: it is the cross-vault merge's RECENCY KEY —
+        // `merge.rs` takes a source record only when it is STRICTLY newer than the
+        // destination's copy. Every other tab upserts the single record the user had open,
+        // so stamping it is honest. This tab saves the WHOLE table, so upserting
+        // indiscriminately re-stamped rows the user never touched, making this vault falsely
+        // claim the newest copy of them — which silently suppressed a genuine edit merged in
+        // from another machine, with an EMPTY merge preview to show for it. `records::trim_all`,
+        // the program's other bulk writer, already follows this rule for the same reason.
+        let changed: Vec<records::ZakatEntry> = match self.vault.as_ref() {
+            Some(ov) => self
+                .edit_zakat
+                .iter()
+                .filter(|r| match ov.vault.zakat.iter().find(|s| s.id == r.id) {
+                    // Compare only the three fields the user can type into — the same ones
+                    // `ZakatEntry`'s `diff` tracks. `updated_at`/`history` are bookkeeping
+                    // `upsert` maintains itself, so comparing them would make every row
+                    // differ and defeat the filter entirely.
+                    Some(saved) => {
+                        saved.ramadan_year != r.ramadan_year
+                            || saved.amount_due != r.amount_due
+                            || saved.amount_paid != r.amount_paid
+                    }
+                    // No saved copy: a brand-new row from ➕ New Year.
+                    None => true,
+                })
+                .cloned()
+                .collect(),
+            None => return,
+        };
         if let Some(ov) = self.vault.as_mut() {
-            for r in rows {
+            for r in changed {
                 records::upsert(&mut ov.vault.zakat, r);
             }
         }

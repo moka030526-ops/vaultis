@@ -2897,3 +2897,102 @@ fn accounts_view_options_still_toggle_inside_their_borders() {
     assert!(app.borrow().reveal_all, "and so does the reveal toggle");
     cleanup(&path);
 }
+
+// --- Audit 2026-09-16 regressions -------------------------------------------
+
+/// AUDIT 2026-09-16 F-1: saving the Zakat table must not re-stamp rows the user did not
+/// touch.
+///
+/// `records::upsert` sets `updated_at = now` unconditionally, and this tab is the only one
+/// that saves a WHOLE collection rather than the single record the user had open. Stamping
+/// an untouched row makes this vault falsely claim the newest copy of it.
+#[test]
+fn zakat_save_does_not_restamp_untouched_rows() {
+    let (mut app, path) = app_unlocked("zksave1");
+    // Stamped in the past so a re-stamp is visible despite unix_now()'s 1-second grain.
+    let old = records::unix_now() - 500;
+    {
+        let ov = app.vault.as_mut().unwrap();
+        for (y, d, p) in [("1445", "3000", "3000"), ("1446", "4000", "1000")] {
+            let mut z = ZakatEntry::new().unwrap();
+            z.ramadan_year = y.into();
+            z.amount_due = d.into();
+            z.amount_paid = p.into();
+            records::upsert(&mut ov.vault.zakat, z);
+        }
+        for r in ov.vault.zakat.iter_mut() {
+            r.updated_at = old;
+        }
+        ov.save().unwrap();
+    }
+    app.sync_edit_buffer(Tab::Zakat);
+
+    // Edit ONLY the second row, then save the tab.
+    app.edit_zakat[1].amount_paid = "2500".into();
+    app.save_zakat();
+
+    let v = &app.vault.as_ref().unwrap().vault;
+    let untouched = v.zakat.iter().find(|r| r.ramadan_year == "1445").unwrap();
+    let edited = v.zakat.iter().find(|r| r.ramadan_year == "1446").unwrap();
+    assert_eq!(
+        untouched.updated_at, old,
+        "an untouched row must keep its updated_at — that field is the merge's recency key"
+    );
+    assert_eq!(untouched.amount_paid, "3000", "and its content is unchanged");
+    assert!(edited.updated_at > old, "the row that DID change is stamped, as it should be");
+    assert_eq!(edited.amount_paid, "2500");
+    cleanup(&path);
+}
+
+/// AUDIT 2026-09-16 F-1: the consequence the re-stamp had — a genuine edit from another
+/// machine silently discarded by a later merge, with an EMPTY preview.
+#[test]
+fn zakat_save_cannot_mask_a_newer_edit_from_another_vault() {
+    let base = records::unix_now() - 1000;
+    let mut row = ZakatEntry::new().unwrap();
+    row.ramadan_year = "1445".into();
+    row.amount_due = "3000".into();
+    row.amount_paid = "1000".into();
+    row.updated_at = base;
+    let rid = row.id.clone();
+
+    // Machine B records the payment — a real edit, genuinely newer.
+    let pb = tmp("zkmrgB");
+    let mut b = OpenVault::create(pb.clone(), b"a", b"b", fast()).unwrap();
+    let mut brow = row.clone();
+    brow.amount_paid = "3000".into();
+    brow.updated_at = base + 100;
+    b.vault.zakat.push(brow);
+    b.save().unwrap();
+    drop(b);
+
+    // Machine A holds the same row untouched, and saves the tab while editing a DIFFERENT
+    // year — the step that used to re-stamp 1445 and make A look newer than B.
+    let (mut app, pa) = app_unlocked("zkmrgA");
+    {
+        let ov = app.vault.as_mut().unwrap();
+        ov.vault.zakat.push(row.clone());
+        let mut other = ZakatEntry::new().unwrap();
+        other.ramadan_year = "1446".into();
+        other.updated_at = base;
+        ov.vault.zakat.push(other);
+        ov.save().unwrap();
+    }
+    app.sync_edit_buffer(Tab::Zakat);
+    app.edit_zakat[1].amount_due = "9999".into();
+    app.save_zakat();
+
+    // Merge B into A: B's edit is genuinely newer, so it must be both PREVIEWED and applied.
+    let src = OpenVault::open_with(pb.clone(), b"a", b"b", true).unwrap();
+    let plan = app.vault.as_ref().unwrap().plan_merge_from(&src).unwrap();
+    assert_eq!(
+        plan.records.len(),
+        1,
+        "the preview must show the incoming edit — an empty plan tells the user nothing"
+    );
+    app.vault.as_mut().unwrap().apply_merge_from(&src).unwrap();
+    let after = app.vault.as_ref().unwrap().vault.zakat.iter().find(|r| r.id == rid).unwrap();
+    assert_eq!(after.amount_paid, "3000", "the other machine's real edit survived the merge");
+    cleanup(&pa);
+    cleanup(&pb);
+}
