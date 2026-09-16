@@ -1459,7 +1459,17 @@ impl ZakatEntry {
     /// quietly treating "ask Dad" as 0 would understate what is still owed.
     pub fn remaining(&self) -> Option<f64> {
         // `?` on each side propagates the `None` from an unparseable (non-blank) field.
-        Some(zakat_amount(&self.amount_due)? - zakat_amount(&self.amount_paid)?)
+        let v = zakat_amount(&self.amount_due)? - zakat_amount(&self.amount_paid)?;
+        // ...but two individually-FINITE amounts can still overflow on subtraction:
+        // `1.7e308 - -1.7e308` is +inf, and `parse_approx_value` accepts both sides. The
+        // GUI happens to survive that because `fmt_money` guards non-finite values, but
+        // the CSV export and the FFI format this number raw and so emitted the literal
+        // text "inf" — a value the FFI's own DTO contract says is impossible (audit
+        // 2026-09-16 F-3). Guarding HERE rather than at each boundary is what keeps the
+        // table, the totals, the CSV and the phone from disagreeing: a remainder that is
+        // not a real number is reported as "cannot be worked out", exactly like an
+        // unreadable amount.
+        v.is_finite().then_some(v)
     }
 }
 

@@ -261,3 +261,22 @@ fn build_tab_csv_maps_the_zakat_tab() {
     assert_eq!((base, n), ("zakat", 1));
     assert!(text.contains("1446"));
 }
+
+/// AUDIT 2026-09-16 F-3: the CSV must never carry `inf` in the remaining column.
+/// A spreadsheet cell reading "inf" in a financial export is a fabricated figure; the
+/// empty cell is the honest rendering, and is what the column already uses for an
+/// unreadable amount.
+#[test]
+fn zakat_csv_never_emits_a_non_finite_remaining() {
+    let mut z = ZakatEntry::new().unwrap();
+    z.id = "id-x".into();
+    z.ramadan_year = "1446".into();
+    z.amount_due = "1.7e308".into();
+    z.amount_paid = "-1.7e308".into();
+    let out = zakat_csv(std::slice::from_ref(&z));
+    assert!(!out.contains("inf"), "non-finite remainder leaked into the CSV:\n{out}");
+    let line = out.split("\r\n").nth(1).unwrap();
+    // id, year, due, paid, remaining(empty), created, updated
+    let cells: Vec<&str> = line.split(',').collect();
+    assert_eq!(cells[4], "", "the remaining cell is empty, not a fabricated number");
+}

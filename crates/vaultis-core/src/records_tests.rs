@@ -2171,3 +2171,31 @@ fn zakat_participates_in_the_whole_vault_sweeps() {
         "every entry older than the cutoff is gone"
     );
 }
+
+/// AUDIT 2026-09-16 F-3: a remainder that is not a real number must be reported as
+/// "cannot be worked out", not handed to a caller that will print it.
+///
+/// `parse_approx_value` rejects a non-finite FIELD, so both amounts are individually
+/// finite — but their difference need not be. Before the fix `remaining()` returned
+/// `Some(inf)`, and the two consumers that format it raw (the CSV export and the FFI)
+/// emitted the literal text "inf"; only the GUI survived, because `fmt_money` happens to
+/// guard non-finite values. Guarding at the source is what keeps all three in agreement.
+#[test]
+fn zakat_remaining_is_none_when_not_finite() {
+    let mut z = ZakatEntry::new().unwrap();
+    z.amount_due = "1.7e308".into();
+    z.amount_paid = "-1.7e308".into();
+    // Each side parses to a finite number on its own...
+    assert!(parse_approx_value(&z.amount_due).unwrap().is_finite());
+    assert!(parse_approx_value(&z.amount_paid).unwrap().is_finite());
+    // ...but the subtraction overflows, and that must not escape as a value.
+    assert_eq!(z.remaining(), None, "an overflowing remainder is not a number to report");
+    // The same the other way round (negative overflow).
+    z.amount_due = "-1.7e308".into();
+    z.amount_paid = "1.7e308".into();
+    assert_eq!(z.remaining(), None);
+    // An ordinary large-but-representable difference is untouched.
+    z.amount_due = "1e300".into();
+    z.amount_paid = "0".into();
+    assert_eq!(z.remaining(), Some(1e300));
+}
