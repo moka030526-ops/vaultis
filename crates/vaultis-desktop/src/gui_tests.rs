@@ -608,7 +608,15 @@ fn window_icon_decodes_to_rgba8() {
         "RGBA8 = 4 bytes per pixel"
     );
     // Real artwork, not a fully transparent square.
-    assert!(icon.rgba.chunks_exact(4).any(|px| px[3] > 0), "icon has visible pixels");
+    //
+    // `clippy::chunks_exact_to_as_chunks` (new in Rust 1.98) wants `as_chunks::<4>()` here.
+    // Allowed rather than rewritten: `as_chunks` stabilised in that same release, so taking
+    // the suggestion would make this test require the newest stable toolchain to compile.
+    // Audit 2026-09-16 F-6 is precisely that a contributor's local toolchain lags CI's, and
+    // raising the floor for a test-only assertion would widen that gap rather than close it.
+    #[allow(clippy::chunks_exact_to_as_chunks)]
+    let has_visible = icon.rgba.chunks_exact(4).any(|px| px[3] > 0);
+    assert!(has_visible, "icon has visible pixels");
 }
 
 /// Every UiScale round-trips through its prefs id, and the zoom factors are sane and
