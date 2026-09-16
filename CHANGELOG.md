@@ -24,6 +24,18 @@ opens here with an empty ledger, and a vault written here opens in 0.2.8 with th
 rows ignored rather than lost (they are preserved on a round-trip only if the older
 build does not re-save).
 
+Audited before tagging — [`docs/AUDIT_2026-09-16.md`](docs/AUDIT_2026-09-16.md). That
+round found one High and five Low in this work and in the tree around it; all but the CI
+Android-build fix are resolved below, and none of it ever reached a published release.
+
+### Security
+
+- **Dependency updates for two advisories.** `webbrowser` 1.2.1 → 1.2.4
+  (RUSTSEC-2026-0257, `BROWSER` argument injection) and `lru` 0.18.0 → 0.18.4
+  (RUSTSEC-2026-0253, unsoundness in `LruCache::pop`). Neither is reachable from vaultis —
+  the program contains no hyperlink, no `OpenUrl` and no `BROWSER` use, and `lru` sits
+  inside ratatui's internal caching — but both were turning the supply-chain gate red.
+
 ### Added
 
 - **A Zakat tab** — a four-column ledger of zakat by Ramadan year: *Ramadan Year*,
@@ -32,8 +44,12 @@ build does not re-save).
   exists to surface — what is still owed across every year — should be readable without
   clicking through the years one at a time. **Remaining is derived, never stored**
   (`ZakatEntry::remaining` = due − paid), so the vault cannot hold a remainder that
-  disagrees with the amounts it came from; an amount that is not a number shows a dash
-  rather than a fabricated zero. Present on all three front-ends (desktop GUI, `--tui`,
+  disagrees with the amounts it came from; an amount that is not a number — or a
+  subtraction that overflows — shows a dash rather than a fabricated figure, identically
+  in the table, the CSV and the phone. Saving the table writes only the rows that actually
+  changed, so an untouched year keeps its `updated_at` and cannot mask a newer edit merged
+  in from another machine. In a read-only session the cells stay selectable and copyable,
+  like every other tab's. Present on all three front-ends (desktop GUI, `--tui`,
   and the read-only mobile viewer) and in the per-tab CSV export. Vault files stay
   format **v4** — the new `zakat` collection is `#[serde(default)]`, so a vault written
   by an older build opens unchanged, and one written by this build opens in an older
