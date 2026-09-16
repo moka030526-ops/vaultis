@@ -154,6 +154,7 @@ pub enum RecordKind {
     RealEstate,
     TaxFiling,
     GeneralDocument,
+    Zakat,
 }
 
 /// One row in a tab's master list.
@@ -204,6 +205,25 @@ pub struct TaxFiling {
     /// How many documents are attached (the ids themselves are not useful to the
     /// host until document export exists, but the count must not be hidden).
     pub document_count: u32,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// One Ramadan year's zakat row.
+///
+/// `remaining` is sent as a **pre-formatted string**, computed here from the core's
+/// `ZakatEntry::remaining`, rather than as a number the host recomputes: the desktop and the
+/// phone must never be able to disagree about what is still owed. An empty string means the
+/// amounts are not both numeric, so there is no remainder to state — the host shows that as
+/// "—", exactly as the desktop table does, and must NOT substitute a zero.
+#[derive(uniffi::Record)]
+pub struct ZakatEntry {
+    pub id: String,
+    pub ramadan_year: String,
+    pub amount_due: String,
+    pub amount_paid: String,
+    /// Due − paid as plain digits (e.g. "1500"), or "" when it cannot be worked out.
+    pub remaining: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -323,6 +343,20 @@ fn map_tax_filing(r: &records::TaxFiling) -> TaxFiling {
         // `as u32` is safe: the document count is bounded by the store's own caps,
         // far below u32::MAX, and a saturating cast keeps a corrupt count from wrapping.
         document_count: u32::try_from(r.documents.len()).unwrap_or(u32::MAX),
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+    }
+}
+
+fn map_zakat(r: &records::ZakatEntry) -> ZakatEntry {
+    ZakatEntry {
+        id: r.id.clone(),
+        ramadan_year: r.ramadan_year.clone(),
+        amount_due: r.amount_due.clone(),
+        amount_paid: r.amount_paid.clone(),
+        // `map_or_else` on the Option: `None` (the amounts are not both numeric) becomes the
+        // empty string the DTO documents as "no remainder to state", never a fabricated 0.
+        remaining: r.remaining().map_or_else(String::new, |v| format!("{v}")),
         created_at: r.created_at,
         updated_at: r.updated_at,
     }
@@ -483,6 +517,7 @@ impl Vault {
             RecordKind::RealEstate => v.real_estate.iter().map(summary).collect(),
             RecordKind::TaxFiling => v.tax_filings.iter().map(summary).collect(),
             RecordKind::GeneralDocument => v.general_documents.iter().map(summary).collect(),
+            RecordKind::Zakat => v.zakat.iter().map(summary).collect(),
         }
     }
 
@@ -499,6 +534,7 @@ impl Vault {
             RecordKind::RealEstate => v.real_estate.len(),
             RecordKind::TaxFiling => v.tax_filings.len(),
             RecordKind::GeneralDocument => v.general_documents.len(),
+            RecordKind::Zakat => v.zakat.len(),
         };
         n as u32
     }
@@ -540,6 +576,16 @@ impl Vault {
             .iter()
             .find(|r| r.id == id)
             .map(map_general_document)
+            .ok_or(VaultError::RecordNotFound)
+    }
+
+    pub fn get_zakat(&self, id: String) -> Result<ZakatEntry, VaultError> {
+        let ov = self.lock();
+        ov.vault
+            .zakat
+            .iter()
+            .find(|r| r.id == id)
+            .map(map_zakat)
             .ok_or(VaultError::RecordNotFound)
     }
 
@@ -599,6 +645,7 @@ impl Vault {
             RecordKind::RealEstate => v.real_estate.iter().find(|r| r.id == id).map(|r| &r.history),
             RecordKind::TaxFiling => v.tax_filings.iter().find(|r| r.id == id).map(|r| &r.history),
             RecordKind::GeneralDocument => v.general_documents.iter().find(|r| r.id == id).map(|r| &r.history),
+            RecordKind::Zakat => v.zakat.iter().find(|r| r.id == id).map(|r| &r.history),
         };
         history
             .map(|h| h.iter().map(map_change).collect())

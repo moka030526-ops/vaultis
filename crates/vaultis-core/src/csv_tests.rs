@@ -229,3 +229,35 @@ fn build_tab_csv_maps_each_tab_to_its_collection() {
     let (base, _t, n) = build_tab_csv(&v, CsvTab::Instructions, echo);
     assert_eq!((base, n), ("instructions", 0));
 }
+
+#[test]
+fn zakat_csv_exports_the_derived_remaining_column() {
+    let mk = |year: &str, due: &str, paid: &str| {
+        let mut z = ZakatEntry::new().unwrap();
+        z.id = format!("id-{year}");
+        z.ramadan_year = year.into();
+        z.amount_due = due.into();
+        z.amount_paid = paid.into();
+        z
+    };
+    let out = zakat_csv(&[mk("1446", "4000", "1500"), mk("1447", "2000", "not yet")]);
+    let lines: Vec<&str> = out.split("\r\n").filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 3, "header + two records");
+    assert_eq!(lines[0], "id,ramadan_year,amount_due,amount_paid,remaining,created,updated");
+    // The CSV carries the COMPUTED remainder, so the file agrees with the tab.
+    assert!(lines[1].starts_with("id-1446,1446,4000,1500,2500,"), "got {}", lines[1]);
+    // An unreadable amount exports an EMPTY remaining cell — never a stand-in zero,
+    // which would read in a spreadsheet as an obligation already settled.
+    assert!(lines[2].starts_with("id-1447,1447,2000,not yet,,"), "got {}", lines[2]);
+}
+
+#[test]
+fn build_tab_csv_maps_the_zakat_tab() {
+    let mut v = Vault::default();
+    let mut z = ZakatEntry::new().unwrap();
+    z.ramadan_year = "1446".into();
+    v.zakat.push(z);
+    let (base, text, n) = build_tab_csv(&v, CsvTab::Zakat, echo);
+    assert_eq!((base, n), ("zakat", 1));
+    assert!(text.contains("1446"));
+}

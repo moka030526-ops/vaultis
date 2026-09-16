@@ -33,6 +33,7 @@
 
 use crate::records::{
     self, Account, AssetLiability, GeneralDocument, Instruction, RealEstate, TaxFiling, TrustWill, Urgent, Vault,
+    ZakatEntry,
 };
 
 /// The basename of a volume virtual path (`taxes/2024/<ts>/w2.pdf` -> `w2.pdf`).
@@ -252,6 +253,25 @@ pub fn general_documents_csv(rows: &[GeneralDocument], name_of: impl Fn(&str) ->
     out
 }
 
+/// The Zakat ledger. `remaining` is exported as the DERIVED number (due − paid), not as a
+/// stored field — it is a column of the tab, so leaving it out would make the CSV disagree
+/// with what the user is looking at. A row whose amounts don't parse exports an empty
+/// remaining cell, matching the "—" the table shows rather than guessing a zero.
+pub fn zakat_csv(rows: &[ZakatEntry]) -> String {
+    let mut out = String::new();
+    row(&mut out, &["id", "ramadan_year", "amount_due", "amount_paid", "remaining", "created", "updated"]);
+    for r in rows {
+        // `map_or_else` on the Option: `None` (unparseable) -> empty cell, `Some(v)` ->
+        // the plain number. Not `fmt_money` — a CSV cell should be re-importable, so no
+        // thousands separators or currency symbol.
+        let remaining = r.remaining().map_or_else(String::new, |v| format!("{v}"));
+        let created = iso_utc(r.created_at);
+        let updated = iso_utc(r.updated_at);
+        row(&mut out, &[&r.id, &r.ramadan_year, &r.amount_due, &r.amount_paid, &remaining, &created, &updated]);
+    }
+    out
+}
+
 // --- Tab dispatch (shared by both front-ends) --------------------------------
 
 /// Which record tab to export. Lets the GUI and TUI share ONE tab -> collection
@@ -267,6 +287,7 @@ pub enum CsvTab {
     RealEstate,
     Taxes,
     GeneralDocuments,
+    Zakat,
 }
 
 /// Build the CSV for one tab's records: returns the base filename (the front-ends append
@@ -293,6 +314,7 @@ pub fn build_tab_csv(v: &Vault, tab: CsvTab, name_of: impl Fn(&str) -> String) -
         CsvTab::GeneralDocuments => {
             ("general-documents", general_documents_csv(&v.general_documents, name_of), v.general_documents.len())
         }
+        CsvTab::Zakat => ("zakat", zakat_csv(&v.zakat), v.zakat.len()),
     }
 }
 

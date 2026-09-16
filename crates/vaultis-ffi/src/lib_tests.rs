@@ -34,6 +34,7 @@ fn v1_ffi_surface_is_locked() {
             RecordKind::RealEstate => "RealEstate",
             RecordKind::TaxFiling => "TaxFiling",
             RecordKind::GeneralDocument => "GeneralDocument",
+            RecordKind::Zakat => "Zakat",
         }
     }
     for k in [
@@ -45,6 +46,7 @@ fn v1_ffi_surface_is_locked() {
         RecordKind::RealEstate,
         RecordKind::TaxFiling,
         RecordKind::GeneralDocument,
+        RecordKind::Zakat,
     ] {
         assert!(!kind_name(k).is_empty());
     }
@@ -113,6 +115,15 @@ fn v1_ffi_surface_is_locked() {
         created_at: 0,
         updated_at: 0,
     };
+    let _ = ZakatEntry {
+        id: String::new(),
+        ramadan_year: String::new(),
+        amount_due: String::new(),
+        amount_paid: String::new(),
+        remaining: String::new(),
+        created_at: 0,
+        updated_at: 0,
+    };
     let _ = RealEstate {
         id: String::new(),
         address: String::new(),
@@ -149,6 +160,7 @@ struct Ids {
     re: String,
     tax: String,
     gendoc: String,
+    zakat: String,
 }
 
 /// Write a small throwaway source file (so `add_document` can ingest it).
@@ -273,6 +285,15 @@ fn make_full_vault(dir: &std::path::Path, pw1: &[u8], pw2: &[u8]) -> Ids {
     let gd_id = gd.id.clone();
     records::upsert(&mut ov.vault.general_documents, gd);
 
+    // A zakat row — the ledger tab. No documents; the interesting part is that
+    // `remaining` is DERIVED, so the fixture gives it two amounts that actually subtract.
+    let mut z = records::ZakatEntry::new().unwrap();
+    z.ramadan_year = "1446".into();
+    z.amount_due = "4000".into();
+    z.amount_paid = "1500".into();
+    let z_id = z.id.clone();
+    records::upsert(&mut ov.vault.zakat, z);
+
     ov.save().unwrap();
     Ids {
         urgent: urgent_id,
@@ -283,6 +304,7 @@ fn make_full_vault(dir: &std::path::Path, pw1: &[u8], pw2: &[u8]) -> Ids {
         re: re_id,
         tax: tax_id,
         gendoc: gd_id,
+        zakat: z_id,
     }
 }
 
@@ -473,6 +495,7 @@ fn full_vault_exposes_only_v1_surface() {
         RecordKind::RealEstate,
         RecordKind::TaxFiling,
         RecordKind::GeneralDocument,
+        RecordKind::Zakat,
     ] {
         assert_eq!(v.count(kind), 1, "{kind:?} present");
         assert_eq!(v.list_records(kind).len(), 1, "{kind:?} listed");
@@ -494,11 +517,20 @@ fn full_vault_exposes_only_v1_surface() {
     assert_eq!(gd.title, "Passport");
     assert!(gd.file.is_some(), "the attached blob is visible to the host");
 
+    // Zakat's `remaining` is DERIVED on this side of the boundary, so the phone can never
+    // show a remainder that disagrees with the desktop: 4000 due − 1500 paid = 2500.
+    let z = v.get_zakat(ids.zakat.clone()).expect("zakat row is readable");
+    assert_eq!(z.ramadan_year, "1446");
+    assert_eq!(z.amount_due, "4000");
+    assert_eq!(z.amount_paid, "1500");
+    assert_eq!(z.remaining, "2500", "remaining is computed, not stored");
+
     assert!(matches!(v.get_instruction(ids.tax.clone()), Err(VaultError::RecordNotFound)));
     assert!(matches!(v.get_trust_will(ids.tax.clone()), Err(VaultError::RecordNotFound)));
     assert!(matches!(v.get_asset(ids.tax.clone()), Err(VaultError::RecordNotFound)));
     assert!(matches!(v.get_account(ids.tax.clone()), Err(VaultError::RecordNotFound)));
     assert!(matches!(v.get_real_estate(ids.tax.clone()), Err(VaultError::RecordNotFound)));
+    assert!(matches!(v.get_zakat(ids.tax.clone()), Err(VaultError::RecordNotFound)));
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -516,6 +548,7 @@ fn get_history_for_every_kind_has_created_entry() {
         (RecordKind::RealEstate, &ids.re),
         (RecordKind::TaxFiling, &ids.tax),
         (RecordKind::GeneralDocument, &ids.gendoc),
+        (RecordKind::Zakat, &ids.zakat),
     ] {
         let hist = v.get_history(kind, id.clone()).unwrap();
         assert!(!hist.is_empty(), "history present for {kind:?}");
@@ -692,6 +725,7 @@ fn every_core_record_collection_is_reachable_through_the_ffi() {
         real_estate,
         tax_filings,
         general_documents,
+        zakat,
         // --- everything else: metadata, not user-visible record collections -------
         version: _,
         generation: _,
@@ -713,6 +747,7 @@ fn every_core_record_collection_is_reachable_through_the_ffi() {
         ("real_estate", real_estate.len(), RecordKind::RealEstate),
         ("tax_filings", tax_filings.len(), RecordKind::TaxFiling),
         ("general_documents", general_documents.len(), RecordKind::GeneralDocument),
+        ("zakat", zakat.len(), RecordKind::Zakat),
     ];
     // ...then RELEASE it before touching the FFI. `Vault::count` takes the very same
     // std::sync::Mutex, which is NOT reentrant, so querying it while still holding the

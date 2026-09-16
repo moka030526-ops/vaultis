@@ -622,6 +622,7 @@ fn tab_titles_are_correct_and_unique() {
             "Real Estate",
             "Taxes",
             "General Documents",
+            "Zakat",
             "Summary",
         ]
     );
@@ -2438,5 +2439,76 @@ fn ctrl_o_works_read_only_while_link_and_unlink_are_gated() {
     assert_eq!(app.screen, Screen::Browse);
     let labels = app.current_labels();
     assert_eq!(labels.get(app.selected).map(|(id, _)| id.as_str()), Some(acct_id.as_str()));
+    cleanup(&path);
+}
+
+#[test]
+fn tui_zakat_tab_creates_a_row_and_shows_the_four_columns() {
+    let (mut app, path) = app_unlocked("uizakat");
+    app.handle_key(key(KeyCode::Char('9'))); // Zakat is the ninth tab
+    assert_eq!(app.tab, Tab::Zakat);
+
+    app.handle_key(key(KeyCode::Char('n'))); // new -> Edit screen
+    assert_eq!(app.screen, Screen::Edit);
+    // Field order: 0 ramadan year, 1 amount due, 2 amount paid. There is no fourth
+    // field — Remaining is derived, so there is nothing to type into.
+    assert_eq!(app.edit.as_ref().unwrap().fields.len(), 3, "three EDITABLE fields, not four");
+    for c in "1446".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Down));
+    for c in "4000".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(key(KeyCode::Down));
+    for c in "1500".chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+    app.handle_key(ctrl('s')); // save
+    assert_eq!(app.screen, Screen::Browse);
+
+    let v = &app.vault.as_ref().unwrap().vault;
+    assert_eq!(v.zakat.len(), 1);
+    assert_eq!(v.zakat[0].ramadan_year, "1446");
+    assert_eq!(v.zakat[0].amount_due, "4000");
+    assert_eq!(v.zakat[0].amount_paid, "1500");
+    assert_eq!(v.zakat[0].remaining(), Some(2500.0));
+
+    // The terminal has ONE list column, so all four columns live in the row's label —
+    // including the computed remainder, which is the number the tab exists to show.
+    let screen = render_to_string(&app);
+    assert!(screen.contains("Ramadan 1446"), "screen: {screen}");
+    assert!(screen.contains("due 4000"), "screen: {screen}");
+    assert!(screen.contains("paid 1500"), "screen: {screen}");
+    assert!(screen.contains("remaining $2,500"), "the derived column is on screen: {screen}");
+    cleanup(&path);
+}
+
+#[test]
+fn tui_zero_key_reaches_the_last_tab() {
+    // A tenth tab pushed Summary past the 1–9 shortcuts; `0` is the last tab, so no tab
+    // is reachable only by arrowing across the whole strip.
+    let (mut app, path) = app_unlocked("uizero");
+    app.handle_key(key(KeyCode::Char('0')));
+    assert_eq!(app.tab, Tab::Summary, "0 jumps to the last tab");
+    assert_eq!(*Tab::ALL.last().unwrap(), Tab::Summary, "…and Summary is still last");
+    cleanup(&path);
+}
+
+#[test]
+fn tui_zakat_delete_removes_the_row() {
+    let (mut app, path) = app_unlocked("uizakatdel");
+    {
+        let v = &mut app.vault.as_mut().unwrap().vault;
+        let mut z = records::ZakatEntry::new().unwrap();
+        z.ramadan_year = "1446".into();
+        z.amount_due = "4000".into();
+        records::upsert(&mut v.zakat, z);
+    }
+    app.handle_key(key(KeyCode::Char('9'))); // Zakat
+    assert_eq!(app.current_labels().len(), 1);
+    app.handle_key(key(KeyCode::Char('d'))); // delete (armed)
+    app.handle_key(key(KeyCode::Char('y'))); // confirm
+    assert!(app.vault.as_ref().unwrap().vault.zakat.is_empty(), "status: {}", app.status);
     cleanup(&path);
 }

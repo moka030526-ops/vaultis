@@ -12,7 +12,36 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **A Zakat tab** — a four-column ledger of zakat by Ramadan year: *Ramadan Year*,
+  *Amount Due*, *Amount Paid*, *Remaining*. It is the first record tab drawn as an
+  editable table rather than a list beside a single-record form, because the number it
+  exists to surface — what is still owed across every year — should be readable without
+  clicking through the years one at a time. **Remaining is derived, never stored**
+  (`ZakatEntry::remaining` = due − paid), so the vault cannot hold a remainder that
+  disagrees with the amounts it came from; an amount that is not a number shows a dash
+  rather than a fabricated zero. Present on all three front-ends (desktop GUI, `--tui`,
+  and the read-only mobile viewer) and in the per-tab CSV export. Vault files stay
+  format **v4** — the new `zakat` collection is `#[serde(default)]`, so a vault written
+  by an older build opens unchanged, and one written by this build opens in an older
+  build with the zakat rows ignored.
+- **Copy buttons on the Real Estate portal URLs and usernames**, matching the ones the
+  Accounts tab already had. Each of the four portal cards now offers copy on all three
+  of its fields. Copying is a read, so the buttons work in a read-only session; they are
+  disabled only when the field is empty, and copying a non-secret does not arm the
+  15-second clipboard auto-clear that a password copy does.
+- The terminal front-end's `0` key jumps to the **last** tab, so no tab is reachable only
+  by arrowing across the strip now that there are ten of them.
+
+### Changed
+
+- **The View-row options are drawn inside visible borders** (Accounts' *grouped tree* and
+  *reveal all passwords*, Assets' *grouped tree* and *review only*, Real Estate's *reveal
+  all portal passwords*). A bare tick box and a word had nothing marking where one option
+  ended and the next began. The border is drawn in both states — an active option also
+  takes the accent color and a tint, so a grouped list or revealed passwords is visible at
+  a glance, with the tick box still carrying the state so it never rests on color alone.
 
 ## [0.2.8] — 2026-08-03
 

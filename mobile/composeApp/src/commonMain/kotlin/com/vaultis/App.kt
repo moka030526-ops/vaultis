@@ -90,7 +90,7 @@ private class IdleClock {
 }
 
 /**
- * The vault tabs, each mapping to a core [RecordKind]. **All eight collections the core
+ * The vault tabs, each mapping to a core [RecordKind]. **All nine collections the core
  * stores appear here**, in the desktop's tab order.
  *
  * `Urgent` is first, and is the tab the app opens on, because that is what it is for: the
@@ -109,6 +109,7 @@ private enum class Section(val title: String, val kind: RecordKind) {
     RealEstate("Real Estate", RecordKind.REAL_ESTATE),
     Taxes("Taxes", RecordKind.TAX_FILING),
     Documents("Documents", RecordKind.GENERAL_DOCUMENT),
+    Zakat("Zakat", RecordKind.ZAKAT),
 }
 
 /**
@@ -538,6 +539,19 @@ private fun DetailScreen(vault: Vault, kind: RecordKind, id: String, onCopy: (St
                         if (r.documentCount == 0u) "none"
                         else "${r.documentCount} (open on desktop)",
                     )
+                }
+            }
+            RecordKind.ZAKAT -> {
+                val r = remember(id) { runCatching { vault.getZakat(id) }.getOrNull() }
+                if (r == null) NotFound() else {
+                    Field("Ramadan Year", r.ramadanYear)
+                    Field("Amount Due", r.amountDue)
+                    Field("Amount Paid", r.amountPaid)
+                    // `remaining` is computed by the core, never stored, so this figure and
+                    // the desktop's cannot drift apart. An empty string means the amounts are
+                    // not both numeric — show that as "—", NEVER as a zero, or an obligation
+                    // that is still owed would read on the phone as settled.
+                    Field("Remaining", if (r.remaining.isEmpty()) "—" else r.remaining)
                 }
             }
             RecordKind.GENERAL_DOCUMENT -> {

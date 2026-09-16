@@ -948,6 +948,7 @@ pub fn compact_history(vault: &mut Vault, cutoff: Option<i64>, drop_all: bool) -
         + trim_histories(&mut vault.real_estate, cutoff, drop_all)
         + trim_histories(&mut vault.tax_filings, cutoff, drop_all)
         + trim_histories(&mut vault.general_documents, cutoff, drop_all)
+        + trim_histories(&mut vault.zakat, cutoff, drop_all)
 }
 
 /// How many history entries `compact_history` would remove for the same
@@ -986,6 +987,9 @@ pub fn history_stats(vault: &Vault, cutoff: Option<i64>, drop_all: bool) -> usiz
         n += count(&r.history);
     }
     for r in &vault.general_documents {
+        n += count(&r.history);
+    }
+    for r in &vault.zakat {
         n += count(&r.history);
     }
     n
@@ -1422,6 +1426,68 @@ pub struct GeneralDocument {
     pub history: Vec<Change>,
 }
 
+/// Tab 8 — one Ramadan year's zakat obligation: the year, what was due, and what has
+/// been paid against it. The fourth column the UI shows, **Remaining, is never stored**:
+/// it is recomputed from the other two by [`ZakatEntry::remaining`], so the vault cannot
+/// hold a remainder that silently disagrees with the numbers it came from.
+///
+/// The two amounts are free text (not `f64`) for the same reason `AssetLiability::
+/// approx_value` is: the user's own notation — "12,500", "$12,500", "12.5k" — is
+/// preserved verbatim, and [`parse_approx_value`] does the lenient parse when a number
+/// is actually needed.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Zeroize, ZeroizeOnDrop)]
+pub struct ZakatEntry {
+    pub id: String,
+    /// The Ramadan (Hijri) year the obligation belongs to, e.g. "1446". Free text, so a
+    /// user who tracks it as "1446 / 2025" can write exactly that.
+    pub ramadan_year: String,
+    /// Amount due for that year, as typed.
+    pub amount_due: String,
+    /// Amount paid so far against that year, as typed.
+    pub amount_paid: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub history: Vec<Change>,
+}
+
+impl ZakatEntry {
+    /// Remaining = due − paid.
+    ///
+    /// A **blank** amount counts as zero (a year with a due amount and nothing paid yet
+    /// still has a meaningful remainder). A **non-blank but unparseable** amount yields
+    /// `None` — the UI renders that as "—" rather than inventing a number, because
+    /// quietly treating "ask Dad" as 0 would understate what is still owed.
+    pub fn remaining(&self) -> Option<f64> {
+        // `?` on each side propagates the `None` from an unparseable (non-blank) field.
+        Some(zakat_amount(&self.amount_due)? - zakat_amount(&self.amount_paid)?)
+    }
+}
+
+/// One zakat amount as a number: blank = 0, otherwise the lenient money parse.
+/// Shared by [`ZakatEntry::remaining`] and [`zakat_totals`] so the table's rows and its
+/// total row can never disagree about what a blank cell means.
+pub fn zakat_amount(s: &str) -> Option<f64> {
+    if s.trim().is_empty() { Some(0.0) } else { parse_approx_value(s) }
+}
+
+/// Column totals for the Zakat table: `(due, paid, remaining)`.
+///
+/// Unparseable cells contribute 0 to their column (the same "an unparseable value
+/// aggregates as 0" rule `owner_value_summary` uses), and `remaining` is the difference
+/// of the two totals — so the total row is always internally consistent even when an
+/// individual row shows "—".
+// `impl Iterator<Item = &'a ZakatEntry>` accepts any iterator over borrowed entries, so
+// callers can pass `.iter()` or a filtered view without allocating a Vec first.
+pub fn zakat_totals<'a>(rows: impl Iterator<Item = &'a ZakatEntry>) -> (f64, f64, f64) {
+    let mut due = 0.0;
+    let mut paid = 0.0;
+    for r in rows {
+        due += zakat_amount(&r.amount_due).unwrap_or(0.0);
+        paid += zakat_amount(&r.amount_paid).unwrap_or(0.0);
+    }
+    (due, paid, due - paid)
+}
+
 /// Stamp a freshly-built record with an id and creation/update timestamps.
 // `macro_rules!` defines a compile-time code template (a macro), expanded inline
 // wherever it's invoked — used here to avoid repeating identical constructor code
@@ -1513,6 +1579,7 @@ pub fn trim_all_records(vault: &mut Vault) -> usize {
         + trim_all(&mut vault.real_estate)
         + trim_all(&mut vault.tax_filings)
         + trim_all(&mut vault.general_documents)
+        + trim_all(&mut vault.zakat)
 }
 impl RealEstate {
     pub fn new() -> Result<Self, CryptoError> {
@@ -1527,6 +1594,11 @@ impl TaxFiling {
 impl GeneralDocument {
     pub fn new() -> Result<Self, CryptoError> {
         Ok(new_record!(GeneralDocument))
+    }
+}
+impl ZakatEntry {
+    pub fn new() -> Result<Self, CryptoError> {
+        Ok(new_record!(ZakatEntry))
     }
 }
 
@@ -1842,6 +1914,24 @@ impl_record!(
     |r: &mut GeneralDocument| trim_strings_in_place(&mut [&mut r.title, &mut r.description])
 );
 
+impl_record!(
+    ZakatEntry,
+    |s: &ZakatEntry, n: &ZakatEntry, at: i64, out: &mut Vec<Change>| {
+        track(out, at, "ramadan_year", &s.ramadan_year, &n.ramadan_year);
+        track(out, at, "amount_due", &s.amount_due, &n.amount_due);
+        track(out, at, "amount_paid", &s.amount_paid, &n.amount_paid);
+        // `remaining` is derived, not stored, so there is nothing of its own to track —
+        // any change to it is already implied by the two amounts logged above.
+    },
+    |l: &ZakatEntry| {
+        let year = l.ramadan_year.trim();
+        if year.is_empty() { "(no year)".to_string() } else { format!("Ramadan {year}") }
+    },
+    |r: &mut ZakatEntry| {
+        trim_strings_in_place(&mut [&mut r.ramadan_year, &mut r.amount_due, &mut r.amount_paid])
+    }
+);
+
 // --- Vault settings ----------------------------------------------------------
 
 /// User-configurable vault settings, stored (encrypted) inside the vault.
@@ -1911,6 +2001,11 @@ pub struct Vault {
     /// under `general-documents/<title>/<timestamp>/[subfolder]/`.
     #[serde(default)]
     pub general_documents: Vec<GeneralDocument>,
+    /// Zakat obligations by Ramadan year (the Zakat tab). No documents — the tab is a
+    /// four-column ledger. `#[serde(default)]` keeps vaults written before this tab
+    /// existed loadable: a missing key decodes to an empty list.
+    #[serde(default)]
+    pub zakat: Vec<ZakatEntry>,
     /// Stable random id binding the document volumes/manifests to this vault (so a
     /// foreign or swapped volume/manifest fails authentication). Set on create.
     #[serde(default)]

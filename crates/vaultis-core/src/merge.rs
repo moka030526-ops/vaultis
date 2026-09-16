@@ -49,6 +49,7 @@ pub enum RecordKind {
     RealEstate,
     TaxFiling,
     GeneralDocument,
+    Zakat,
 }
 
 impl RecordKind {
@@ -63,6 +64,7 @@ impl RecordKind {
             RecordKind::RealEstate => "Real Estate",
             RecordKind::TaxFiling => "Tax filing",
             RecordKind::GeneralDocument => "General document",
+            RecordKind::Zakat => "Zakat",
         }
     }
 }

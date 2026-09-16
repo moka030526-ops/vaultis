@@ -1618,6 +1618,8 @@ impl OpenVault {
         self.plan_collection(crate::merge::RecordKind::RealEstate, &self.vault.real_estate, &source.vault.real_estate, |r| r.documents.clone(), &resolve, &mut blobs, &mut plan)?;
         self.plan_collection(crate::merge::RecordKind::TaxFiling, &self.vault.tax_filings, &source.vault.tax_filings, |r| r.documents.clone(), &resolve, &mut blobs, &mut plan)?;
         self.plan_collection(crate::merge::RecordKind::GeneralDocument, &self.vault.general_documents, &source.vault.general_documents, |r| r.file.iter().cloned().collect(), &resolve, &mut blobs, &mut plan)?;
+        // Zakat entries carry no documents, so `docs_of` is empty (like Instruction/Account).
+        self.plan_collection(crate::merge::RecordKind::Zakat, &self.vault.zakat, &source.vault.zakat, |_r| Vec::new(), &resolve, &mut blobs, &mut plan)?;
 
         plan.blobs = blobs.into_values().collect();
 
@@ -1803,8 +1805,9 @@ impl OpenVault {
         let (a5, u5) = crate::merge::merge_records(&mut self.vault.real_estate, &source.vault.real_estate, &accepted(crate::merge::RecordKind::RealEstate));
         let (a6, u6) = crate::merge::merge_records(&mut self.vault.tax_filings, &source.vault.tax_filings, &accepted(crate::merge::RecordKind::TaxFiling));
         let (a7, u7) = crate::merge::merge_records(&mut self.vault.general_documents, &source.vault.general_documents, &accepted(crate::merge::RecordKind::GeneralDocument));
-        report.records_added = a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7;
-        report.records_updated = u0 + u1 + u2 + u3 + u4 + u5 + u6 + u7;
+        let (a8, u8) = crate::merge::merge_records(&mut self.vault.zakat, &source.vault.zakat, &accepted(crate::merge::RecordKind::Zakat));
+        report.records_added = a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8;
+        report.records_updated = u0 + u1 + u2 + u3 + u4 + u5 + u6 + u7 + u8;
         report.records_skipped = plan.skipped.len();
 
         // (2b) Reconcile category TYPES so the merged records' asset/account types + subtypes

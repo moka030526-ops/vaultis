@@ -167,7 +167,15 @@ any window size.
 7. **General Documents** — anything else worth keeping: a title, a description,
    and **one uploaded file** per entry (passport scan, birth certificate, a
    contract). Use one entry per document.
-8. **Summary** — a **read-only** overview table: each owner's totals across assets
+8. **Zakat** — a four-column ledger of zakat by **Ramadan year**: *Ramadan Year*,
+   *Amount Due*, *Amount Paid*, and *Remaining*. You fill in the first three; the
+   fourth is always due minus paid, worked out as you type and never stored, so it
+   cannot drift out of step with the two numbers it comes from. Unlike the other
+   tabs this one is a **table** you type straight into — 💾 Save writes every row at
+   once — because how much is still owed across all the years is a question you
+   should be able to read without clicking through them one at a time. An amount
+   vaultis cannot read as a number shows a dash, never a zero.
+9. **Summary** — a **read-only** overview table: each owner's totals across assets
    and liabilities. It has no records of its own — it aggregates the **Assets and
    Liabilities** entries by owner.
 

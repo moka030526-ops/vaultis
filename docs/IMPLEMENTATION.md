@@ -108,6 +108,7 @@ Eight record types, one per UI tab. Each carries an `id` (128-bit hex, from
 | Real Estate | `RealEstate` | address, ownership, taxes, hoa, income/financing/payment account, financing_balance, four portal logins (property-management / insurance / HOA / tax — each url + username + password + comment), comments, `documents` (doc ids) |
 | Taxes | `TaxFiling` | owner, year, notes, `documents` (doc ids); list label is `<owner> - <year>` |
 | General Documents | `GeneralDocument` | title, description, `file` (one doc id) |
+| Zakat | `ZakatEntry` | ramadan_year, amount_due, amount_paid; **no documents**. The tab's fourth column, *Remaining*, is **derived** (`ZakatEntry::remaining` = due − paid) and never stored |
 
 **Multi-document records & the uniform path layout.** Trust&Will, Assets, and General
 Documents hold a *single* attached document (`file`/`statement`); the Taxes and Real
@@ -181,7 +182,7 @@ whole-file rollback is noticeable — `DESIGN.md` §9.12); `last_opened_at`; and
 written by an older build load under a newer one (a missing field decodes to its
 type default) — this is how `VaultSettings.redundancy` (new in §3.7) was added
 without a format bump. The Taxes collection (`tax_filings`), the General Documents
-collection (`general_documents`), and every new `RealEstate` field (the four portal
+collection (`general_documents`), the Zakat collection (`zakat`), and every new `RealEstate` field (the four portal
 logins + per-portal comments, `financing_balance`, `comments`, `documents`) were added the same way — all
 `#[serde(default)]` — so the on-disk format version stays **v4** and a vault written
 before these features still opens.

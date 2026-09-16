@@ -111,6 +111,7 @@ enum Tab {
     RealEstate,
     Taxes,
     GeneralDocuments,
+    Zakat,
     Summary,
 }
 
@@ -118,7 +119,7 @@ enum Tab {
 impl Tab {
     // `[Tab; 6]` is a fixed-size array of 6 `Tab` values. `const` = a
     // compile-time constant.
-    const ALL: [Tab; 9] = [
+    const ALL: [Tab; 10] = [
         Tab::Urgent,
         Tab::Instructions,
         Tab::TrustWill,
@@ -127,6 +128,7 @@ impl Tab {
         Tab::RealEstate,
         Tab::Taxes,
         Tab::GeneralDocuments,
+        Tab::Zakat,
         Tab::Summary,
     ];
 
@@ -145,6 +147,7 @@ impl Tab {
             Tab::RealEstate => "Real Estate",
             Tab::Taxes => "Taxes",
             Tab::GeneralDocuments => "General Documents",
+            Tab::Zakat => "Zakat",
         }
     }
 
@@ -707,6 +710,10 @@ impl App {
             Tab::RealEstate => label_list(&v.real_estate),
             Tab::Taxes => label_list(&v.tax_filings),
             Tab::GeneralDocuments => label_list(&v.general_documents),
+            // The Zakat ledger's four columns are laid out IN the list label — the TUI has
+            // one list column, so "Ramadan 1446" alone would hide the three numbers the tab
+            // exists to show, and Remaining (computed, never stored) most of all.
+            Tab::Zakat => v.zakat.iter().map(|r| (r.id.clone(), zakat_row_label(r))).collect(),
             // The Summary tab is a read-only aggregate table, not a record list.
             Tab::Summary => Vec::new(),
         }
@@ -762,6 +769,7 @@ impl App {
             | Tab::RealEstate
             | Tab::Taxes
             | Tab::GeneralDocuments
+            | Tab::Zakat
             | Tab::Summary => Vec::new(),
         }
     }
@@ -784,6 +792,7 @@ impl App {
             | Tab::RealEstate
             | Tab::Taxes
             | Tab::GeneralDocuments
+            | Tab::Zakat
             | Tab::Summary => &mut self.acct_expanded,
         };
         if !set.remove(&path) {
@@ -1276,10 +1285,18 @@ impl App {
             KeyCode::Left | KeyCode::BackTab => self.switch_tab(self.tab.shifted(-1)),
             // `c @ '1'..='9'` is a range pattern that also binds the matched char to
             // `c`: a digit key jumps straight to that tab. `Tab::ALL.get(...)` keys
-            // off the actual tab count, so this covers every tab (now 7) and never
-            // panics on a digit past the end (it just does nothing).
+            // off the actual tab count, so this covers every tab and never panics on a
+            // digit past the end (it just does nothing).
             KeyCode::Char(c @ '1'..='9') => {
                 if let Some(&t) = Tab::ALL.get(c as usize - '1' as usize) {
+                    self.switch_tab(t);
+                }
+            }
+            // `0` is the LAST tab, the browser-tab convention. Added when a tenth tab
+            // (Zakat) pushed Summary past the end of the 1–9 range and left it reachable
+            // only by arrowing across nine others.
+            KeyCode::Char('0') => {
+                if let Some(&t) = Tab::ALL.last() {
                     self.switch_tab(t);
                 }
             }
@@ -1982,6 +1999,27 @@ impl App {
                     r.history.clone(),
                 )
             }
+            Tab::Zakat => {
+                let r = sel_id
+                    .as_ref()
+                    .and_then(|id| v.zakat.iter().find(|r| &r.id == id).cloned())
+                    .unwrap_or_else(|| records::ZakatEntry::new().unwrap_or_default());
+                let id = if existing { Some(r.id.clone()) } else { None };
+                (
+                    id,
+                    r.created_at,
+                    // Three EDITABLE fields only. Remaining is derived, so there is nothing
+                    // here to type into — it is shown in the list label (`zakat_row_label`),
+                    // recomputed from these two amounts the moment they are saved.
+                    vec![
+                        Field::text("Ramadan year", r.ramadan_year.clone()),
+                        Field::text("Amount due", r.amount_due.clone()),
+                        Field::text("Amount paid", r.amount_paid.clone()),
+                    ],
+                    None,
+                    r.history.clone(),
+                )
+            }
             // Guarded at the top of `start_edit`; the Summary tab has no edit form.
             Tab::Summary => return,
         };
@@ -2499,6 +2537,7 @@ impl App {
             Tab::Assets => csv::CsvTab::Assets,
             Tab::Accounts => csv::CsvTab::Accounts,
             Tab::RealEstate => csv::CsvTab::RealEstate,
+            Tab::Zakat => csv::CsvTab::Zakat,
             Tab::Taxes => csv::CsvTab::Taxes,
             Tab::GeneralDocuments => csv::CsvTab::GeneralDocuments,
             Tab::Summary => return None,
@@ -2964,6 +3003,18 @@ impl App {
                 r.trim_fields(); // left/right-trim every field before persisting
                 records::upsert(&mut v.general_documents, r);
             }
+            Tab::Zakat => {
+                let mut r = records::ZakatEntry::default();
+                r.id = id;
+                r.created_at = es.created_at;
+                r.ramadan_year = f(0);
+                r.amount_due = f(1);
+                r.amount_paid = f(2);
+                // No `remaining` to commit — it is recomputed from the two amounts above
+                // every time it is displayed, so the vault cannot hold a stale one.
+                r.trim_fields(); // left/right-trim every field before persisting
+                records::upsert(&mut v.zakat, r);
+            }
             // The Summary tab has no record to commit.
             Tab::Summary => {}
         }
@@ -3259,6 +3310,18 @@ impl App {
                             if let Some(ov) = s.vault.as_mut() {
                                 ov.vault.audit.truncate(audit_len);
                                 ov.vault.general_documents.push(r);
+                            }
+                        }));
+                    }
+                }
+                Tab::Zakat => {
+                    if let Some(r) = v.zakat.iter().find(|r| r.id == id).cloned() {
+                        // No documents on this tab, so nothing to reclaim.
+                        records::remove(&mut v.zakat, &id, &mut v.audit, "Zakat");
+                        rollback = Some(Box::new(move |s: &mut Self| {
+                            if let Some(ov) = s.vault.as_mut() {
+                                ov.vault.audit.truncate(audit_len);
+                                ov.vault.zakat.push(r);
                             }
                         }));
                     }
@@ -3884,7 +3947,7 @@ impl App {
         let idx = self.tab.index();
         let hl = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
 
-        let tabs_block = Block::default().borders(Borders::ALL).title(" Tabs (←/→ or 1-8) ");
+        let tabs_block = Block::default().borders(Borders::ALL).title(" Tabs (←/→ or 1-9, 0 last) ");
         let tabs_inner = tabs_block.inner(chunks[0]);
         frame.render_widget(tabs_block, chunks[0]);
         let tab_rows = Layout::default()
@@ -3903,7 +3966,7 @@ impl App {
         // The Summary tab renders a read-only aggregate TABLE instead of the record list.
         if self.tab == Tab::Summary {
             self.draw_summary(frame, chunks[1]);
-            self.draw_footer(frame, chunks[2], "←/→ or 1-8 switch tab · Summary is a read-only overview");
+            self.draw_footer(frame, chunks[2], "←/→ or 1-9 switch tab · 0 jumps here · Summary is a read-only overview");
             return;
         }
 
@@ -4264,6 +4327,29 @@ impl App {
 // serves every tab. Builds `(id, label)` pairs as owned strings.
 fn label_list<R: Record>(list: &[R]) -> Vec<(String, String)> {
     list.iter().map(|r| (r.id().to_string(), r.label())).collect()
+}
+
+/// One Zakat row rendered as the tab's FOUR columns in a single line, for the TUI's
+/// one-column list: `Ramadan <year> · due <due> · paid <paid> · remaining <remaining>`.
+///
+/// The GUI draws these as a real table; a terminal list has one column, so the numbers are
+/// laid into the label instead of being hidden behind a selection. `remaining` is the
+/// computed value ([`records::ZakatEntry::remaining`]) and shows "—" when the amounts are
+/// not both numeric — never a stand-in zero, which would read as an obligation settled.
+fn zakat_row_label(r: &records::ZakatEntry) -> String {
+    // A named fn, not a closure: the returned `&str` borrows from the argument, and a
+    // closure cannot express that the two lifetimes are the same.
+    fn dash(s: &str) -> &str {
+        if s.trim().is_empty() { "—" } else { s.trim() }
+    }
+    let remaining = r.remaining().map_or_else(|| "—".to_string(), crate::fmt_money);
+    format!(
+        "{} · due {} · paid {} · remaining {}",
+        r.label(),
+        dash(&r.amount_due),
+        dash(&r.amount_paid),
+        remaining
+    )
 }
 
 /// Options for a yes/no choice field.

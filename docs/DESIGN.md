@@ -719,10 +719,15 @@ UI-independent. Adding or changing a front-end touches no security-critical code
 - **Terminal (`ui.rs`, `--tui`)** — `ratatui`, keyboard-driven, works over SSH /
   headless. Key bindings are shown on-screen at all times; no mouse required.
 
-The desktop front-ends present the estate vault as **nine tabs**, laid out in two
-rows — eight record-type tabs (URGENT, Instructions, Trust & Will, Assets &
-Liabilities, Accounts, Real Estate, Taxes, General Documents) plus a read-only
-**Summary** aggregate — over four screens. URGENT is deliberately first so the most
+The desktop front-ends present the estate vault as **ten tabs**, laid out in two
+rows — nine record-type tabs (URGENT, Instructions, Trust & Will, Assets &
+Liabilities, Accounts, Real Estate, Taxes, General Documents, Zakat) plus a read-only
+**Summary** aggregate — over four screens. Zakat is the one record tab drawn as an
+editable **table** rather than a list beside a single-record form: its rows carry three
+short values each, and the question it answers (what is still owed across every year)
+has to be readable without clicking through the years one at a time. Its fourth column,
+*Remaining*, is computed on every render from the other two and is **never stored**, so
+the vault cannot hold a remainder that disagrees with the numbers it came from. URGENT is deliberately first so the most
 time-critical notes an executor needs are the first thing shown on unlock. (The
 read-only mobile viewer, §8, exposes a subset of the record types and does not yet
 include URGENT.) The four screens are:

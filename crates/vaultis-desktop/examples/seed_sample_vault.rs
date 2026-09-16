@@ -250,13 +250,24 @@ fn main() -> anyhow::Result<()> {
     g2.description = "Harbor Memorial, contract SAMPLE-4417. Paid in full 2023.".into();
     records::upsert(&mut v.vault.general_documents, g2);
 
+    // --- Zakat ---------------------------------------------------------------
+    // Three years that exercise all three states the Remaining column can show:
+    // partly paid, fully paid, and nothing paid yet.
+    for (year, due, paid) in [("1445", "3200", "3200"), ("1446", "4100", "1500"), ("1447", "4500", "")] {
+        let mut z = records::ZakatEntry::new()?;
+        z.ramadan_year = year.into();
+        z.amount_due = due.into();
+        z.amount_paid = paid.into();
+        records::upsert(&mut v.vault.zakat, z);
+    }
+
     v.save()?;
     let _ = std::fs::remove_file(&scratch);
 
     println!("Sample vault created at {}", dir.display());
     println!(
         "  {} urgent · {} instructions · {} trust&will · {} assets/liabilities · {} accounts · \
-         {} real estate · {} tax filings · {} general documents",
+         {} real estate · {} tax filings · {} general documents · {} zakat years",
         v.vault.urgent.len(),
         v.vault.instructions.len(),
         v.vault.trust_wills.len(),
@@ -265,6 +276,7 @@ fn main() -> anyhow::Result<()> {
         v.vault.real_estate.len(),
         v.vault.tax_filings.len(),
         v.vault.general_documents.len(),
+        v.vault.zakat.len(),
     );
     Ok(())
 }

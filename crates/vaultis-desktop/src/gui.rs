@@ -1165,6 +1165,7 @@ enum Tab {
     RealEstate,
     Taxes,
     GeneralDocuments,
+    Zakat,
     Summary,
 }
 
@@ -1273,6 +1274,11 @@ struct GuiApp {
     edit_realestate: Option<RealEstate>,
     edit_taxfiling: Option<TaxFiling>,
     edit_general: Option<GeneralDocument>,
+    // The Zakat tab is a TABLE, not a list + single-record form, so its working buffer is
+    // the whole ledger rather than one selected record: the user edits several years' cells
+    // and saves them together. Loaded from the vault by `sync_edit_buffer(Tab::Zakat)` and
+    // written back by the tab's Save.
+    edit_zakat: Vec<records::ZakatEntry>,
     // The ONLY reveal control on the Accounts screen: a single global toggle that
     // unmasks every account password at once (there is no per-record reveal).
     reveal_all: bool,
@@ -1479,6 +1485,7 @@ impl GuiApp {
             edit_realestate: None,
             edit_taxfiling: None,
             edit_general: None,
+            edit_zakat: Vec::new(),
             reveal_all: reveal_default,
             re_reveal_all: reveal_default,
             reveal_default,
@@ -1617,6 +1624,7 @@ impl GuiApp {
             Tab::RealEstate => csv::CsvTab::RealEstate,
             Tab::Taxes => csv::CsvTab::Taxes,
             Tab::GeneralDocuments => csv::CsvTab::GeneralDocuments,
+            Tab::Zakat => csv::CsvTab::Zakat,
             Tab::Summary => return None,
         };
         let name_of = |id: &str| ov.doc_path(id).map(|p| csv::basename(&p)).unwrap_or_default();
@@ -1734,6 +1742,12 @@ impl GuiApp {
                 .edit_general
                 .as_ref()
                 .is_some_and(|r| v.general_documents.iter().find(|s| s.id == r.id) != Some(r)),
+            // Zakat's buffer is the whole table, so "dirty" is a whole-table comparison:
+            // a cell edited, a row added with ➕ New Year, or a row deleted all show up as
+            // the buffer no longer matching the saved ledger. `!=` on the two slices is an
+            // element-wise `PartialEq` (order included — both come from the same source and
+            // only ever grow at the end, so order can't drift on its own).
+            Tab::Zakat => self.edit_zakat != v.zakat,
             // Summary is a read-only computed view; it has no edit buffer to lose.
             Tab::Summary => false,
         }
@@ -1767,6 +1781,10 @@ impl GuiApp {
             Tab::RealEstate => sync_from_saved(&mut self.edit_realestate, &v.real_estate),
             Tab::Taxes => sync_from_saved(&mut self.edit_taxfiling, &v.tax_filings),
             Tab::GeneralDocuments => sync_from_saved(&mut self.edit_general, &v.general_documents),
+            // Zakat's buffer is the whole table: re-read the saved ledger verbatim, which is
+            // what makes the post-save state match (upsert stamps `updated_at` and appends
+            // history, so the saved rows are never identical to the buffer that produced them).
+            Tab::Zakat => self.edit_zakat = v.zakat.clone(),
             // Summary is a read-only computed view — no edit buffer, nothing to sync.
             Tab::Summary => {}
         }
@@ -1921,6 +1939,11 @@ impl GuiApp {
                         _ => {}
                     }
                 }
+                // The Zakat tab renders from its own whole-table buffer rather than reading
+                // the vault every frame, so seed it once the vault is installed. Every other
+                // tab's buffer legitimately starts empty (nothing is selected yet); a table
+                // has no selection, so an unseeded one would show an empty ledger.
+                self.sync_edit_buffer(Tab::Zakat);
                 self.auth_error = None;
                 self.wipe_passwords();
                 self.screen = Screen::Main;
@@ -2065,6 +2088,8 @@ impl GuiApp {
         self.edit_realestate = None;
         self.edit_taxfiling = None;
         self.edit_general = None;
+        // `Vec::new()` replaces (and so drops, and so zeroizes) the previous vault's ledger.
+        self.edit_zakat = Vec::new();
         self.pending_account_delete = None;
         // Reveal + grouping return to the saved view DEFAULTS (not hard false), matching the
         // constructor and the tab-switch reset.
@@ -2535,6 +2560,7 @@ impl GuiApp {
             tab_button(ui, &mut self.tab, Tab::RealEstate, "🏠 Real Estate", accent);
             tab_button(ui, &mut self.tab, Tab::Taxes, "📃 Taxes", accent);
             tab_button(ui, &mut self.tab, Tab::GeneralDocuments, "📁 General Documents", accent);
+            tab_button(ui, &mut self.tab, Tab::Zakat, "🌙 Zakat", accent);
             tab_button(ui, &mut self.tab, Tab::Summary, "📊 Summary", accent);
         });
         // Reset the global reveal toggles when the user switches tabs (see prev_tab above):
@@ -3319,6 +3345,11 @@ impl GuiApp {
                     report.categories_added,
                     if report.records_skipped > 0 { format!(" {} skipped.", report.records_skipped) } else { String::new() },
                 );
+                // A merge rewrites collections underneath the UI. Every other tab re-reads
+                // the vault as it renders, but Zakat renders from its own table buffer — so
+                // without this re-seed the tab would keep showing the pre-merge ledger, and
+                // its next Save would write those stale rows back over the merged ones.
+                self.sync_edit_buffer(Tab::Zakat);
                 self.reset_merge();
                 self.screen = Screen::Config;
             }
@@ -3663,10 +3694,18 @@ impl GuiApp {
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new("View").strong().small().color(accent_c));
                 // Grouped tree: owner → Asset/Liability → type (empty levels skipped).
-                ui.checkbox(&mut self.asset_grouped, "grouped tree")
-                    .on_hover_text("Group the list by owner > asset/liability > type");
-                ui.checkbox(&mut self.asset_filter_review, "review only")
-                    .on_hover_text("Show only items flagged for review");
+                option_toggle(
+                    ui,
+                    &mut self.asset_grouped,
+                    "grouped tree",
+                    "Group the list by owner > asset/liability > type",
+                );
+                option_toggle(
+                    ui,
+                    &mut self.asset_filter_review,
+                    "review only",
+                    "Show only items flagged for review",
+                );
                 if self.asset_filter_review {
                     badge(ui, "filtered", egui::Color32::from_rgb(190, 105, 10));
                 }
@@ -4127,6 +4166,10 @@ impl GuiApp {
             self.status = "Nothing to trim — every field is already clean.".into();
         } else if self.persist() {
             self.status = format!("Trimmed {n} record(s).");
+            // The bulk trim edits EVERY tab's records, including Zakat's — and Zakat renders
+            // from its own table buffer, so re-read it or the tab keeps showing the untrimmed
+            // rows and would write them back on its next Save.
+            self.sync_edit_buffer(Tab::Zakat);
         }
         n
     }
@@ -4232,11 +4275,19 @@ impl GuiApp {
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new("View").strong().small().color(accent_c));
                 // Flat filtered list ⇄ grouped tree (type → subtype → owner → title).
-                ui.checkbox(&mut self.acct_grouped, "grouped tree")
-                    .on_hover_text("Group the list by owner > type > subtype > title");
+                option_toggle(
+                    ui,
+                    &mut self.acct_grouped,
+                    "grouped tree",
+                    "Group the list by owner > type > subtype > title",
+                );
                 // Global reveal: the ONLY reveal control on this screen.
-                ui.checkbox(&mut self.reveal_all, "👁 reveal all passwords")
-                    .on_hover_text("Unmask every password on this screen. Resets when you switch tabs.");
+                option_toggle(
+                    ui,
+                    &mut self.reveal_all,
+                    "👁 reveal all passwords",
+                    "Unmask every password on this screen. Resets when you switch tabs.",
+                );
                 // One-off maintenance: left/right-trim every field on every record (all tabs).
                 if self.writable
                     && ui
@@ -4588,7 +4639,10 @@ impl GuiApp {
         card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new("View").strong().small().color(accent_c));
-                ui.checkbox(&mut self.re_reveal_all, "👁 reveal all portal passwords").on_hover_text(
+                option_toggle(
+                    ui,
+                    &mut self.re_reveal_all,
+                    "👁 reveal all portal passwords",
                     "Unmask the four portal passwords on this screen. Resets when you switch tabs.",
                 );
             });
@@ -4601,6 +4655,9 @@ impl GuiApp {
         let mut export = false;
         let mut action = FormAction::None;
         let mut copy_pw: Option<Zeroizing<String>> = None;
+        // Deferred plain-copy for the portals' non-secret URL / username buttons (acted on
+        // after rendering, like `copy_pw`). A plain `String` — not secrets, so no zeroizing.
+        let mut copy_plain: Option<String> = None;
         let mut docreq = ReDocReq::None;
 
         two_col(ui, |c| {
@@ -4626,10 +4683,10 @@ impl GuiApp {
                         text_row(ui, "Payment account", &mut r.payment_account, writable);
                     });
 
-                    portal_section(ui, "Property Management portal", &mut r.property_mgmt_url, &mut r.property_mgmt_username, &mut r.property_mgmt_password, &mut r.property_mgmt_comment, reveal, writable, &mut copy_pw);
-                    portal_section(ui, "Insurance portal", &mut r.insurance_url, &mut r.insurance_username, &mut r.insurance_password, &mut r.insurance_comment, reveal, writable, &mut copy_pw);
-                    portal_section(ui, "HOA portal", &mut r.hoa_url, &mut r.hoa_username, &mut r.hoa_password, &mut r.hoa_comment, reveal, writable, &mut copy_pw);
-                    portal_section(ui, "Tax portal", &mut r.tax_portal_url, &mut r.tax_portal_username, &mut r.tax_portal_password, &mut r.tax_portal_comment, reveal, writable, &mut copy_pw);
+                    portal_section(ui, "Property Management portal", &mut r.property_mgmt_url, &mut r.property_mgmt_username, &mut r.property_mgmt_password, &mut r.property_mgmt_comment, reveal, writable, &mut copy_pw, &mut copy_plain);
+                    portal_section(ui, "Insurance portal", &mut r.insurance_url, &mut r.insurance_username, &mut r.insurance_password, &mut r.insurance_comment, reveal, writable, &mut copy_pw, &mut copy_plain);
+                    portal_section(ui, "HOA portal", &mut r.hoa_url, &mut r.hoa_username, &mut r.hoa_password, &mut r.hoa_comment, reveal, writable, &mut copy_pw, &mut copy_plain);
+                    portal_section(ui, "Tax portal", &mut r.tax_portal_url, &mut r.tax_portal_username, &mut r.tax_portal_password, &mut r.tax_portal_comment, reveal, writable, &mut copy_pw, &mut copy_plain);
 
                     ui.separator();
                     ui.label("Comments");
@@ -4689,6 +4746,11 @@ impl GuiApp {
         }
         if let Some(pw) = copy_pw {
             self.copy_to_clipboard(pw);
+        }
+        // After `copy_pw`, so a same-frame secret copy is never overwritten by a plain one
+        // (only one button can be clicked per frame, but the ordering makes that explicit).
+        if let Some(text) = copy_plain {
+            self.copy_plain(&text);
         }
         self.handle_re_doc(docreq);
         match action {
@@ -4809,6 +4871,255 @@ impl GuiApp {
             }
             FormAction::Delete => self.delete_current(Tab::Taxes),
             _ => {}
+        }
+    }
+
+    // --- Tab: Zakat ----------------------------------------------------------
+
+    /// The "Zakat" tab: a four-column ledger of Ramadan years — **Ramadan Year**, **Amount
+    /// Due**, **Amount Paid**, **Remaining**.
+    ///
+    /// Unlike every other record tab this is a TABLE, not a list beside a single-record
+    /// form: each row holds three short values, so a form pane per year would make the user
+    /// click through the years one at a time to read the one number the tab exists to show —
+    /// what is still owed, across all of them. The whole ledger is therefore edited in place
+    /// (`self.edit_zakat`) and saved in one go.
+    ///
+    /// **Remaining is computed, never stored** ([`records::ZakatEntry::remaining`]): due −
+    /// paid, recomputed every frame. A row whose amounts are non-blank but unparseable shows
+    /// "—" rather than a number, so an un-numeric note in a cell can never read as a settled
+    /// obligation.
+    fn tab_zakat(&mut self, ui: &mut egui::Ui) {
+        let accent_c = accent(self.theme);
+        let writable = self.writable;
+        // Deferred actions, applied after the render closures release their `self` borrows.
+        let mut new_row = false;
+        let mut export = false;
+        let mut save = false;
+        let mut delete_row: Option<usize> = None;
+        // Totals across the BUFFER (what is on screen), not the saved vault, so the header
+        // figures track the cells the user is editing rather than lagging a save behind.
+        let (total_due, total_paid, total_remaining) = records::zakat_totals(self.edit_zakat.iter());
+        let dirty = self.has_unsaved_edits();
+
+        card(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                section_heading(ui, "Zakat", accent_c);
+                badge(ui, &format!("{}", self.edit_zakat.len()), accent_c);
+                ui.add_space(6.0);
+                if writable && ui.button("➕ New Year").on_hover_text("Add a row for another Ramadan year").clicked() {
+                    new_row = true;
+                }
+                // Save is the whole table at once — a table has no "current record".
+                // Disabled when nothing has changed, so the button doubles as a dirty light.
+                if writable
+                    && ui
+                        .add_enabled(dirty, egui::Button::new("💾 Save"))
+                        .on_hover_text("Save every row on this tab")
+                        .clicked()
+                {
+                    save = true;
+                }
+                if ui
+                    .button("⬇ CSV")
+                    .on_hover_text(
+                        "Export every row on this tab to a timestamped CSV in the export directory.\n\
+                         The file is UNENCRYPTED.",
+                    )
+                    .clicked()
+                {
+                    export = true;
+                }
+                if dirty {
+                    badge(ui, "unsaved", egui::Color32::from_rgb(190, 105, 10));
+                }
+            });
+        });
+        ui.add_space(6.0);
+
+        if self.edit_zakat.is_empty() {
+            ui.add_space(30.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new("🌙").size(28.0).color(accent_c.gamma_multiply(0.7)));
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("No zakat years recorded yet").strong());
+                ui.label(
+                    egui::RichText::new(if writable {
+                        "Click New Year to add one — Remaining is worked out for you."
+                    } else {
+                        "This vault has no zakat rows."
+                    })
+                    .weak()
+                    .small(),
+                );
+            });
+        } else {
+            // The three numbers someone opens this tab to find, before the table itself.
+            // Remaining takes the polarity color: anything still owed is the "owed" red.
+            ui.horizontal_wrapped(|ui| {
+                stat_tile(ui, "Total due", &crate::fmt_money(total_due), accent_c);
+                stat_tile(ui, "Total paid", &crate::fmt_money(total_paid), STAT_GOOD);
+                stat_tile(
+                    ui,
+                    "Total remaining",
+                    &crate::fmt_money(total_remaining),
+                    if total_remaining > 0.0 { STAT_BAD } else { STAT_GOOD },
+                );
+            });
+            ui.add_space(12.0);
+
+            egui::ScrollArea::both().auto_shrink([false, false]).id_salt("zakat_scroll").show(ui, |ui| {
+                // Four data columns, plus a fifth for the per-row delete when writable.
+                let cols = if writable { 5 } else { 4 };
+                egui::Grid::new("zakat_grid").striped(true).num_columns(cols).spacing([18.0, 6.0]).show(ui, |ui| {
+                    for h in ["Ramadan Year", "Amount Due", "Amount Paid", "Remaining"] {
+                        ui.label(egui::RichText::new(h).strong());
+                    }
+                    if writable {
+                        ui.label("");
+                    }
+                    ui.end_row();
+
+                    for (i, r) in self.edit_zakat.iter_mut().enumerate() {
+                        // `id_salt` per cell: egui identifies a widget by its id, and three
+                        // same-width text fields per row would otherwise collide across rows
+                        // and share focus/undo state. The record id is stable for the row's
+                        // whole life, so the salt survives adding and deleting other rows.
+                        ui.add(
+                            egui::TextEdit::singleline(&mut r.ramadan_year)
+                                .id_salt(("zakat_year", &r.id))
+                                .hint_text("1446")
+                                .desired_width(120.0)
+                                .interactive(writable),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut r.amount_due)
+                                .id_salt(("zakat_due", &r.id))
+                                .hint_text("0")
+                                .desired_width(140.0)
+                                .interactive(writable),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut r.amount_paid)
+                                .id_salt(("zakat_paid", &r.id))
+                                .hint_text("0")
+                                .desired_width(140.0)
+                                .interactive(writable),
+                        );
+                        // The derived column. `None` = at least one amount is non-blank and
+                        // does not parse, so there is no honest number to show.
+                        match r.remaining() {
+                            Some(v) => ui.label(
+                                egui::RichText::new(crate::fmt_money(v))
+                                    .monospace()
+                                    .strong()
+                                    .color(if v > 0.0 { STAT_BAD } else { STAT_GOOD }),
+                            ),
+                            None => ui
+                                .label(egui::RichText::new("—").monospace().weak())
+                                .on_hover_text("Due or paid is not a number, so Remaining cannot be worked out."),
+                        };
+                        if writable
+                            && ui
+                                .button("🗑")
+                                .on_hover_text("Delete this year (saved immediately)")
+                                .clicked()
+                        {
+                            delete_row = Some(i);
+                        }
+                        ui.end_row();
+                    }
+
+                    // Total row: bold, and consistent with the tiles above.
+                    ui.label(egui::RichText::new("Total").strong());
+                    ui.label(egui::RichText::new(crate::fmt_money(total_due)).strong().monospace());
+                    ui.label(egui::RichText::new(crate::fmt_money(total_paid)).strong().monospace());
+                    ui.label(
+                        egui::RichText::new(crate::fmt_money(total_remaining))
+                            .strong()
+                            .monospace()
+                            .color(if total_remaining > 0.0 { STAT_BAD } else { STAT_GOOD }),
+                    );
+                    if writable {
+                        ui.label("");
+                    }
+                    ui.end_row();
+                });
+            });
+        }
+
+        if export {
+            self.export_current_tab_csv();
+        }
+        if new_row && let Some(r) = records::ZakatEntry::new().ok() {
+            self.edit_zakat.push(r);
+        }
+        if save {
+            self.save_zakat();
+        }
+        if let Some(i) = delete_row {
+            self.delete_zakat_row(i);
+        }
+    }
+
+    /// Write every row of the Zakat table back to the vault and persist once.
+    ///
+    /// [`records::upsert`] replaces a row with the same id and appends a new one otherwise,
+    /// so a table that has both edited and brand-new rows lands correctly in a single pass.
+    /// Rows the user deleted are already gone from the vault ([`Self::delete_zakat_row`]
+    /// removes and persists on the spot), so nothing here has to reconcile deletions.
+    fn save_zakat(&mut self) {
+        // Trim before writing, like every other tab's Save.
+        for r in self.edit_zakat.iter_mut() {
+            r.trim_fields();
+        }
+        let rows = self.edit_zakat.clone();
+        if let Some(ov) = self.vault.as_mut() {
+            for r in rows {
+                records::upsert(&mut ov.vault.zakat, r);
+            }
+        }
+        if self.persist() {
+            self.status = "Saved.".into();
+            self.sync_edit_buffer(Tab::Zakat);
+        }
+        // On failure persist() has already set the "Save failed: …" status.
+    }
+
+    /// Delete row `i` of the Zakat table, from both the buffer and the vault, and persist.
+    ///
+    /// Deleting is immediate rather than staged until Save, because the row it removes is
+    /// the only place the deletion could otherwise be noticed — there is no form to leave
+    /// dirty. On a failed persist the removal is rolled back in memory, for the reason
+    /// spelled out in [`Self::delete_current`]: a change the user was told had FAILED must
+    /// not sit in memory waiting for the next successful save to commit it silently.
+    fn delete_zakat_row(&mut self, i: usize) {
+        // `get(i)` rather than indexing: the deferred index was captured during rendering,
+        // so treat it as possibly stale instead of risking a panic.
+        let Some(id) = self.edit_zakat.get(i).map(|r| r.id.clone()) else { return };
+        let removed = self.edit_zakat.remove(i);
+        let mut rolled_back = false;
+        if let Some(ov) = self.vault.as_mut() {
+            let v = &mut ov.vault;
+            let audit_len = v.audit.len();
+            // The SAVED row, not the (possibly edited) buffer row — restoring the buffer's
+            // version on a failed delete would commit unsaved edits the user never saved.
+            let stored = v.zakat.iter().find(|x| x.id == id).cloned();
+            records::remove(&mut v.zakat, &id, &mut v.audit, "Zakat");
+            if !self.persist() {
+                // persist() already set the "Save failed: …" status.
+                if let Some(ov) = self.vault.as_mut() {
+                    ov.vault.audit.truncate(audit_len);
+                    if let Some(stored) = stored {
+                        ov.vault.zakat.push(stored);
+                    }
+                }
+                self.edit_zakat.insert(i, removed);
+                rolled_back = true;
+            }
+        }
+        if !rolled_back {
+            self.status = "Deleted.".into();
         }
     }
 
@@ -5489,6 +5800,9 @@ impl GuiApp {
                         }
                     }
                 }
+                // Zakat deletes a specific ROW, not "the current record" — there is no single
+                // selected record on a table tab — so it has its own `delete_zakat_row`.
+                Tab::Zakat => {}
                 // The Summary tab is read-only (no records of its own), so it never deletes.
                 Tab::Summary => {}
             }
@@ -5746,6 +6060,7 @@ impl GuiApp {
                     Tab::RealEstate => self.tab_realestate(ui),
                     Tab::Taxes => self.tab_taxes(ui),
                     Tab::GeneralDocuments => self.tab_general(ui),
+                    Tab::Zakat => self.tab_zakat(ui),
                 }
             });
     }
@@ -6080,6 +6395,49 @@ fn ui_accent(ui: &egui::Ui) -> egui::Color32 {
     ui.visuals().selection.stroke.color
 }
 
+/// A "View" row toggle drawn inside its own visible border.
+///
+/// A bare `ui.checkbox` in these rows is a tick box and a word floating in the card with
+/// nothing to mark where one option ends and the next begins — on a wide window the two
+/// options in the Accounts View row read as a single run of text. The outline gives each
+/// option an edge; when the option is ON it also takes the accent color and a tinted fill,
+/// so an active view option (a grouped list, revealed passwords) is visible at a glance
+/// without reading the labels. The tick box is still there, so the state is never carried
+/// by color alone.
+fn option_toggle(ui: &mut egui::Ui, value: &mut bool, label: &str, hover: &str) -> egui::Response {
+    // Read the state BEFORE the checkbox runs: the frame is painted around the widget, so
+    // it must be styled from the value the user is currently looking at.
+    let on = *value;
+    let (stroke, fill) =
+        option_toggle_colors(on, ui_accent(ui), ui.visuals().widgets.inactive.fg_stroke.color);
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(egui::Stroke::new(1.0_f32, stroke))
+        .corner_radius(7)
+        .inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| ui.checkbox(value, label).on_hover_text(hover))
+        .inner
+}
+
+/// [`option_toggle`]'s border and fill colors for a given state: `(stroke, fill)`.
+///
+/// Split out as a pure function so the one decision that matters — that the border is
+/// ALWAYS drawn, in both states — is testable without a render harness. An OFF option
+/// gets a dimmed neutral outline rather than no outline: the whole point of the border is
+/// to bound the control, and a border that appears only when the option is on would leave
+/// the unchecked options as bare text again, which is the problem it was added to fix.
+fn option_toggle_colors(
+    on: bool,
+    accent: egui::Color32,
+    idle: egui::Color32,
+) -> (egui::Color32, egui::Color32) {
+    if on {
+        (accent.gamma_multiply(0.8), accent.gamma_multiply(0.13))
+    } else {
+        (idle.gamma_multiply(0.5), egui::Color32::TRANSPARENT)
+    }
+}
+
 /// Save / Delete buttons; returns the chosen action. Renders nothing (and stays
 /// `None`) in read-only mode.
 fn form_buttons(ui: &mut egui::Ui, writable: bool) -> FormAction {
@@ -6268,10 +6626,35 @@ fn text_row(ui: &mut egui::Ui, label: &str, value: &mut String, writable: bool) 
     ui.end_row();
 }
 
-/// Render one portal-login section (URL / username / masked password + copy, plus a
-/// free-form comment) into the Real Estate form. The password is masked unless
-/// `reveal`; `copy_pw` is set when the copy button is clicked, to be acted on after
-/// rendering.
+/// A [`text_row`] followed by a 📋 copy button — for the NON-secret fields a user reaches
+/// for as often as the password beside them (a portal URL, a username).
+///
+/// Same rules as the Accounts tab's copy buttons: copying is a *read*, so the button stays
+/// live in a read-only session, and it is disabled only when the field is empty (nothing to
+/// copy). The value is stashed in `copy_plain` and put on the clipboard after rendering, so
+/// the clipboard call sits outside the `self` borrow the form holds.
+fn text_row_with_copy(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    writable: bool,
+    copy_plain: &mut Option<String>,
+) {
+    ui.label(label);
+    ui.horizontal(|ui| {
+        field_singleline_with_buttons(ui, value, writable, 380.0, 1);
+        if ui.add_enabled(!value.is_empty(), egui::Button::new("📋")).on_hover_text("Copy").clicked() {
+            *copy_plain = Some(value.clone());
+        }
+    });
+    ui.end_row();
+}
+
+/// Render one portal-login section (URL / username / masked password, each with a copy
+/// button, plus a free-form comment) into the Real Estate form. The password is masked
+/// unless `reveal`; `copy_pw` (secret: auto-cleared after 15 s) and `copy_plain` (the URL
+/// and username: no auto-clear) are set when a copy button is clicked, to be acted on
+/// after rendering.
 #[allow(clippy::too_many_arguments)]
 fn portal_section(
     ui: &mut egui::Ui,
@@ -6283,6 +6666,7 @@ fn portal_section(
     reveal: bool,
     writable: bool,
     copy_pw: &mut Option<Zeroizing<String>>,
+    copy_plain: &mut Option<String>,
 ) {
     let accent = ui_accent(ui);
     ui.add_space(4.0);
@@ -6292,10 +6676,12 @@ fn portal_section(
         ui.label(egui::RichText::new(format!("🔐 {title}")).strong().color(accent));
         ui.add_space(4.0);
         egui::Grid::new(title).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-            text_row(ui, "URL", url, writable);
-            text_row(ui, "Username", username, writable);
+            text_row_with_copy(ui, "URL", url, writable, copy_plain);
+            text_row_with_copy(ui, "Username", username, writable, copy_plain);
             ui.label("Password");
             ui.horizontal(|ui| {
+                // The password field reserves room for TWO buttons on the Accounts tab
+                // (generate + copy) but only one here, matching the URL/username rows above.
                 // `title` is unique per portal (Property Mgmt / Insurance / HOA / Tax), so
                 // it is a valid per-field id salt for the secret-field hardening. Copy stays
                 // available read-only (it is a read, not an edit).

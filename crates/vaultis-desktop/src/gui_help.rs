@@ -891,6 +891,37 @@ pub(crate) const TOPICS: &[Topic] = &[
         ],
     },
     Topic {
+        id: "tab-zakat",
+        section: "The tabs",
+        title: "Zakat",
+        blurb: "A running ledger of zakat by Ramadan year: what was due, what has been paid, and what is still outstanding.",
+        body: &[
+            Block::P(
+                "One row per Ramadan year, in four columns: RAMADAN YEAR, AMOUNT DUE, AMOUNT \
+                 PAID, and REMAINING. You fill in the first three; the fourth is worked out for \
+                 you.",
+            ),
+            Block::P(
+                "Unlike the other tabs there is no list-and-form split here — the whole ledger is \
+                 a table you type straight into, because the question this tab answers (how much \
+                 is still owed, across every year) is one you should be able to read without \
+                 clicking through the years one at a time. The three totals above the table add \
+                 up every row.",
+            ),
+            Block::Rows(&[
+                ("Remaining", "Always AMOUNT DUE minus AMOUNT PAID, recalculated as you type. It is never stored, so it can never fall out of step with the two numbers it comes from."),
+                ("A dash (—)", "Shown instead of a figure when Due or Paid is not a number. vaultis will not guess a zero — an amount it cannot read must never look like an obligation already settled."),
+                ("Amounts", "Written however you like: 12,500 · $12,500 · 12.5k all count as the same number."),
+                ("➕ New Year", "Adds a blank row at the bottom. 🗑 deletes a row, and — unlike the other tabs — that takes effect immediately."),
+            ]),
+            Block::Warn(
+                "💾 Save on this tab saves EVERY row at once, not just the one you last touched. \
+                 As on the other tabs, nothing you type is stored until you click it — watch for \
+                 the “unsaved” marker beside the Save button.",
+            ),
+        ],
+    },
+    Topic {
         id: "tab-summary",
         section: "The tabs",
         title: "Summary",

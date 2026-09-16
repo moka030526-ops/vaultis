@@ -13,7 +13,7 @@
 use super::*;
 use crate::crypto::KdfParams;
 use crate::launch;
-use crate::records::AssetLiability;
+use crate::records::{AssetLiability, ZakatEntry};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn fast() -> KdfParams {
@@ -763,7 +763,7 @@ fn window_settles_and_keeps_its_controls_at_every_width() {
 
     let mut w = 480.0f32;
     while w <= 1040.0 {
-        for tab in [Tab::Accounts, Tab::Assets, Tab::RealEstate, Tab::Taxes, Tab::Summary] {
+        for tab in [Tab::Accounts, Tab::Assets, Tab::RealEstate, Tab::Taxes, Tab::Zakat, Tab::Summary] {
             let (mut app, path) = app_unlocked("settle");
             // Enough rows, and long enough labels, that a small window genuinely
             // overflows — the condition under which scroll geometry gets decided.
@@ -781,6 +781,17 @@ fn window_settles_and_keeps_its_controls_at_every_width() {
             app.edit_asset = AssetLiability::new().ok();
             app.edit_realestate = RealEstate::new().ok();
             app.edit_taxfiling = TaxFiling::new().ok();
+            // The Zakat table needs rows to have any geometry to settle; give it enough
+            // that a narrow window genuinely has to decide about scrollbars.
+            app.edit_zakat = (0..40)
+                .filter_map(|i| {
+                    let mut z = ZakatEntry::new().ok()?;
+                    z.ramadan_year = format!("144{i}");
+                    z.amount_due = "12,500".into();
+                    z.amount_paid = "5,000".into();
+                    Some(z)
+                })
+                .collect();
             app.status = "Exported 3 record(s) to /a/deliberately/long/export/path/file.csv".into();
             let app = std::cell::RefCell::new(app);
 
@@ -811,7 +822,7 @@ fn window_settles_and_keeps_its_controls_at_every_width() {
 /// Each strip label as rendered (glyph + text). Shared by the wrap tests, which also pins
 /// that no tab is silently dropped from the strip.
 #[cfg(test)]
-const TAB_STRIP_LABELS: [&str; 9] = [
+const TAB_STRIP_LABELS: [&str; 10] = [
     "❗ URGENT",
     "📝 Instructions",
     "⚖ Trust and Will",
@@ -820,10 +831,11 @@ const TAB_STRIP_LABELS: [&str; 9] = [
     "🏠 Real Estate",
     "📃 Taxes",
     "📁 General Documents",
+    "🌙 Zakat",
     "📊 Summary",
 ];
 
-/// The on-screen rectangles of the nine tab-strip labels, in strip order, with the app
+/// The on-screen rectangles of the ten tab-strip labels, in strip order, with the app
 /// rendered at `w` x 460. `None` for a label that laid out nowhere.
 #[cfg(test)]
 fn tab_strip_boxes(w: f32) -> Vec<Option<egui::Rect>> {
@@ -1316,6 +1328,7 @@ fn every_tab_renders_in_real_egui() {
         Tab::RealEstate,
         Tab::Taxes,
         Tab::GeneralDocuments,
+        Tab::Zakat,
         Tab::Summary,
     ];
     // `selected == true` starts a blank record on the tab first, which is what
@@ -1338,6 +1351,10 @@ fn every_tab_renders_in_real_egui() {
                         Tab::RealEstate => a.edit_realestate = RealEstate::new().ok(),
                         Tab::Taxes => a.edit_taxfiling = TaxFiling::new().ok(),
                         Tab::GeneralDocuments => a.edit_general = GeneralDocument::new().ok(),
+                        // A table tab: its buffer is the whole ledger, so "selected" means
+                        // one row present — which is what brings the grid, the stat tiles
+                        // and the total row into the frame (empty renders the hint instead).
+                        Tab::Zakat => a.edit_zakat = ZakatEntry::new().into_iter().collect(),
                         Tab::Summary => {} // a calculated view — no edit buffer
                     }
                 }
@@ -1355,6 +1372,7 @@ fn every_tab_renders_in_real_egui() {
                     Tab::RealEstate => a.tab_realestate(ui),
                     Tab::Taxes => a.tab_taxes(ui),
                     Tab::GeneralDocuments => a.tab_general(ui),
+                    Tab::Zakat => a.tab_zakat(ui),
                     Tab::Summary => a.tab_summary(ui),
                 }
             });
@@ -2578,5 +2596,304 @@ fn a_failed_save_keeps_the_unsaved_changes_warning() {
     assert!(app.borrow().status.contains("Save failed"), "status: {}", app.borrow().status);
     assert!(app.borrow().has_unsaved_edits(), "the edit did not reach disk — still unsaved");
     assert_eq!(h.query_all_by_label(UNSAVED_WARNING).count(), 1, "the warning stays after a failed save");
+    cleanup(&path);
+}
+
+// --- Zakat tab ---------------------------------------------------------------
+
+/// The four columns the tab exists to show are all on screen, and REMAINING is the
+/// derived one: 4,000 due against 1,500 paid must read as $2,500 without anybody
+/// having typed it.
+#[test]
+fn zakat_tab_shows_four_columns_and_computes_remaining() {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let (mut app, path) = app_unlocked("zakatcols");
+    app.tab = Tab::Zakat;
+    let mut z = ZakatEntry::new().unwrap();
+    z.ramadan_year = "1446".into();
+    z.amount_due = "4000".into();
+    z.amount_paid = "1500".into();
+    app.edit_zakat = vec![z];
+
+    let app = std::cell::RefCell::new(app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.try_run().expect("the Zakat table settles");
+
+    for header in ["Ramadan Year", "Amount Due", "Amount Paid", "Remaining"] {
+        assert_eq!(h.query_all_by_label(header).count(), 1, "column header `{header}` is on screen");
+    }
+    // The row's computed cell AND the total row/tile both say $2,500 — one row, so the
+    // total equals it; the point is that the figure is derived and displayed, not stored.
+    assert!(
+        h.query_all_by_label("$2,500").count() >= 2,
+        "the derived Remaining shows in both the row and the totals"
+    );
+    cleanup(&path);
+}
+
+/// Save writes EVERY row of the table (not just one "current" record), and the saved
+/// vault holds only the two typed amounts — never a stored `remaining` that could later
+/// disagree with them.
+#[test]
+fn zakat_save_persists_every_row_and_stores_no_remaining() {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let (mut app, path) = app_unlocked("zakatsave");
+    app.tab = Tab::Zakat;
+    app.edit_zakat = ["1445", "1446", "1447"]
+        .iter()
+        .map(|y| {
+            let mut z = ZakatEntry::new().unwrap();
+            z.ramadan_year = (*y).into();
+            z.amount_due = " 4000 ".into(); // untrimmed: Save must trim, like every tab
+            z.amount_paid = "1500".into();
+            z
+        })
+        .collect();
+
+    let app = std::cell::RefCell::new(app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.run();
+    h.get_by_label("💾 Save").click();
+    h.run();
+
+    let a = app.borrow();
+    assert_eq!(a.status, "Saved.", "status: {}", a.status);
+    let saved = &a.vault.as_ref().unwrap().vault.zakat;
+    assert_eq!(saved.len(), 3, "all three rows were written, not just one");
+    assert_eq!(saved[0].amount_due, "4000", "Save trims, as on every other tab");
+    assert_eq!(saved[0].remaining(), Some(2500.0));
+    // The buffer was re-read from the vault, so the footer no longer claims unsaved work.
+    assert!(!a.has_unsaved_edits(), "the edit buffer matches the saved ledger after Save");
+    // Reopening the vault must recompute Remaining rather than load a stored one: the
+    // serialized JSON has no such field at all.
+    let json = serde_json::to_string(&a.vault.as_ref().unwrap().vault).unwrap();
+    assert!(!json.contains("remaining"), "`remaining` is derived and must never be serialized");
+    drop(a);
+    cleanup(&path);
+}
+
+/// Deleting a row removes it from the table AND the vault. A failed save rolls BOTH
+/// back, so a deletion the user was told had failed cannot be committed by a later save.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn zakat_row_delete_persists_and_rolls_back_on_a_failed_save() {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let (mut app, path) = app_unlocked("zakatdel");
+    app.tab = Tab::Zakat;
+    {
+        let ov = app.vault.as_mut().unwrap();
+        for y in ["1445", "1446"] {
+            let mut z = ZakatEntry::new().unwrap();
+            z.ramadan_year = y.into();
+            z.amount_due = "1000".into();
+            records::upsert(&mut ov.vault.zakat, z);
+        }
+        ov.save().unwrap();
+    }
+    app.sync_edit_buffer(Tab::Zakat);
+
+    let app = std::cell::RefCell::new(app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.run();
+
+    // A failed save must leave BOTH the table and the vault exactly as they were.
+    crate::fault::fail_at("vault.write", 1);
+    h.get_all_by_label("🗑").next().unwrap().click();
+    h.run();
+    crate::fault::clear();
+    {
+        let a = app.borrow();
+        assert!(a.status.contains("Save failed"), "status: {}", a.status);
+        assert_eq!(a.edit_zakat.len(), 2, "the row came back into the table");
+        assert_eq!(a.vault.as_ref().unwrap().vault.zakat.len(), 2, "and back into the vault");
+        assert_eq!(a.edit_zakat[0].ramadan_year, "1445", "restored in its original position");
+    }
+
+    // The same click on a healthy save deletes for real.
+    h.get_all_by_label("🗑").next().unwrap().click();
+    h.run();
+    let a = app.borrow();
+    assert_eq!(a.status, "Deleted.", "status: {}", a.status);
+    assert_eq!(a.edit_zakat.len(), 1);
+    assert_eq!(a.vault.as_ref().unwrap().vault.zakat.len(), 1);
+    assert_eq!(a.edit_zakat[0].ramadan_year, "1446", "the OTHER row is the one left");
+    drop(a);
+    cleanup(&path);
+}
+
+/// An amount that is not a number shows a dash, never a fabricated zero — a remainder
+/// vaultis cannot work out must not read as an obligation already settled.
+#[test]
+fn zakat_unreadable_amount_shows_a_dash_not_a_zero() {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let (mut app, path) = app_unlocked("zakatdash");
+    app.tab = Tab::Zakat;
+    let mut z = ZakatEntry::new().unwrap();
+    z.ramadan_year = "1447".into();
+    z.amount_due = "3000".into();
+    z.amount_paid = "ask the accountant".into();
+    app.edit_zakat = vec![z];
+
+    let app = std::cell::RefCell::new(app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1000.0, 700.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.try_run().expect("the Zakat table settles");
+
+    assert_eq!(h.query_all_by_label("—").count(), 1, "the row's Remaining cell is a dash");
+    // The TOTALS still have to produce a number, so an unreadable cell aggregates as 0
+    // there (the same rule the Summary tab's value aggregation uses). That errs in the
+    // safe direction — it counts nothing as paid, so the total REMAINING is the full
+    // $3,000 rather than an understatement of what is still owed.
+    assert_eq!(
+        h.query_all_by_label("$3,000").count(),
+        4,
+        "the due and remaining totals, each in its tile and in the total row"
+    );
+    assert_eq!(
+        h.query_all_by_label("$2,500").count(),
+        0,
+        "nothing invents a figure from the unreadable cell"
+    );
+    cleanup(&path);
+}
+
+// --- Real Estate portal copy buttons -----------------------------------------
+
+/// Each of the four portal cards offers a copy button on its URL and its username, not
+/// just on its password — twelve in all — and clicking one copies that exact value.
+#[test]
+fn real_estate_portals_copy_url_and_username_too() {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let (mut app, path) = app_unlocked("recopy");
+    app.tab = Tab::RealEstate;
+    let mut r = RealEstate::new().unwrap();
+    r.address = "12 Oak Lane".into();
+    r.property_mgmt_url = "https://pm.example".into();
+    r.property_mgmt_username = "pm-user".into();
+    r.property_mgmt_password = "pm-pass".into();
+    r.insurance_url = "https://ins.example".into();
+    r.insurance_username = "ins-user".into();
+    r.hoa_url = "https://hoa.example".into();
+    r.hoa_username = "hoa-user".into();
+    r.tax_portal_url = "https://tax.example".into();
+    r.tax_portal_username = "tax-user".into();
+    app.edit_realestate = Some(r);
+
+    let app = std::cell::RefCell::new(app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1100.0, 900.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.try_run().expect("the Real Estate form settles");
+
+    // 4 portals x (URL + username + password) = 12 copy buttons.
+    assert_eq!(
+        h.query_all_by_label("📋").count(),
+        12,
+        "every portal URL and username has a copy button alongside the password's"
+    );
+    cleanup(&path);
+}
+
+/// The copy button on a portal URL is DISABLED when there is nothing to copy, and copying
+/// a non-secret does not arm the 15-second clipboard auto-clear (that is for passwords).
+#[test]
+fn real_estate_portal_copy_is_disabled_when_empty_and_does_not_arm_the_clear() {
+    use egui_kittest::{kittest::NodeT as _, kittest::Queryable, Harness};
+
+    let (mut app, path) = app_unlocked("recopyempty");
+    app.tab = Tab::RealEstate;
+    let mut r = RealEstate::new().unwrap();
+    r.address = "12 Oak Lane".into();
+    // Only ONE non-secret filled in, so only one of the eight URL/username buttons is live.
+    r.property_mgmt_url = "https://pm.example".into();
+    app.edit_realestate = Some(r);
+    // A password copy earlier in the session armed the auto-clear...
+    app.clipboard_dirty = true;
+    app.clipboard_clear_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(15));
+
+    let app = std::cell::RefCell::new(app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1100.0, 900.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.try_run().expect("the Real Estate form settles");
+
+    // `add_enabled(false)` marks the node disabled in the accessibility tree, which is
+    // what a screen reader — and this query — sees.
+    let enabled = h
+        .query_all_by_label("📋")
+        .filter(|n| !n.accesskit_node().is_disabled())
+        .count();
+    assert_eq!(
+        enabled, 5,
+        "the one filled URL plus the four always-live password buttons; the seven empty \
+         URL/username buttons are disabled"
+    );
+    cleanup(&path);
+}
+
+// --- View-option toggles -----------------------------------------------------
+
+/// The border around a View-row option is drawn in BOTH states. An outline that showed
+/// up only when the option was ticked would leave the unchecked ones as bare text, which
+/// is exactly the "where does one option end and the next begin" problem it fixes.
+#[test]
+fn option_toggle_is_outlined_whether_it_is_on_or_off() {
+    let accent = egui::Color32::from_rgb(120, 170, 255);
+    let idle = egui::Color32::from_rgb(140, 140, 140);
+
+    let (on_stroke, on_fill) = option_toggle_colors(true, accent, idle);
+    let (off_stroke, off_fill) = option_toggle_colors(false, accent, idle);
+
+    assert_ne!(on_stroke, egui::Color32::TRANSPARENT, "an active option has a visible border");
+    assert_ne!(off_stroke, egui::Color32::TRANSPARENT, "so does an inactive one");
+    assert_ne!(on_stroke, off_stroke, "but the two states are told apart by the border color");
+    // Only the ON state is tinted; OFF stays transparent so the card behind shows through.
+    assert_ne!(on_fill, egui::Color32::TRANSPARENT);
+    assert_eq!(off_fill, egui::Color32::TRANSPARENT);
+}
+
+/// The border is a wrapper, not a replacement: the Accounts View row's two options still
+/// read as checkboxes and still toggle when clicked.
+#[test]
+fn accounts_view_options_still_toggle_inside_their_borders() {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let (mut app, path) = app_unlocked("viewopts");
+    app.tab = Tab::Accounts;
+    app.acct_grouped = false;
+    app.reveal_all = false;
+
+    let app = std::cell::RefCell::new(app);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1100.0, 700.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.try_run().expect("the Accounts tab settles");
+
+    h.get_by_label("grouped tree").click();
+    h.run();
+    assert!(app.borrow().acct_grouped, "the bordered checkbox still toggles");
+
+    h.get_by_label("👁 reveal all passwords").click();
+    h.run();
+    assert!(app.borrow().reveal_all, "and so does the reveal toggle");
     cleanup(&path);
 }

@@ -2060,3 +2060,114 @@ fn mut_doc_filename_boundary_at_120_bytes() {
     assert!(multibyte.len() <= 120 && multibyte.is_char_boundary(multibyte.len()));
     assert!(multibyte.starts_with("file_"));
 }
+
+// --- Zakat -------------------------------------------------------------------
+
+#[test]
+fn zakat_remaining_is_due_minus_paid() {
+    let mut z = ZakatEntry::new().unwrap();
+    z.ramadan_year = "1446".into();
+    z.amount_due = "4000".into();
+    z.amount_paid = "1500".into();
+    assert_eq!(z.remaining(), Some(2500.0));
+    // Overpaid is a real state (paying ahead), and it stays NEGATIVE rather than
+    // clamping — a clamp would hide the credit the next year could draw on.
+    z.amount_paid = "5000".into();
+    assert_eq!(z.remaining(), Some(-1000.0));
+    // The same lenient money format the Assets tab accepts.
+    z.amount_due = "$12,500".into();
+    z.amount_paid = "2.5k".into();
+    assert_eq!(z.remaining(), Some(10_000.0));
+}
+
+#[test]
+fn zakat_blank_amount_is_zero_but_an_unreadable_one_is_not() {
+    let mut z = ZakatEntry::new().unwrap();
+    // A year with an amount due and nothing paid yet: the whole amount is remaining.
+    z.amount_due = "4000".into();
+    z.amount_paid = "  ".into();
+    assert_eq!(z.remaining(), Some(4000.0), "a blank amount counts as zero");
+    // But a NON-blank value that is not a number yields no remainder at all. Treating
+    // "ask the accountant" as 0 would report an unknown obligation as fully settled.
+    z.amount_paid = "ask the accountant".into();
+    assert_eq!(z.remaining(), None, "an unreadable amount is not silently a zero");
+    z.amount_paid = "1000".into();
+    z.amount_due = "see letter".into();
+    assert_eq!(z.remaining(), None, "the same on the due side");
+}
+
+#[test]
+fn zakat_totals_sum_the_columns_and_stay_self_consistent() {
+    let mk = |year: &str, due: &str, paid: &str| {
+        let mut z = ZakatEntry::new().unwrap();
+        z.ramadan_year = year.into();
+        z.amount_due = due.into();
+        z.amount_paid = paid.into();
+        z
+    };
+    let rows = [
+        mk("1445", "3000", "3000"),
+        mk("1446", "4000", "1500"),
+        // A row whose own Remaining is `None` still contributes its READABLE side to the
+        // totals (the "unparseable aggregates as 0" rule `owner_value_summary` uses), so
+        // the total row never silently drops a year's due amount.
+        mk("1447", "2000", "not yet"),
+    ];
+    let (due, paid, remaining) = zakat_totals(rows.iter());
+    assert_eq!(due, 9000.0);
+    assert_eq!(paid, 4500.0);
+    assert_eq!(remaining, 4500.0, "remaining is the difference of the two totals");
+    assert_eq!(remaining, due - paid, "the total row is internally consistent");
+    // An empty ledger totals to zeros, not to a panic or a NaN.
+    assert_eq!(zakat_totals([].iter()), (0.0, 0.0, 0.0));
+}
+
+#[test]
+fn zakat_label_and_trim_cover_the_blank_year() {
+    let mut z = ZakatEntry::new().unwrap();
+    assert_eq!(z.label(), "(no year)", "a year-less row is still identifiable in a list");
+    z.ramadan_year = "  1446  ".into();
+    assert_eq!(z.label(), "Ramadan 1446", "the label trims for display");
+    z.amount_due = " 4000 ".into();
+    assert!(z.trim_fields(), "trim reports the change");
+    assert_eq!(z.ramadan_year, "1446");
+    assert_eq!(z.amount_due, "4000");
+    assert!(!z.trim_fields(), "a second trim is a no-op");
+}
+
+#[test]
+fn zakat_diff_tracks_every_stored_field() {
+    let mut old = ZakatEntry::new().unwrap();
+    old.ramadan_year = "1446".into();
+    old.amount_due = "4000".into();
+    old.amount_paid = "1000".into();
+    let mut new = old.clone();
+    new.amount_paid = "2500".into();
+    let changes = old.diff(&new, 1_700_000_000);
+    assert_eq!(changes.len(), 1, "only the changed field is logged");
+    assert!(changes[0].detail.contains("amount_paid"), "got {:?}", changes[0].detail);
+    // Remaining is derived, so it has no diff entry of its own — the amounts above
+    // already say everything that changed about it.
+    assert!(!changes.iter().any(|c| c.detail.contains("remaining")));
+}
+
+#[test]
+fn zakat_participates_in_the_whole_vault_sweeps() {
+    let mut v = Vault::default();
+    let mut z = ZakatEntry::new().unwrap();
+    z.ramadan_year = " 1446 ".into();
+    z.history.push(Change { at: 100, action: "updated".into(), detail: "x".into() });
+    v.zakat.push(z);
+    // The bulk trim reaches this collection...
+    assert_eq!(trim_all_records(&mut v), 1);
+    assert_eq!(v.zakat[0].ramadan_year, "1446");
+    // ...and so do the history counters/compactor, so a zakat row's history is not
+    // quietly exempt from "forget everything before <date>".
+    // (the trim itself logged an entry, stamped now — far past the cutoff, so it stays).
+    assert_eq!(history_stats(&v, Some(200), false), 1);
+    assert_eq!(compact_history(&mut v, Some(200), false), 1);
+    assert!(
+        !v.zakat[0].history.iter().any(|c| c.at < 200),
+        "every entry older than the cutoff is gone"
+    );
+}
