@@ -12,6 +12,18 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.3.0] — 2026-09-16
+
+The first release since 0.2.0 to add a record type, which is why the minor version
+moves rather than the patch: vaults written by this build carry a `zakat` collection
+that older builds do not know about. The on-disk **format stays v4** and the crypto and
+key-derivation paths are unchanged, so this is compatible both ways — an older vault
+opens here with an empty ledger, and a vault written here opens in 0.2.8 with the zakat
+rows ignored rather than lost (they are preserved on a round-trip only if the older
+build does not re-save).
+
 ### Added
 
 - **A Zakat tab** — a four-column ledger of zakat by Ramadan year: *Ramadan Year*,
