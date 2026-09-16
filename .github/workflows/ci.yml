@@ -165,7 +165,20 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      # `packages` is set ONLY to drop the action's default, which is
+      # `tools platform-tools`. `tools` is the obsolete SDK Tools package; Google
+      # removed it from the repository, so sdkmanager warns "Failed to find package
+      # 'tools'" and exits 1, aborting this job before Gradle ever runs. That is
+      # audit 2026-09-16 F-7: the FFI surface-lock test calls this job "the
+      # cross-language backstop" — it is what compiles App.kt against the generated
+      # UniFFI bindings, so an exhaustive `when` over `RecordKind` fails the build
+      # when a record kind goes unhandled. It had been dead since the SDK dropped
+      # `tools`, which meant 0.3.0 was a tag away from shipping a new ZAKAT record
+      # kind whose Kotlin had never been compiled. Everything else this job needs is
+      # installed explicitly in the next step.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       # Match the NDK pinned in mobile/composeApp/build.gradle.kts (ndkVersion).
       - name: Install SDK packages + NDK
         run: |
