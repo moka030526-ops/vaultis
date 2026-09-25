@@ -1082,20 +1082,21 @@ fn is_export_caveat(status: &str) -> bool {
     status.starts_with(EXPORT_CAVEAT_PREFIX)
 }
 
-/// The color an export caveat is drawn in: a statement of fact about a file that now sits
-/// unencrypted on disk, not the app's usual amber "might go wrong" caution.
+/// The color an alerting status is drawn in: an export caveat (a statement of fact about a
+/// file that now sits unencrypted on disk) or a failed/refused action (see
+/// [`GuiApp::status_is_alert`]), not the app's usual amber "might go wrong" caution.
 ///
 /// Picked per theme rather than hardcoded. A single mid-red reads at roughly 3.2:1 on the
 /// dark palettes — under the 4.5:1 WCAG AA floor for text this small, and the *default*
 /// theme (Catppuccin Mocha) is one of them, which would have made the one message that
 /// most needs reading the hardest to read. Each variant is chosen to clear 4.5:1 against
 /// its own family's backgrounds — enforced by
-/// `export_caveat_color_clears_wcag_aa_on_every_theme`, which walks all 16.
+/// `alert_color_clears_wcag_aa_on_every_theme`, which walks all 16.
 ///
 /// The dark variant is as pale as it is because Zenburn is the binding case: its light-grey
 /// panels leave the least room, and one value has to clear every dark palette. Weight
 /// (`.strong()`) and the leading ⚠ carry the urgency that saturation would otherwise.
-fn export_caveat_color(visuals: &egui::Visuals) -> egui::Color32 {
+fn alert_color(visuals: &egui::Visuals) -> egui::Color32 {
     if visuals.dark_mode {
         egui::Color32::from_rgb(255, 175, 175)
     } else {
@@ -1351,6 +1352,11 @@ struct GuiApp {
     /// Cleared on dismissal or when any later status message replaces the failure text
     /// (see [`error_banner_is_stale`]).
     error: Option<String>,
+    /// The status text most recently raised as a failure or refusal (by [`GuiApp::fail`] or
+    /// [`GuiApp::refuse`]). While `status` still equals it, the status line draws in the bold
+    /// alert color instead of the quiet default; any later message replaces the text and so
+    /// ends the alert on its own, with no reset needed at the many plain `status =` sites.
+    alert: Option<String>,
     clipboard_dirty: bool,
     // When set, the clipboard should be wiped at/after this instant.
     // `Option<Instant>`: `None` = no pending wipe, `Some(t)` = wipe at time `t`.
@@ -1517,6 +1523,7 @@ impl GuiApp {
             export_dir,
             status: String::new(),
             error: None,
+            alert: None,
             clipboard_dirty: false,
             clipboard_clear_at: None,
             theme,
@@ -1597,7 +1604,24 @@ impl GuiApp {
     fn fail(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
         self.error = Some(msg.clone());
+        self.alert = Some(msg.clone());
         self.status = msg;
+    }
+
+    /// Record a REFUSAL: an action the app declined because of the user's input (a missing
+    /// required field, a name already taken, …). Nothing broke, so no top banner, but the
+    /// status line draws it in the bold alert color so "not saved" never looks like a
+    /// routine "Saved."-style notice.
+    fn refuse(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        self.alert = Some(msg.clone());
+        self.status = msg;
+    }
+
+    /// Whether the status line should be drawn as an alert: the current message is a
+    /// failure/refusal raised via [`GuiApp::fail`]/[`GuiApp::refuse`], or an export caveat.
+    fn status_is_alert(&self) -> bool {
+        is_export_caveat(&self.status) || self.alert.as_deref() == Some(self.status.as_str())
     }
 
     fn clear_doc_inputs(&mut self) {
@@ -1935,7 +1959,7 @@ impl GuiApp {
                         Some(Ok(n)) if n > 0 => {
                             self.status = format!("{} · Synced {n} type(s) from records.", self.status)
                         }
-                        Some(Err(e)) => self.status = format!("{} · Type sync failed: {e}", self.status),
+                        Some(Err(e)) => self.refuse(format!("{} · Type sync failed: {e}", self.status)),
                         _ => {}
                     }
                 }
@@ -2967,7 +2991,7 @@ impl GuiApp {
                     self.status = format!("Added asset/liability type “{name}”.");
                     self.new_asset_type.clear();
                 }
-                Ok(false) => self.status = "Type is empty or already exists.".into(),
+                Ok(false) => self.refuse("Type is empty or already exists."),
                 Err(e) => self.fail(format!("Save failed: {e}")),
             }
         }
@@ -2978,7 +3002,7 @@ impl GuiApp {
                     self.status = format!("Added account type “{name}”.");
                     self.new_account_type.clear();
                 }
-                Ok(false) => self.status = "Type is empty or already exists.".into(),
+                Ok(false) => self.refuse("Type is empty or already exists."),
                 Err(e) => self.fail(format!("Save failed: {e}")),
             }
         }
@@ -2986,7 +3010,7 @@ impl GuiApp {
             let ty = self.new_subtype_for.clone();
             let sub = self.new_subtype_name.trim().to_string();
             if ty.is_empty() {
-                self.status = "Choose an account type for the subtype.".into();
+                self.refuse("Choose an account type for the subtype.");
             } else {
                 match self
                     .vault
@@ -2998,7 +3022,7 @@ impl GuiApp {
                         self.status = format!("Added subtype “{sub}” under “{ty}”.");
                         self.new_subtype_name.clear();
                     }
-                    Ok(false) => self.status = "Subtype is empty or already exists.".into(),
+                    Ok(false) => self.refuse("Subtype is empty or already exists."),
                     Err(e) => self.fail(format!("Save failed: {e}")),
                 }
             }
@@ -3010,8 +3034,8 @@ impl GuiApp {
             // weak status line — a refusal (in use / not found) is an ordinary status message.
             match self.vault.as_mut().expect("vault open on config").remove_asset_type(&name) {
                 Ok(CategoryRemoval::Removed) => self.status = format!("Deleted asset/liability type “{name}”."),
-                Ok(CategoryRemoval::InUse(n)) => self.status = format!("Can’t delete “{name}”: still used by {n} record(s)."),
-                Ok(CategoryRemoval::NotFound) => self.status = format!("“{name}” was not found."),
+                Ok(CategoryRemoval::InUse(n)) => self.refuse(format!("Can’t delete “{name}”: still used by {n} record(s).")),
+                Ok(CategoryRemoval::NotFound) => self.refuse(format!("“{name}” was not found.")),
                 Ok(CategoryRemoval::HasSubtypes) => unreachable!("asset types have no subtypes"),
                 Err(e) => self.fail(format!("Delete failed: {e}")),
             }
@@ -3019,17 +3043,17 @@ impl GuiApp {
         if let Some(name) = remove_account {
             match self.vault.as_mut().expect("vault open on config").remove_account_type(&name) {
                 Ok(CategoryRemoval::Removed) => self.status = format!("Deleted account type “{name}”."),
-                Ok(CategoryRemoval::HasSubtypes) => self.status = format!("Can’t delete “{name}”: delete its subtypes first."),
-                Ok(CategoryRemoval::InUse(n)) => self.status = format!("Can’t delete “{name}”: still used by {n} account(s)."),
-                Ok(CategoryRemoval::NotFound) => self.status = format!("“{name}” was not found."),
+                Ok(CategoryRemoval::HasSubtypes) => self.refuse(format!("Can’t delete “{name}”: delete its subtypes first.")),
+                Ok(CategoryRemoval::InUse(n)) => self.refuse(format!("Can’t delete “{name}”: still used by {n} account(s).")),
+                Ok(CategoryRemoval::NotFound) => self.refuse(format!("“{name}” was not found.")),
                 Err(e) => self.fail(format!("Delete failed: {e}")),
             }
         }
         if let Some((ty, sub)) = remove_subtype {
             match self.vault.as_mut().expect("vault open on config").remove_account_subtype(&ty, &sub) {
                 Ok(CategoryRemoval::Removed) => self.status = format!("Deleted subtype “{sub}” under “{ty}”."),
-                Ok(CategoryRemoval::InUse(n)) => self.status = format!("Can’t delete “{sub}”: still used by {n} account(s)."),
-                Ok(CategoryRemoval::NotFound) => self.status = format!("“{sub}” was not found under “{ty}”."),
+                Ok(CategoryRemoval::InUse(n)) => self.refuse(format!("Can’t delete “{sub}”: still used by {n} account(s).")),
+                Ok(CategoryRemoval::NotFound) => self.refuse(format!("“{sub}” was not found under “{ty}”.")),
                 Ok(CategoryRemoval::HasSubtypes) => unreachable!("a subtype has no subtypes"),
                 Err(e) => self.fail(format!("Delete failed: {e}")),
             }
@@ -3045,16 +3069,16 @@ impl GuiApp {
             self.export_dir = dir.clone();
             // Tell the user NOW if the folder they just picked is one every Export button
             // will refuse, instead of letting them discover it at the first export.
-            self.status = match crate::checked_export_dir(&self.path, &dir) {
-                _ if dir.is_empty() => "Export directory cleared.".into(),
-                Ok(_) => format!("Export directory set to {dir} (this session only)."),
-                Err(msg) => msg,
-            };
+            match crate::checked_export_dir(&self.path, &dir) {
+                _ if dir.is_empty() => self.status = "Export directory cleared.".into(),
+                Ok(_) => self.status = format!("Export directory set to {dir} (this session only)."),
+                Err(msg) => self.refuse(msg),
+            }
         }
         if do_backup {
             let dest = records::unquote_path(&self.backup_dest).to_string();
             if dest.is_empty() {
-                self.status = "Enter a backup destination directory.".into();
+                self.refuse("Enter a backup destination directory.");
             } else if let Some(ov) = self.vault.as_ref() {
                 // Use the OPEN handle's backup (reuses this session's write lock).
                 // Calling the free `vault::backup` here would self-deadlock: it tries
@@ -3083,7 +3107,7 @@ impl GuiApp {
                     }
                 }
                 // `_` is the catch-all arm: any other case (parse error, or 0).
-                _ => self.status = "Enter a whole number of MiB (at least 1).".into(),
+                _ => self.refuse("Enter a whole number of MiB (at least 1)."),
             }
         }
         if set_redundancy && self.cfg_redundancy != cur_redundancy {
@@ -3117,8 +3141,8 @@ impl GuiApp {
         if !self.status.is_empty() {
             ui.separator();
             let text = egui::RichText::new(&self.status);
-            let text = if is_export_caveat(&self.status) {
-                text.color(export_caveat_color(ui.visuals())).strong()
+            let text = if self.status_is_alert() {
+                text.color(alert_color(ui.visuals())).strong()
             } else {
                 text.weak()
             };
@@ -4575,7 +4599,7 @@ impl GuiApp {
                 // Title and owner are mandatory: refuse to save an account missing
                 // either (after trimming), keeping the edit form open to fill it.
                 if let Some(msg) = self.edit_account.as_ref().and_then(account_required_field_error) {
-                    self.status = msg.into();
+                    self.refuse(msg);
                 } else {
                     if let Some(r) = self.edit_account.clone()
                         && let Some(ov) = self.vault.as_mut()
@@ -5145,13 +5169,13 @@ impl GuiApp {
                 // Accept a path pasted with surrounding double quotes ("Copy as path").
                 let src = records::unquote_path(&self.doc_source).to_string();
                 if src.is_empty() {
-                    self.status = "'Upload from' path is required.".into();
+                    self.refuse("'Upload from' path is required.");
                     return;
                 }
                 // If no filename is given, default to the source file's own name.
                 let name = records::effective_doc_filename(&self.doc_filename, &src);
                 if name.trim().is_empty() {
-                    self.status = "Filename is required (the source path has no file name).".into();
+                    self.refuse("Filename is required (the source path has no file name).");
                     return;
                 }
                 let address = self.edit_realestate.as_ref().map(|r| r.address.clone()).unwrap_or_default();
@@ -5164,11 +5188,11 @@ impl GuiApp {
                 let loc = records::doc_upload_dir(&prefix, &self.doc_subfolder);
                 let vpath = vault::virtual_path(&loc, &name);
                 if vpath.len() > crate::storage::MAX_PATH_LEN {
-                    self.status = format!(
+                    self.refuse(format!(
                         "Path too long: {} bytes (max {}). Shorten the filename.",
                         vpath.len(),
                         crate::storage::MAX_PATH_LEN
-                    );
+                    ));
                     return;
                 }
                 let id = match self.vault.as_mut() {
@@ -5275,13 +5299,13 @@ impl GuiApp {
                 // Accept a path pasted with surrounding double quotes ("Copy as path").
                 let src = records::unquote_path(&self.doc_source).to_string();
                 if src.is_empty() {
-                    self.status = "'Upload from' path is required.".into();
+                    self.refuse("'Upload from' path is required.");
                     return;
                 }
                 // If no filename is given, default to the source file's own name.
                 let name = records::effective_doc_filename(&self.doc_filename, &src);
                 if name.trim().is_empty() {
-                    self.status = "Filename is required (the source path has no file name).".into();
+                    self.refuse("Filename is required (the source path has no file name).");
                     return;
                 }
                 // Don't upload+persist an INVALID asset that the Save path rejects (empty owner
@@ -5315,11 +5339,11 @@ impl GuiApp {
                 let loc = records::doc_upload_dir(&prefix, &self.doc_subfolder);
                 let vpath = vault::virtual_path(&loc, &fname);
                 if vpath.len() > crate::storage::MAX_PATH_LEN {
-                    self.status = format!(
+                    self.refuse(format!(
                         "Path too long: {} bytes (max {}). Shorten the filename or subfolder.",
                         vpath.len(),
                         crate::storage::MAX_PATH_LEN
-                    );
+                    ));
                     return;
                 }
                 // Nested match: get the vault (mut), then attempt the upload. Each
@@ -5450,13 +5474,13 @@ impl GuiApp {
                 // Accept a path pasted with surrounding double quotes ("Copy as path").
                 let src = records::unquote_path(&self.doc_source).to_string();
                 if src.is_empty() {
-                    self.status = "'Upload from' path is required.".into();
+                    self.refuse("'Upload from' path is required.");
                     return;
                 }
                 // If no filename is given, default to the source file's own name.
                 let name = records::effective_doc_filename(&self.doc_filename, &src);
                 if name.trim().is_empty() {
-                    self.status = "Filename is required (the source path has no file name).".into();
+                    self.refuse("Filename is required (the source path has no file name).");
                     return;
                 }
                 // The folder is derived from the filing year, NOT user-entered.
@@ -5470,11 +5494,11 @@ impl GuiApp {
                 let loc = records::doc_upload_dir(&prefix, &self.doc_subfolder);
                 let vpath = vault::virtual_path(&loc, &name);
                 if vpath.len() > crate::storage::MAX_PATH_LEN {
-                    self.status = format!(
+                    self.refuse(format!(
                         "Path too long: {} bytes (max {}). Shorten the filename.",
                         vpath.len(),
                         crate::storage::MAX_PATH_LEN
-                    );
+                    ));
                     return;
                 }
                 let id = match self.vault.as_mut() {
@@ -5591,7 +5615,7 @@ impl GuiApp {
     /// never cascaded) surfaces a status message and does NOT navigate.
     fn open_linked_account(&mut self, id: &str) {
         let Some(a) = self.vault_ref().vault.accounts.iter().find(|a| a.id == id).cloned() else {
-            self.status = "Linked account not found — it may have been deleted.".into();
+            self.refuse("Linked account not found — it may have been deleted.");
             return;
         };
         // A programmatic tab change bypasses ui_top_bar's prev_tab compare, so perform
@@ -5613,7 +5637,7 @@ impl GuiApp {
     /// id is still re-resolved here (deferred handling) rather than trusted.
     fn open_linking_asset(&mut self, id: &str) {
         let Some(r) = self.vault_ref().vault.assets.iter().find(|r| r.id == id).cloned() else {
-            self.status = "Linked record not found — it may have been deleted.".into();
+            self.refuse("Linked record not found — it may have been deleted.");
             return;
         };
         self.tab = Tab::Assets;
@@ -6000,18 +6024,18 @@ impl GuiApp {
                         ui.label(egui::RichText::new("•").color(accent.gamma_multiply(0.5)).small());
                         ui.label(egui::RichText::new("Ready").weak().small());
                     } else {
-                        let caveat = is_export_caveat(&self.status);
-                        let caveat_color = export_caveat_color(ui.visuals());
+                        let alert = self.status_is_alert();
+                        let alert_color = alert_color(ui.visuals());
                         ui.label(
                             egui::RichText::new("•")
-                                .color(if caveat { caveat_color } else { accent })
+                                .color(if alert { alert_color } else { accent })
                                 .small(),
                         );
                         // A long message truncates here rather than widening the window;
                         // hover carries the full text. The export caveat is worded to put
                         // its warning FIRST so truncation can only ever eat the path.
                         let text = egui::RichText::new(&self.status).small();
-                        let text = if caveat { text.color(caveat_color).strong() } else { text };
+                        let text = if alert { text.color(alert_color).strong() } else { text };
                         ui.add(egui::Label::new(text).truncate()).on_hover_text(&self.status);
                     }
                 },

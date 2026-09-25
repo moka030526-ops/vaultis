@@ -177,7 +177,7 @@ fn export_status_messages_are_flagged_as_caveats() {
 /// on the dark themes — under the 4.5:1 WCAG AA floor for text this small, and the
 /// default theme (Catppuccin Mocha) is one of them.
 #[test]
-fn export_caveat_color_clears_wcag_aa_on_every_theme() {
+fn alert_color_clears_wcag_aa_on_every_theme() {
     // WCAG relative luminance, then the standard contrast ratio.
     fn lum(c: egui::Color32) -> f64 {
         let f = |v: u8| {
@@ -194,7 +194,7 @@ fn export_caveat_color_clears_wcag_aa_on_every_theme() {
 
     for t in Theme::ALL {
         let v = visuals_for(t);
-        let fg = export_caveat_color(&v);
+        let fg = alert_color(&v);
         // Both surfaces the status line is ever drawn on.
         for (what, bg) in [("panel", v.panel_fill), ("faint", v.faint_bg_color)] {
             let ratio = contrast(fg, bg);
@@ -693,6 +693,25 @@ fn error_banner_clears_when_a_later_status_replaces_the_failure() {
     // core rule fires: a fixed problem must not leave a scary banner stuck on screen.
     assert!(error_banner_is_stale(Some("Save failed: disk full"), "Saved."));
     assert!(error_banner_is_stale(Some("Upload failed: bad path"), ""));
+}
+
+#[test]
+fn refusals_and_failures_draw_the_status_line_as_an_alert() {
+    // A refused save ("Title is required …") must not look like a routine notice: it is
+    // drawn in the bold alert color until a later message replaces it.
+    let mut app = GuiApp::new(tmp("alert-status"), false);
+    assert!(!app.status_is_alert(), "idle is not an alert");
+    app.refuse("Title is required — every account must have a title.");
+    assert!(app.status_is_alert(), "a refusal is an alert");
+    assert!(app.error.is_none(), "a refusal raises no top banner");
+    app.status = "Saved.".into();
+    assert!(!app.status_is_alert(), "a later success ends the alert");
+    app.fail("Save failed: disk full");
+    assert!(app.status_is_alert(), "a hard failure is an alert");
+    app.error = None; // dismissing the banner leaves the status line alerting
+    assert!(app.status_is_alert(), "still an alert after the banner is dismissed");
+    app.status = format!("{EXPORT_CAVEAT_PREFIX} — plain file");
+    assert!(app.status_is_alert(), "the export caveat is an alert");
 }
 
 fn nanos() -> u128 {
