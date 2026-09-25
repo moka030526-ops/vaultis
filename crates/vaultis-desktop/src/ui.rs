@@ -525,6 +525,10 @@ struct App {
     // in read-only mode since it is a local preference, not vault content.
     cfg_export_dir: String,
     status: String,
+    /// The validation message a refused save left in `status` (a missing title, …). It
+    /// belongs to the form that was being saved, so leaving that form or opening another
+    /// clears it rather than showing it over a record the user has not tried to save.
+    edit_refusal: Option<String>,
     clipboard_dirty: bool,
     // When set, the clipboard should be wiped at/after this instant (auto-clear
     // a copied password so it doesn't linger for the whole session).
@@ -631,6 +635,7 @@ impl App {
             cfg_redundancy: String::new(),
             cfg_export_dir,
             status: String::new(),
+            edit_refusal: None,
             clipboard_dirty: false,
             clipboard_clear_at: None,
         }
@@ -2107,7 +2112,24 @@ impl App {
             link_candidates,
             history,
         });
+        self.clear_edit_refusal();
         self.screen = Screen::Edit;
+    }
+
+    /// Refuse a save for a validation problem: show `msg` and remember it as the form's
+    /// refusal, so [`App::clear_edit_refusal`] can drop it once the form is left.
+    fn refuse_edit(&mut self, msg: &str) {
+        self.status = msg.into();
+        self.edit_refusal = Some(msg.into());
+    }
+
+    /// Clear the status line if it still shows a refused save's message.
+    fn clear_edit_refusal(&mut self) {
+        if let Some(msg) = self.edit_refusal.take()
+            && self.status == msg
+        {
+            self.status.clear();
+        }
     }
 
     fn handle_edit_key(&mut self, key: KeyEvent) -> bool {
@@ -2128,6 +2150,7 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.edit = None;
+                self.clear_edit_refusal();
                 self.screen = Screen::Browse;
             }
             // Write actions are gated by --write; reads (reveal/copy/export) are not.
@@ -3033,12 +3056,12 @@ impl App {
         // Title (field 0) and owner (field 3) are mandatory for accounts: refuse a
         // blank value for either and keep the edit form open so the user can fill it.
         if es.tab == Tab::Accounts && es.fields[0].value.trim().is_empty() {
-            self.status = "Title is required — every account must have a title.".into();
+            self.refuse_edit("Title is required — every account must have a title.");
             self.edit = Some(es);
             return;
         }
         if es.tab == Tab::Accounts && es.fields[3].value.trim().is_empty() {
-            self.status = "Owner is required — every account must have an owner.".into();
+            self.refuse_edit("Owner is required — every account must have an owner.");
             self.edit = Some(es);
             return;
         }
@@ -3046,12 +3069,12 @@ impl App {
         // approximate value (field 5) so the Summary tab can aggregate it. Keep the form
         // open on a problem so the user can fix it rather than silently saving a bad entry.
         if es.tab == Tab::Assets && es.fields[2].value.trim().is_empty() {
-            self.status = "Owner is required — every asset/liability must have an owner.".into();
+            self.refuse_edit("Owner is required — every asset/liability must have an owner.");
             self.edit = Some(es);
             return;
         }
         if es.tab == Tab::Assets && records::parse_approx_value(&es.fields[5].value).is_none() {
-            self.status = "Approximate value must be a number (e.g. 1500, 12,000.50, or 250k).".into();
+            self.refuse_edit("Approximate value must be a number (e.g. 1500, 12,000.50, or 250k).");
             self.edit = Some(es);
             return;
         }

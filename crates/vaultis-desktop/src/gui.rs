@@ -1156,6 +1156,9 @@ enum AuthMode {
     ChangePassword,
 }
 
+/// A screen, tab and open record id: the form a refusal belongs to.
+type FormContext = (Screen, Tab, Option<String>);
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum Tab {
     Urgent,
@@ -1357,6 +1360,12 @@ struct GuiApp {
     /// alert color instead of the quiet default; any later message replaces the text and so
     /// ends the alert on its own, with no reset needed at the many plain `status =` sites.
     alert: Option<String>,
+    /// Where the current refusal was raised: the screen, tab and record id on show when
+    /// [`GuiApp::refuse`] ran. A refusal is about THAT form's input, so once the user moves
+    /// to another record (➕ New, a list pick, another tab or screen) it no longer applies
+    /// and is cleared — otherwise "Title is required" would sit in red over a fresh, blank
+    /// form the user has not tried to save yet (see [`refusal_is_stale`]).
+    refused_in: Option<FormContext>,
     clipboard_dirty: bool,
     // When set, the clipboard should be wiped at/after this instant.
     // `Option<Instant>`: `None` = no pending wipe, `Some(t)` = wipe at time `t`.
@@ -1524,6 +1533,7 @@ impl GuiApp {
             status: String::new(),
             error: None,
             alert: None,
+            refused_in: None,
             clipboard_dirty: false,
             clipboard_clear_at: None,
             theme,
@@ -1615,7 +1625,41 @@ impl GuiApp {
     fn refuse(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
         self.alert = Some(msg.clone());
+        self.refused_in = Some(self.form_context());
         self.status = msg;
+    }
+
+    /// The screen, tab and open record id right now — what a refusal is tied to.
+    fn form_context(&self) -> FormContext {
+        (self.screen, self.tab, self.edit_id())
+    }
+
+    /// The id of the record open in the current tab's form, or `None` when nothing is
+    /// open. Zakat edits its whole table at once, so it has no per-record id.
+    fn edit_id(&self) -> Option<String> {
+        match self.tab {
+            Tab::Urgent => self.edit_urgent.as_ref().map(|r| r.id.clone()),
+            Tab::Instructions => self.edit_instruction.as_ref().map(|r| r.id.clone()),
+            Tab::TrustWill => self.edit_trustwill.as_ref().map(|r| r.id.clone()),
+            Tab::Assets => self.edit_asset.as_ref().map(|r| r.id.clone()),
+            Tab::Accounts => self.edit_account.as_ref().map(|r| r.id.clone()),
+            Tab::RealEstate => self.edit_realestate.as_ref().map(|r| r.id.clone()),
+            Tab::Taxes => self.edit_taxfiling.as_ref().map(|r| r.id.clone()),
+            Tab::GeneralDocuments => self.edit_general.as_ref().map(|r| r.id.clone()),
+            Tab::Zakat | Tab::Summary => None,
+        }
+    }
+
+    /// Drop a refusal once the form it was about is no longer on show. Only a status that
+    /// is still the refusal text is cleared; any later message has already replaced it.
+    fn clear_stale_refusal(&mut self) {
+        if refusal_is_stale(self.refused_in.as_ref(), &self.form_context()) {
+            if self.alert.as_deref() == Some(self.status.as_str()) {
+                self.status.clear();
+            }
+            self.alert = None;
+            self.refused_in = None;
+        }
     }
 
     /// Whether the status line should be drawn as an alert: the current message is a
@@ -1971,6 +2015,11 @@ impl GuiApp {
                 self.auth_error = None;
                 self.wipe_passwords();
                 self.screen = Screen::Main;
+                // A type-sync refusal above was raised on the lock screen, so re-anchor it
+                // to the main screen it belongs to, or it would count as stale and vanish.
+                if self.refused_in.is_some() {
+                    self.refused_in = Some(self.form_context());
+                }
             }
             // Collapse every CORRECT-password-reachable failure into ONE message so the
             // unlock screen can't be used as a "this password is correct" oracle: a
@@ -3937,10 +3986,10 @@ impl GuiApp {
                 }
                 // Validate before saving: every Asset/Liability must have an owner and a
                 // NUMERIC approximate value, so the Summary tab can aggregate it. On failure,
-                // surface the reason in the conspicuous banner and do NOT save the bad record.
+                // refuse (the user's input, not a broken save) and do NOT save the bad record.
                 let invalid = self.edit_asset.as_ref().and_then(records::asset_validation_error);
                 if let Some(msg) = invalid {
-                    self.fail(msg);
+                    self.refuse(msg);
                 } else {
                     if let Some(r) = self.edit_asset.clone()
                         && let Some(ov) = self.vault.as_mut()
@@ -5964,6 +6013,7 @@ impl GuiApp {
         if error_banner_is_stale(self.error.as_deref(), &self.status) {
             self.error = None;
         }
+        self.clear_stale_refusal();
         // A hard failure (a failed save/export/backup/upload, …) gets a bright, dismissable
         // banner across the TOP of EVERY screen — far more visible than the weak status
         // line, so a failure can never be missed (e.g. a save that failed on a full disk,
@@ -6110,6 +6160,12 @@ impl GuiApp {
 /// disappear as soon as any later status line replaces that text — a success/info message
 /// means the failure is no longer current — while staying put as long as the status still
 /// equals it. Returns `true` when the stored `error` is stale and should be cleared.
+/// Whether a refusal raised in `raised_in` no longer applies because the user has moved to
+/// a different screen, tab or record (`now`). `false` when there is no refusal.
+fn refusal_is_stale(raised_in: Option<&FormContext>, now: &FormContext) -> bool {
+    raised_in.is_some_and(|r| r != now)
+}
+
 fn error_banner_is_stale(error: Option<&str>, status: &str) -> bool {
     error.is_some_and(|e| e != status)
 }

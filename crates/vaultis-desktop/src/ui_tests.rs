@@ -1473,6 +1473,20 @@ fn account_save_requires_a_title_in_tui() {
 }
 
 #[test]
+fn a_refused_save_clears_when_the_form_is_left_in_tui() {
+    let (mut app, path) = app_unlocked("titlereq-clear");
+    app.handle_key(key(KeyCode::Char('5'))); // Accounts
+    app.handle_key(key(KeyCode::Char('n'))); // new
+    app.handle_key(ctrl('s')); // blank title — refused
+    assert!(app.status.contains("Title is required"), "status: {}", app.status);
+    app.handle_key(key(KeyCode::Esc)); // leave the form
+    assert!(app.status.is_empty(), "the refusal left with its form: {}", app.status);
+    app.handle_key(key(KeyCode::Char('n'))); // a fresh form starts clean
+    assert!(app.status.is_empty(), "status: {}", app.status);
+    cleanup(&path);
+}
+
+#[test]
 fn account_save_requires_an_owner_in_tui() {
     let (mut app, path) = app_unlocked("ownerreq");
     app.handle_key(key(KeyCode::Char('5'))); // Accounts

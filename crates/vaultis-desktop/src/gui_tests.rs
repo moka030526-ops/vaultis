@@ -714,6 +714,31 @@ fn refusals_and_failures_draw_the_status_line_as_an_alert() {
     assert!(app.status_is_alert(), "the export caveat is an alert");
 }
 
+#[test]
+fn a_refused_save_clears_once_another_record_is_open() {
+    // "Title is required" belongs to the form whose save was refused. A fresh ➕ New
+    // form (or another record, tab or screen) has not been saved yet, so the message
+    // must not carry over onto it.
+    let (mut app, path) = app_unlocked("refusal-scope");
+    app.tab = Tab::Accounts;
+    app.edit_account = Some(Account::new().unwrap());
+    app.refuse("Title is required — every account must have a title.");
+    app.clear_stale_refusal();
+    assert!(app.status_is_alert(), "same form: the refusal stays until the next save");
+    app.edit_account = Some(Account::new().unwrap()); // ➕ New
+    app.clear_stale_refusal();
+    assert!(app.status.is_empty(), "status: {}", app.status);
+    assert!(!app.status_is_alert());
+
+    // A later message is never wiped by the stale refusal it replaced.
+    app.refuse("Owner is required — every account must have an owner.");
+    app.status = "Copied.".into();
+    app.tab = Tab::Assets;
+    app.clear_stale_refusal();
+    assert_eq!(app.status, "Copied.");
+    cleanup(&path);
+}
+
 fn nanos() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
 }
