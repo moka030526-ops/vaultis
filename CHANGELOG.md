@@ -14,6 +14,21 @@ The full, per-finding security write-up for the hardening work below lives in
 
 Nothing yet.
 
+## [0.3.1] — 2026-09-25
+
+A desktop UI fix. Vault files, the crypto and the key-derivation paths are unchanged,
+and the release is compatible both ways with 0.3.0.
+
+### Fixed
+
+- **A refused save looked like a routine notice.** When the app declined an action
+  because of the input — a missing title or owner, a missing upload path or filename, a
+  path too long, a type name already taken, a type still in use — the message went to
+  the status bar in the same plain text as "Saved.", easy to read past and walk away from
+  an edit that was never stored. Failures and refusals are now drawn in bold red (a
+  paler red on dark themes, checked for contrast on all 16), as the unencrypted-export
+  warning already was, until a later message replaces them.
+
 ## [0.3.0] — 2026-09-16
 
 The first release since 0.2.0 to add a record type, which is why the minor version
