@@ -14,6 +14,22 @@ The full, per-finding security write-up for the hardening work below lives in
 
 Nothing yet.
 
+## [0.3.2] — 2026-09-25
+
+A desktop UI fix. Vault files, the crypto and the key-derivation paths are unchanged,
+and the release is compatible both ways with 0.3.1.
+
+### Fixed
+
+- **A refused save's message outlived its form.** "Title is required" (or any other
+  refusal) stayed in the status bar after ➕ New, picking another record or switching
+  tabs, so it showed in red over a blank form that had never been saved. A refusal now
+  belongs to the form it was raised on: it appears only when that form's save is
+  refused, and clears on a successful save or once another record, tab or screen is on
+  show. The terminal UI clears it when the form is left. Asset validation (a missing
+  owner, a non-numeric value) is now reported the same way instead of as a
+  hard-failure banner.
+
 ## [0.3.1] — 2026-09-25
 
 A desktop UI fix. Vault files, the crypto and the key-derivation paths are unchanged,
