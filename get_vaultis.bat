@@ -141,6 +141,14 @@ $VaultMarkers = @('vault.pmv', 'manifest', 'volume', 'vaultis.lock')
 # sample-vault is left strictly alone, under any name.
 $SampleVaultName = 'sample-vault'
 
+# The user's own data that can sit directly in the install folder when the vault root is
+# the install folder itself: the vault files, plus prefs.json (theme, ui scale, font --
+# written to <vault_root>/prefs.json, see launch.rs). None of these is in the package
+# today, but an upgrade must never overwrite them even if a future package ships a file of
+# the same name -- if one exists at the destination, it is kept and the package's copy is
+# skipped.
+$UserDataNames = $VaultMarkers + @('prefs.json')
+
 function Test-LooksLikeVault {
     param([string]$Path)
     if (-not $Path) { return $false }
@@ -201,19 +209,23 @@ else {
     catch {
         throw "'$Chosen' is not a usable folder path."
     }
-    # Refuse to scatter executables inside somebody's vault. This is not about deletion --
-    # nothing here would delete it -- but an install directory is a place this script writes
-    # files into and later offers to clean up, and a vault is not that.
-    if (Test-LooksLikeVault $Chosen) {
+    if (Test-IsVaultisInstall $Chosen) {
+        # Already an install: upgrade it in place, rather than burying a second copy in a
+        # 'vaultis' subfolder of it. Checked BEFORE the vault guard below, because some
+        # people keep their vault (and its prefs.json) right beside the executables -- that
+        # layout is theirs to choose, and refusing to upgrade it would strand them on an old
+        # version. The copy loop below never overwrites $UserDataNames, so the vault and the
+        # preferences survive the upgrade untouched.
+        $InstallDir = $Chosen
+        Write-Host "That folder already holds vaultis -- upgrading it in place."
+    }
+    elseif (Test-LooksLikeVault $Chosen) {
+        # Refuse to scatter executables inside somebody's vault that is NOT already an
+        # install. This is not about deletion -- nothing here would delete it -- but a vault
+        # directory is not a place to start a new install.
         throw ("'$Chosen' looks like a vault (it contains " +
             (($VaultMarkers | Where-Object { Test-Path -LiteralPath (Join-Path $Chosen $_) }) -join ', ') +
             "). Refusing to install into a vault directory -- choose somewhere else.")
-    }
-    if (Test-IsVaultisInstall $Chosen) {
-        # Already an install: upgrade it in place, rather than burying a second copy in a
-        # 'vaultis' subfolder of it.
-        $InstallDir = $Chosen
-        Write-Host "That folder already holds vaultis -- upgrading it in place."
     }
     else {
         # Anything else gets a subfolder, so this never scatters executables through a
@@ -360,6 +372,10 @@ try {
 
     foreach ($Item in Get-ChildItem -LiteralPath $StageDir -Force) {
         $Target = Join-Path $InstallDir $Item.Name
+        if (($UserDataNames -contains $Item.Name) -and (Test-Path -LiteralPath $Target)) {
+            Write-Host "  keeping your existing $($Item.Name) (vault data -- not touching it)"
+            continue
+        }
         if ($SelfPath -and -not $Item.PSIsContainer -and (Test-Path -LiteralPath $Target)) {
             $Existing = Get-Item -LiteralPath $Target -ErrorAction SilentlyContinue
             if ($Existing -and $Existing.FullName -eq $SelfPath) {
