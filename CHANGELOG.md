@@ -14,6 +14,26 @@ The full, per-finding security write-up for the hardening work below lives in
 
 Nothing yet.
 
+## [0.3.3] — 2026-10-04
+
+An installer fix and a desktop UI addition. Vault files, the crypto and the
+key-derivation paths are unchanged, and the release is compatible both ways with 0.3.2.
+
+### Fixed
+
+- **Upgrading an install that also holds a vault.** If your vault (and its
+  `prefs.json`) sits in the installation folder itself, `get_vaultis.bat` refused to
+  install there ("looks like a vault") instead of upgrading. It now upgrades the install
+  in place and leaves the vault files and `prefs.json` untouched — they are never
+  overwritten, even if a package ships a file of the same name. A vault folder that holds
+  no install is still refused.
+
+### Added
+
+- **Tooltips on the start screen.** Hovering over Vault root, Vault, the vault list,
+  the password and confirm fields, or the Unlock / Create button now says briefly what
+  each one is.
+
 ## [0.3.2] — 2026-09-25
 
 A desktop UI fix. Vault files, the crypto and the key-derivation paths are unchanged,
