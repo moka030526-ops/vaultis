@@ -2344,24 +2344,32 @@ impl GuiApp {
             };
             ui.vertical_centered(|ui| {
                 // Editable ROOT path: the folder scanned (one level deep) for vaults.
-                ui.label("Vault root");
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.vault_root)
-                        .hint_text("/path/that/holds/vault-folders")
-                        .desired_width(fit(ui, 360.0)),
-                );
+                const ROOT_TIP: &str =
+                    "The folder that contains your vault's folder. E.g. for D:\\Vaults\\recent, the root is D:\\Vaults.";
+                ui.label("Vault root").on_hover_text(ROOT_TIP);
+                let resp = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.vault_root)
+                            .hint_text("/path/that/holds/vault-folders")
+                            .desired_width(fit(ui, 360.0)),
+                    )
+                    .on_hover_text(ROOT_TIP);
                 root_changed = resp.changed();
                 ui.add_space(4.0 * k);
                 // The "Vault" control: an editable leaf-name box plus a dropdown of the
                 // vaults discovered under the root. Pick one to fill the box (→ Unlock), or
                 // type a new name (→ Create, in --write mode). Empty = the root itself.
-                ui.label("Vault");
+                const NAME_TIP: &str =
+                    "The vault's folder name, e.g. recent. Pick one from the list, or type a new name to create one.";
+                ui.label("Vault").on_hover_text(NAME_TIP);
                 ui.horizontal(|ui| {
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.vault_name)
-                            .hint_text("vault name")
-                            .desired_width(fit(ui, 244.0)),
-                    );
+                    let resp = ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.vault_name)
+                                .hint_text("vault name")
+                                .desired_width(fit(ui, 244.0)),
+                        )
+                        .on_hover_text(NAME_TIP);
                     name_changed = resp.changed();
                     egui::ComboBox::from_id_salt("vault_picker")
                         .selected_text(selected_text)
@@ -2372,7 +2380,9 @@ impl GuiApp {
                                     picked = Some(name.clone());
                                 }
                             }
-                        });
+                        })
+                        .response
+                        .on_hover_text("Vaults found in the root folder.");
                 });
                 // Surface a scan problem (root unreadable, or entries skipped) plainly.
                 if let Some(warn) = &self.vault_scan_warning {
@@ -2458,22 +2468,33 @@ impl GuiApp {
         // A built-in Ctrl+C/cut of a master-password field surfaces here so we can arm
         // the clipboard auto-clear/exit-wipe (the field can't reach `self` itself).
         let mut copied: Option<Zeroizing<String>> = None;
+        // Hover help for each field, shown on the label and on the field alike. When passwords
+        // are being SET, the tip is the one thing worth saying then: there is no recovery.
+        let (pw1_tip, pw2_tip) = if confirm {
+            (
+                "First password. Write it down — it cannot be recovered.",
+                "Second password. Write it down — it cannot be recovered.",
+            )
+        } else {
+            ("First password. Order matters.", "Second password. Both are required.")
+        };
+        const CONFIRM_TIP: &str = "Retype it to catch a typo.";
         egui::Grid::new("auth_grid").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
-            ui.label("Password 1");
+            ui.label("Password 1").on_hover_text(pw1_tip);
             // `&mut self.pw1` lends the field to the widget so typing updates it.
-            submit |= password_field(ui, "auth_pw1", &mut self.pw1, &mut copied);
+            submit |= password_field(ui, "auth_pw1", &mut self.pw1, &mut copied, Some(pw1_tip));
             ui.end_row();
             if confirm {
-                ui.label("Confirm password 1");
-                submit |= password_field(ui, "auth_confirm1", &mut self.confirm1, &mut copied);
+                ui.label("Confirm password 1").on_hover_text(CONFIRM_TIP);
+                submit |= password_field(ui, "auth_confirm1", &mut self.confirm1, &mut copied, Some(CONFIRM_TIP));
                 ui.end_row();
             }
-            ui.label("Password 2");
-            submit |= password_field(ui, "auth_pw2", &mut self.pw2, &mut copied);
+            ui.label("Password 2").on_hover_text(pw2_tip);
+            submit |= password_field(ui, "auth_pw2", &mut self.pw2, &mut copied, Some(pw2_tip));
             ui.end_row();
             if confirm {
-                ui.label("Confirm password 2");
-                submit |= password_field(ui, "auth_confirm2", &mut self.confirm2, &mut copied);
+                ui.label("Confirm password 2").on_hover_text(CONFIRM_TIP);
+                submit |= password_field(ui, "auth_confirm2", &mut self.confirm2, &mut copied, Some(CONFIRM_TIP));
                 ui.end_row();
             }
         });
@@ -2493,10 +2514,10 @@ impl GuiApp {
         ui.horizontal(|ui| {
             // Same reasoning as the heading above: a read-only session cannot create, so the
             // button never offers to. `offer_create` already folds in `writable`.
-            let label = match self.auth_mode {
-                AuthMode::Create if offer_create => "Create vault",
-                AuthMode::Create | AuthMode::Unlock => "🔓 Unlock",
-                AuthMode::ChangePassword => "Change passwords",
+            let (label, tip) = match self.auth_mode {
+                AuthMode::Create if offer_create => ("Create vault", "Create a new encrypted vault here."),
+                AuthMode::Create | AuthMode::Unlock => ("🔓 Unlock", "Open the vault."),
+                AuthMode::ChangePassword => ("Change passwords", "Replace both passwords."),
             };
             // The one action of this screen, drawn as the primary (filled) button.
             let accent = accent(self.theme);
@@ -2505,6 +2526,7 @@ impl GuiApp {
                     [150.0, 28.0],
                     egui::Button::new(egui::RichText::new(label).strong().color(egui::Color32::WHITE)).fill(accent),
                 )
+                .on_hover_text(tip)
                 .clicked()
             {
                 submit = true;
@@ -3245,10 +3267,10 @@ impl GuiApp {
                     ui.add(egui::TextEdit::singleline(&mut self.merge_src_dir).hint_text("/path/to/other-vault-folder").desired_width(fit(ui, 360.0)));
                     ui.end_row();
                     ui.label("Other password 1");
-                    password_field(ui, "merge_pw1", &mut self.merge_pw1, &mut copied);
+                    password_field(ui, "merge_pw1", &mut self.merge_pw1, &mut copied, None);
                     ui.end_row();
                     ui.label("Other password 2");
-                    password_field(ui, "merge_pw2", &mut self.merge_pw2, &mut copied);
+                    password_field(ui, "merge_pw2", &mut self.merge_pw2, &mut copied, None);
                     ui.end_row();
                 });
                 ui.add_space(10.0);
@@ -7358,6 +7380,7 @@ fn password_field(
     id_salt: &str,
     value: &mut String,
     copied_out: &mut Option<Zeroizing<String>>,
+    hover: Option<&str>,
 ) -> bool {
     // Always masked (revealed = false); the secret hardening (undo scrub + copy
     // re-route) still applies — a master password is the most sensitive of all.
@@ -7365,7 +7388,10 @@ fn password_field(
     // exists before any vault is open, so the read-only mode does not apply here.
     // `copied_out` surfaces a built-in Ctrl+C of the master password so the caller
     // arms the auto-clear (otherwise it would linger on the clipboard).
-    let resp = secret_text_edit(ui, id_salt, value, false, true, fit(ui, 280.0), copied_out);
+    let mut resp = secret_text_edit(ui, id_salt, value, false, true, fit(ui, 280.0), copied_out);
+    if let Some(hover) = hover {
+        resp = resp.on_hover_text(hover);
+    }
     resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
 }
 
