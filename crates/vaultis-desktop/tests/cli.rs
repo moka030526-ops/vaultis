@@ -155,8 +155,10 @@ fn vault_with_dead_bytes(tag: &str) -> PathBuf {
     use vaultis::crypto::KdfParams;
     use vaultis::vault::OpenVault;
 
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "vaultis-cli-{tag}-{}",
+        "vaultis-cli-{tag}-{n}-{}",
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();

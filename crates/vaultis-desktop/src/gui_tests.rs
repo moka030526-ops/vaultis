@@ -781,8 +781,13 @@ fn a_refused_save_clears_once_another_record_is_open() {
     cleanup(&path);
 }
 
-fn nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+/// A name part no other call in this process repeats: the timestamp alone is not
+/// enough, because macOS's clock only has microsecond resolution and parallel tests
+/// read the same value.
+fn nanos() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{n}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos())
 }
 
 fn tmp(tag: &str) -> std::path::PathBuf {

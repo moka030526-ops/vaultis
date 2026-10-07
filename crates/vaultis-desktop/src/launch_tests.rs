@@ -462,7 +462,10 @@ fn sample_copy_is_writable_and_private_even_from_a_read_only_bundle() {
 }
 
 /// Distinct temp paths within one test binary run, so this test can't collide with a
-/// sibling that used the same pid-derived name.
-fn nanos_for_test() -> u128 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+/// sibling that used the same pid-derived name. The sequence number matters on macOS,
+/// whose clock only has microsecond resolution.
+fn nanos_for_test() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{n}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())
 }

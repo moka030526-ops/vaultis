@@ -21,8 +21,10 @@ fn fast() -> KdfParams {
 fn tmp_vault(tag: &str) -> PathBuf {
     // A unique per-test directory; the vault file name is fixed (vault.pmv),
     // matching production where the user controls only the directory.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let dir = std::env::temp_dir().join(format!("vaultis-ui-{tag}-{nanos}"));
+    let dir = std::env::temp_dir().join(format!("vaultis-ui-{tag}-{nanos}-{n}"));
     std::fs::create_dir_all(&dir).unwrap();
     dir.join("vault.pmv")
 }

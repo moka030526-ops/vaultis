@@ -969,9 +969,13 @@ fn make_vault(dir: &std::path::Path, pw1: &[u8], pw2: &[u8]) {
     ov.save().unwrap();
 }
 
+/// A unique scratch directory. The sequence number is what keeps it unique on macOS,
+/// whose clock only has microsecond resolution, so parallel tests read the same time.
 fn tmp() -> std::path::PathBuf {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let d = std::env::temp_dir().join(format!(
-        "pmffi-{}-{}",
+        "pmffi-{}-{n}-{}",
         std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     ));

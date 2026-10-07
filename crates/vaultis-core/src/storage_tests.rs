@@ -17,8 +17,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn fast_key() -> Key {
     derive_key(b"pw", b"sixteen-byte-slt", &KdfParams { m_cost: 256, t_cost: 1, p_cost: 1 }).unwrap()
 }
-fn nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+/// A name part no other call in this process repeats: the timestamp alone is not
+/// enough, because macOS's clock only has microsecond resolution and parallel tests
+/// read the same value.
+fn nanos() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{n}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos())
 }
 fn tmp_dir(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("pmstore-{tag}-{}", nanos()));

@@ -26,8 +26,10 @@ fn bin() -> &'static str {
 }
 
 fn tmp_dir(tag: &str) -> PathBuf {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let d = std::env::temp_dir().join(format!("pmlock-{tag}-{}-{nanos}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("pmlock-{tag}-{}-{nanos}-{n}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
