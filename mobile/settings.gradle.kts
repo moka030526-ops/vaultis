@@ -29,3 +29,10 @@ dependencyResolutionManagement {
 
 rootProject.name = "vaultis-mobile"
 include(":composeApp")
+
+// CodeQL's java-kotlin analysis traces the compiler; a compile task restored from the
+// build cache never invokes kotlinc, and the scan then fails with "could not
+// automatically build any of it". Under the CodeQL tracer, always compile for real.
+if (System.getenv().keys.any { it.startsWith("CODEQL_") }) {
+    buildCache { local { isEnabled = false } }
+}

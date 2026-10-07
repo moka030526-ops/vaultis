@@ -1533,9 +1533,10 @@ fn start_page_read_only_cannot_create_in_empty_dir() {
     app.confirm2 = "b".into();
     app.submit_auth();
     assert!(app.vault.is_none(), "read-only must not create a vault");
+    // The remedy is platform-dependent (on macOS the tick box, elsewhere --write).
     assert!(
-        app.auth_error.as_deref().unwrap_or("").contains("--write"),
-        "error explains --write is needed; got {:?}",
+        app.auth_error.as_deref().unwrap_or("").contains(app.how_to_write()),
+        "error explains how to get write access; got {:?}",
         app.auth_error
     );
     std::fs::remove_dir_all(&base).ok();
