@@ -12,6 +12,18 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-10-07
+
+A test-only release. The app, vault files, the crypto and the key-derivation paths are
+unchanged, and the release is compatible both ways with 0.4.1.
+
+### Fixed
+
+- **An intermittent macOS test failure.** Tests running in parallel could be handed the
+  same scratch folder, because the folder name came from the clock and macOS's clock
+  only has microsecond resolution. One then found the other's vault locked. Every
+  scratch name now also carries a sequence number.
+
 ## [0.4.1] — 2026-10-07
 
 A build and test release. The app, vault files, the crypto and the key-derivation paths
