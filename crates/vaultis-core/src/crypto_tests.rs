@@ -17,6 +17,30 @@ fn fast() -> KdfParams {
     KdfParams { m_cost: 256, t_cost: 1, p_cost: 1 }
 }
 
+/// Runs `body` in a child copy of this test binary that runs only the test `name`, so no
+/// other test's keys are alive while it counts claims. The page-lock map covers the whole
+/// process, and on macOS the allocator puts small blocks from different threads in the
+/// same page, so keys from tests running alongside get counted on the page under test.
+#[cfg(feature = "mlock")]
+fn in_isolation(name: &str, body: impl FnOnce()) {
+    const CHILD_ENV: &str = "VAULTIS_PAGE_LOCK_TEST_CHILD";
+    if std::env::var_os(CHILD_ENV).is_some() {
+        body();
+        return;
+    }
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+        .args(["--exact", &format!("crypto::tests::{name}"), "--test-threads=1"])
+        .env(CHILD_ENV, "1")
+        .output()
+        .expect("re-exec the test binary as a child");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("1 passed"),
+        "{name} failed in its isolated child:\n{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// Two secrets in the SAME page must be locked once and unlocked once — when the LAST of
 /// them goes away, never when the first does.
 ///
@@ -29,31 +53,33 @@ fn fast() -> KdfParams {
 #[cfg(feature = "mlock")]
 #[test]
 fn page_locks_are_refcounted_so_a_shared_page_is_unlocked_exactly_once() {
-    // One buffer, so both claims are guaranteed to cover the same page.
-    let buf = Box::new([0u8; KEY_LEN]);
-    let p = buf.as_ref().as_ptr();
-    assert_eq!(page_lock::holders_of(p), 0, "nothing locked yet");
+    in_isolation("page_locks_are_refcounted_so_a_shared_page_is_unlocked_exactly_once", || {
+        // One buffer, so both claims are guaranteed to cover the same page.
+        let buf = Box::new([0u8; KEY_LEN]);
+        let p = buf.as_ref().as_ptr();
+        assert_eq!(page_lock::holders_of(p), 0, "nothing locked yet");
 
-    let first = page_lock::PageLock::acquire(p, KEY_LEN).expect("locking one page must work");
-    assert_eq!(page_lock::holders_of(p), 1, "first claim locks the page");
-    let second = page_lock::PageLock::acquire(p, KEY_LEN).expect("a second claim is counted, not re-locked");
-    assert_eq!(page_lock::holders_of(p), 2, "both secrets are counted");
+        let first = page_lock::PageLock::acquire(p, KEY_LEN).expect("locking one page must work");
+        assert_eq!(page_lock::holders_of(p), 1, "first claim locks the page");
+        let second = page_lock::PageLock::acquire(p, KEY_LEN).expect("a second claim is counted, not re-locked");
+        assert_eq!(page_lock::holders_of(p), 2, "both secrets are counted");
 
-    drop(first);
-    assert_eq!(
-        page_lock::holders_of(p),
-        1,
-        "the page must STAY locked while another secret lives in it (this is the bug)"
-    );
-    drop(second);
-    assert_eq!(page_lock::holders_of(p), 0, "the last claim unlocks the page");
+        drop(first);
+        assert_eq!(
+            page_lock::holders_of(p),
+            1,
+            "the page must STAY locked while another secret lives in it (this is the bug)"
+        );
+        drop(second);
+        assert_eq!(page_lock::holders_of(p), 0, "the last claim unlocks the page");
 
-    // Re-locking the same page after full release works — i.e. the unlock really happened
-    // and left no stale count behind.
-    let again = page_lock::PageLock::acquire(p, KEY_LEN).expect("relocking after release works");
-    assert_eq!(page_lock::holders_of(p), 1);
-    drop(again);
-    assert_eq!(page_lock::holders_of(p), 0);
+        // Re-locking the same page after full release works — i.e. the unlock really happened
+        // and left no stale count behind.
+        let again = page_lock::PageLock::acquire(p, KEY_LEN).expect("relocking after release works");
+        assert_eq!(page_lock::holders_of(p), 1);
+        drop(again);
+        assert_eq!(page_lock::holders_of(p), 0);
+    });
 }
 
 /// The end-to-end version of the above, through the type that actually holds keys: the
@@ -64,16 +90,18 @@ fn page_locks_are_refcounted_so_a_shared_page_is_unlocked_exactly_once() {
 #[cfg(feature = "mlock")]
 #[test]
 fn dropping_chained_keys_leaves_no_page_locked() {
-    let salt = [7u8; SALT_LEN];
-    let k = derive_key_chained(b"pw1", b"pw2", &salt, &fast()).expect("derivation works");
-    let page_of_key = k.as_bytes().as_ptr();
-    assert!(page_lock::holders_of(page_of_key) >= 1, "the surviving key's page stays locked");
-    drop(k);
-    assert_eq!(
-        page_lock::holders_of(page_of_key),
-        0,
-        "once every key is dropped, no claim (and so no OS lock) is left on its page"
-    );
+    in_isolation("dropping_chained_keys_leaves_no_page_locked", || {
+        let salt = [7u8; SALT_LEN];
+        let k = derive_key_chained(b"pw1", b"pw2", &salt, &fast()).expect("derivation works");
+        let page_of_key = k.as_bytes().as_ptr();
+        assert!(page_lock::holders_of(page_of_key) >= 1, "the surviving key's page stays locked");
+        drop(k);
+        assert_eq!(
+            page_lock::holders_of(page_of_key),
+            0,
+            "once every key is dropped, no claim (and so no OS lock) is left on its page"
+        );
+    });
 }
 
 #[test]

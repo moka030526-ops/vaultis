@@ -124,8 +124,10 @@ jobs:
       # "macos")` code is invisible to the ubuntu job's lints.
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # --no-fail-fast: a failure in one test binary must not hide the next platform
+      # difference behind it.
       - name: Test
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets --no-fail-fast
       # The bundle the release ships, built for this runner's architecture only and
       # signed ad hoc: proves make-app.sh, Info.plist.in and the icon steps work, and
       # that the bundled binaries run.
