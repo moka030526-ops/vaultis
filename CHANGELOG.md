@@ -12,6 +12,22 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-07
+
+A build and test release. The app, vault files, the crypto and the key-derivation paths
+are unchanged, and the release is compatible both ways with 0.4.0.
+
+### Fixed
+
+- **The macOS test job passes.** 0.4.0 was the first release whose full test suite ran
+  on a Mac, and two tests failed there. Neither was a fault in the app: one expected the
+  `--write` wording where macOS correctly shows the "Open for editing" tick box, and the
+  page-lock tests counted keys from other tests running alongside, because macOS
+  puts small allocations from different threads in the same memory page.
+- **The CodeQL Kotlin scan runs again.** It had failed on most runs since August,
+  because Gradle restored the Kotlin compile from its build cache and the scanner
+  never saw the compiler run. The cache is now off inside CodeQL jobs.
+
 ## [0.4.0] — 2026-10-07
 
 macOS support. Vault files, the crypto and the key-derivation paths are unchanged, and
