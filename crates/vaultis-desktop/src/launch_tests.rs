@@ -375,6 +375,92 @@ fn sample_vault_is_found_beside_the_exe_and_one_level_up() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+#[test]
+fn bundle_sample_vault_needs_the_real_bundle_layout() {
+    let base = std::env::temp_dir().join(format!("pmv-bundle-{}-{}", std::process::id(), nanos_for_test()));
+    let contents = base.join("vaultis.app").join("Contents");
+    let exe_dir = contents.join("MacOS");
+    let shipped = contents.join("Resources").join("sample-vault");
+    std::fs::create_dir_all(&exe_dir).unwrap();
+    std::fs::create_dir_all(&shipped).unwrap();
+    assert_eq!(bundle_sample_vault(&exe_dir), None, "a directory with no vault.pmv does not count");
+
+    std::fs::write(shipped.join(VAULT_FILE), b"x").unwrap();
+    assert_eq!(bundle_sample_vault(&exe_dir), Some(shipped.clone()), "bundle layout");
+
+    // Not a bundle: the right Resources/sample-vault two levels up, but the exe is not in
+    // Contents/MacOS. A from-source build must never be taken for one.
+    let other = base.join("Contents").join("release");
+    std::fs::create_dir_all(base.join("Contents").join("Resources").join("sample-vault")).unwrap();
+    std::fs::write(base.join("Contents").join("Resources").join("sample-vault").join(VAULT_FILE), b"x").unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    assert_eq!(bundle_sample_vault(&other), None, "exe dir must be named MacOS");
+    let not_contents = base.join("app").join("MacOS");
+    std::fs::create_dir_all(base.join("app").join("Resources").join("sample-vault")).unwrap();
+    std::fs::write(base.join("app").join("Resources").join("sample-vault").join(VAULT_FILE), b"x").unwrap();
+    std::fs::create_dir_all(&not_contents).unwrap();
+    assert_eq!(bundle_sample_vault(&not_contents), None, "MacOS must sit in Contents");
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn sample_copy_is_kept_within_a_version_and_replaced_across_one() {
+    let base = std::env::temp_dir().join(format!("pmv-samplecopy-{}-{}", std::process::id(), nanos_for_test()));
+    let shipped = base.join("Resources").join("sample-vault");
+    std::fs::create_dir_all(shipped.join("volume")).unwrap();
+    std::fs::write(shipped.join(VAULT_FILE), b"v1").unwrap();
+    std::fs::write(shipped.join("volume").join("vol.0"), b"data").unwrap();
+    let data_dir = base.join("data");
+
+    // First run: copied whole, subdirectories included.
+    let dest = refresh_sample_copy(&shipped, &data_dir, "0.4.0").unwrap();
+    assert_eq!(dest, data_dir.join("sample-vault"));
+    assert_eq!(std::fs::read(dest.join(VAULT_FILE)).unwrap(), b"v1");
+    assert_eq!(std::fs::read(dest.join("volume").join("vol.0")).unwrap(), b"data");
+
+    // Practising changes the copy; a relaunch of the SAME version keeps that.
+    std::fs::write(dest.join(VAULT_FILE), b"practised").unwrap();
+    std::fs::write(dest.join("volume").join("vol.1"), b"grown").unwrap();
+    refresh_sample_copy(&shipped, &data_dir, "0.4.0").unwrap();
+    assert_eq!(std::fs::read(dest.join(VAULT_FILE)).unwrap(), b"practised", "same version keeps practice");
+
+    // A new version replaces it — and replaces, not merges: the partition the old copy grew
+    // must not survive next to a sample keyed to a different salt.
+    std::fs::write(shipped.join(VAULT_FILE), b"v2").unwrap();
+    refresh_sample_copy(&shipped, &data_dir, "0.4.1").unwrap();
+    assert_eq!(std::fs::read(dest.join(VAULT_FILE)).unwrap(), b"v2");
+    assert!(!dest.join("volume").join("vol.1").exists(), "old partitions must not be merged in");
+    assert!(!data_dir.join(format!("sample-vault.tmp-{}", std::process::id())).exists(), "no staging left");
+
+    // A copy whose vault.pmv went missing is rebuilt even at the same version.
+    std::fs::remove_file(dest.join(VAULT_FILE)).unwrap();
+    refresh_sample_copy(&shipped, &data_dir, "0.4.1").unwrap();
+    assert_eq!(std::fs::read(dest.join(VAULT_FILE)).unwrap(), b"v2");
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[cfg(unix)]
+#[test]
+fn sample_copy_is_writable_and_private_even_from_a_read_only_bundle() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = std::env::temp_dir().join(format!("pmv-sampleperm-{}-{}", std::process::id(), nanos_for_test()));
+    let shipped = base.join("sample-vault");
+    std::fs::create_dir_all(&shipped).unwrap();
+    std::fs::write(shipped.join(VAULT_FILE), b"x").unwrap();
+    std::fs::set_permissions(shipped.join(VAULT_FILE), std::fs::Permissions::from_mode(0o444)).unwrap();
+    // A symlink in the source is not followed out of it.
+    std::os::unix::fs::symlink("/etc/hostname", shipped.join("link")).unwrap();
+
+    let dest = refresh_sample_copy(&shipped, &base.join("data"), "1").unwrap();
+    assert_eq!(std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(std::fs::metadata(dest.join(VAULT_FILE)).unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(std::fs::symlink_metadata(dest.join("link")).is_err(), "symlinks are skipped");
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// Distinct temp paths within one test binary run, so this test can't collide with a
 /// sibling that used the same pid-derived name.
 fn nanos_for_test() -> u128 {

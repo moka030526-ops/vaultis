@@ -33,7 +33,9 @@ pub mod ui; // text/terminal front-end (interchangeable with `gui`)
 /// `x-kde-passwordManagerHint` (honoured over X11 — including XWayland — by
 /// klipper/GPaste/clipman), so the password isn't logged into a manager's
 /// persistent history; the GUI/TUI 15 s + on-exit clears only overwrite the live
-/// selection, not such a log. On other platforms this is a plain set. Shared by the
+/// selection, not such a log. On macOS the same call sets `org.nspasteboard.ConcealedType`,
+/// the marker Mac clipboard managers (Maccy, Raycast, Alfred, Paste…) honour by not
+/// recording the entry. On Windows this is a plain set. Shared by the
 /// GUI and TUI so both copy paths get the hint. (A clipboard manager that ignores
 /// the hint, or a native-Wayland-only setup, may still retain history.)
 ///
@@ -47,7 +49,12 @@ pub(crate) fn copy_secret_to_clipboard(text: &str) -> Result<(), arboard::Error>
         use arboard::SetExtLinux;
         cb.set().exclude_from_history().text(text.to_owned())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        use arboard::SetExtApple;
+        cb.set().exclude_from_history().text(text.to_owned())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         cb.set_text(text.to_owned())
     }

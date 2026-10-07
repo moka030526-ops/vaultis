@@ -424,6 +424,12 @@ pub(crate) const TOPICS: &[Topic] = &[
                  and relaunching is the only way, which is itself a small safeguard against \
                  flipping into write mode by accident.",
             ),
+            Block::Note(
+                "On a Mac the app opens one way, with no flag to add, so the choice is made on \
+                 the lock screen instead: tick “Open for editing” before unlocking. It starts \
+                 unticked each time the app opens. To switch while a vault is open, quit and \
+                 open the app again — the same safeguard as everywhere else.",
+            ),
         ],
     },
     Topic {

@@ -89,6 +89,48 @@ fn read_only_lock_screen_never_offers_to_create_a_vault() {
     }
 }
 
+/// Where the mode is chosen on the lock screen (macOS, `mode_switchable`), the switch
+/// starts at read-only, and ticking it is what unlocks the create affordances — the same
+/// gate `--write` is everywhere else. Forced on here so it is exercised on every platform.
+#[test]
+fn lock_screen_mode_switch_starts_read_only_and_gates_creating() {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let path = tmp("mode-switch").parent().unwrap().join("nothing-here-either").join("vault.pmv");
+    let app = std::cell::RefCell::new(GuiApp::new(path.clone(), false));
+    app.borrow_mut().mode_switchable = true;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(760.0, 700.0))
+        .with_max_steps(64)
+        .build_ui(|ui| app.borrow_mut().render(ui));
+    h.try_run().expect("lock screen settles");
+
+    assert_eq!(h.query_all_by_label("Open for editing").count(), 1, "the switch is offered");
+    assert!(!app.borrow().writable, "it starts read-only");
+    assert_eq!(h.query_all_by_label("Create vault").count(), 0, "read-only: nothing offers to create");
+    // A refused create names the switch, not a command-line flag a Mac user has no way to pass.
+    app.borrow_mut().submit_open_or_create(false);
+    let err = app.borrow().auth_error.clone().unwrap_or_default();
+    assert!(err.contains("Open for editing"), "refusal points at the switch: {err:?}");
+    assert!(!err.contains("--write"), "and not at --write: {err:?}");
+    app.borrow_mut().auth_error = None;
+
+    h.get_by_label("Open for editing").click();
+    h.try_run().expect("lock screen settles after ticking");
+    assert!(app.borrow().writable, "ticking makes the session writable");
+    assert!(h.query_all_by_label("Create vault").count() > 0, "and creating is now on offer");
+
+    // Without the switch (Windows/Linux), the mode line stays a statement, not a control.
+    let fixed = std::cell::RefCell::new(GuiApp::new(path.clone(), false));
+    fixed.borrow_mut().mode_switchable = false;
+    let mut h2 = Harness::builder()
+        .with_size(egui::vec2(760.0, 700.0))
+        .with_max_steps(64)
+        .build_ui(|ui| fixed.borrow_mut().render(ui));
+    h2.try_run().expect("lock screen settles");
+    assert_eq!(h2.query_all_by_label("Open for editing").count(), 0, "no switch where --write decides");
+}
+
 /// The lock screen only offers the "Sample vault" button when a sample vault was
 /// actually found (`self.sample_vault`) — never a button that fails on click.
 #[test]

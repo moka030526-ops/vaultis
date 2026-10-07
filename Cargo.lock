@@ -4721,7 +4721,7 @@ dependencies = [
 
 [[package]]
 name = "vaultis"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4738,7 +4738,7 @@ dependencies = [
 
 [[package]]
 name = "vaultis-core"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -4754,7 +4754,7 @@ dependencies = [
 
 [[package]]
 name = "vaultis-ffi"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "thiserror 2.0.18",
  "uniffi",

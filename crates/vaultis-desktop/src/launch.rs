@@ -136,12 +136,140 @@ pub const SAMPLE_PW2: &str = "sample2";
 /// which sample is its own. Neither layout can produce the other's path by accident —
 /// `<exe dir>/sample-vault` for a cargo build would be `target/release/sample-vault`,
 /// which nothing writes.
+///
+/// macOS adds a third: the **app bundle**, where the executable is in
+/// `vaultis.app/Contents/MacOS/` and the sample ships in `Contents/Resources/sample-vault`
+/// (see `packaging/macos/make-app.sh`). That copy is never opened in place — see
+/// [`sample_vault_from_bundle`].
 pub fn sample_vault_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("VAULTIS_SAMPLE_DIR") {
         let dir = PathBuf::from(dir);
         return dir.join(VAULT_FILE).is_file().then_some(dir);
     }
-    sample_vault_beside(std::env::current_exe().ok()?.parent()?)
+    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    // `cfg!` rather than `#[cfg]` so the bundle path is compiled — and its helpers tested —
+    // on every platform, while only a macOS build ever takes it.
+    if cfg!(target_os = "macos")
+        && let Some(found) = sample_vault_from_bundle(&exe_dir)
+    {
+        return Some(found);
+    }
+    sample_vault_beside(&exe_dir)
+}
+
+/// The sample vault of a macOS app bundle, as a WRITABLE copy in the per-user data
+/// directory — `None` when `exe_dir` is not inside a bundle that ships one.
+///
+/// The bundle's own copy cannot be opened where it is. A bundle installed in /Applications
+/// is not writable by its user, a quarantined download runs from a read-only translocated
+/// mount, and even where it is writable, adding a file inside a signed bundle breaks its
+/// code signature — and opening a vault for editing writes `vaultis.lock` beside it. So
+/// the shipped sample is copied out to `<data dir>/sample-vault` and that copy is opened
+/// instead, which also gives the Mac the same "replaced on update" behaviour the Windows
+/// installer gives the sample (see `get_vaultis.bat`): anything done while practising is
+/// kept until the next version of the app, and discarded then.
+///
+/// Under `cfg(test)` this never touches the real data directory — the same reason as
+/// [`load_last_root`]; [`refresh_sample_copy`] is the exercised logic.
+fn sample_vault_from_bundle(exe_dir: &Path) -> Option<PathBuf> {
+    let shipped = bundle_sample_vault(exe_dir)?;
+    if cfg!(test) {
+        return None;
+    }
+    let data_dir = ProjectDirs::from("dev", "vaultis", "vaultis")?.data_dir().to_path_buf();
+    refresh_sample_copy(&shipped, &data_dir, env!("CARGO_PKG_VERSION")).ok()
+}
+
+/// `<bundle>/Contents/Resources/sample-vault` for an `exe_dir` of `<bundle>/Contents/MacOS`,
+/// if that holds a vault. Checks the directory names rather than trusting any `Resources`
+/// two levels up, so a from-source build that happens to sit under such a folder is not
+/// mistaken for a bundle.
+fn bundle_sample_vault(exe_dir: &Path) -> Option<PathBuf> {
+    if exe_dir.file_name()? != "MacOS" {
+        return None;
+    }
+    let contents = exe_dir.parent()?;
+    if contents.file_name()? != "Contents" {
+        return None;
+    }
+    let shipped = contents.join("Resources").join("sample-vault");
+    shipped.join(VAULT_FILE).is_file().then_some(shipped)
+}
+
+/// The name of the stamp, beside the copied sample (not inside it — the sample is a vault,
+/// and nothing but vault files belongs in one), recording which app version it came from.
+const SAMPLE_STAMP_FILE: &str = "sample-vault.version";
+
+/// Make `<data_dir>/sample-vault` a copy of `shipped`, refreshing it only when the app
+/// version that made it differs from `version`, and return its path.
+///
+/// Version-stamped rather than compared byte-for-byte with the shipped copy: practising in
+/// the sample rewrites its files, and a content comparison would then throw that practice
+/// away on every launch instead of once per update.
+///
+/// A refresh REPLACES the old copy rather than merging into it, for the reason
+/// `get_vaultis.bat` gives: a newer sample's files are keyed to a fresh salt, so any extra
+/// partitions the old one grew would be left behind undecryptable. The new copy is built
+/// in a temporary sibling and renamed into place, so an interrupted refresh never leaves a
+/// half-copied vault under the real name.
+pub(crate) fn refresh_sample_copy(shipped: &Path, data_dir: &Path, version: &str) -> std::io::Result<PathBuf> {
+    let dest = data_dir.join("sample-vault");
+    let stamp = data_dir.join(SAMPLE_STAMP_FILE);
+    let current = std::fs::read_to_string(&stamp).ok();
+    if current.as_deref() == Some(version) && dest.join(VAULT_FILE).is_file() {
+        return Ok(dest);
+    }
+
+    std::fs::create_dir_all(data_dir)?;
+    let staging = data_dir.join(format!("sample-vault.tmp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&staging);
+    if let Err(e) = copy_dir_contents(shipped, &staging) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(e);
+    }
+    match std::fs::remove_dir_all(&dest) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+    }
+    std::fs::rename(&staging, &dest)?;
+    std::fs::write(&stamp, version)?;
+    Ok(dest)
+}
+
+/// Recursively copy the regular files and directories of `src` into a new `dst`. Anything
+/// else — a symlink above all — is skipped: the source is the app's own bundle, and a link
+/// in it is not something to follow out of it.
+fn copy_dir_contents(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(dst)?;
+    // Same 0700 the storage layer gives a vault directory it creates.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dst, std::fs::Permissions::from_mode(0o700))?;
+    }
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let to = dst.join(entry.file_name());
+        if kind.is_dir() {
+            copy_dir_contents(&entry.path(), &to)?;
+        } else if kind.is_file() {
+            std::fs::copy(entry.path(), &to)?;
+            // `fs::copy` carries the source's mode over, and files inside an installed
+            // bundle can be read-only — which would leave a practice vault that cannot be
+            // practised in. 0600, as the storage layer gives the files it writes.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o600))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The layout search of [`sample_vault_dir`], split out from the two things that cannot be

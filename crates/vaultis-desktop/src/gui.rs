@@ -1222,6 +1222,12 @@ struct GuiApp {
     path: std::path::PathBuf,
     /// When false the vault is opened read-only and write controls are hidden.
     writable: bool,
+    /// Whether the lock screen offers an "Open for editing" switch for `writable`, instead
+    /// of fixing it at launch with `--write`. True on macOS only: a Mac app opens one way —
+    /// there is no second shortcut to carry `--write`, as Windows and Linux have — so the
+    /// choice moves onto the lock screen. It is still made BEFORE the vault opens and
+    /// still defaults to read-only, so it is the same decision in a different place.
+    mode_switchable: bool,
     screen: Screen,
     // Auth.
     auth_mode: AuthMode,
@@ -1465,6 +1471,7 @@ impl GuiApp {
         GuiApp {
             path,
             writable,
+            mode_switchable: cfg!(target_os = "macos"),
             screen: Screen::Auth,
             auth_mode,
             vault_dir,
@@ -1923,6 +1930,12 @@ impl GuiApp {
         }
     }
 
+    /// How a read-only session becomes a writable one, for the messages that refuse a write:
+    /// the lock-screen switch where there is one, otherwise a relaunch with `--write`.
+    fn how_to_write(&self) -> &'static str {
+        if self.mode_switchable { "tick “Open for editing” below" } else { "relaunch with --write" }
+    }
+
     /// `remember_root` gates [`launch::save_last_root`] on success: `true` for a real,
     /// user-driven open (the normal path here), `false` for [`Self::open_sample_vault`] —
     /// the demo directory under `target/` is not somewhere the start page should default to
@@ -1931,7 +1944,7 @@ impl GuiApp {
         let creating = self.auth_mode == AuthMode::Create;
         if creating && !self.writable {
             self.auth_error =
-                Some("No vault here, and this is read-only. Relaunch with --write to create one.".into());
+                Some(format!("No vault here, and this is read-only. {} to create one.", self.how_to_write()));
             return;
         }
         // `result` is assigned from an `if/else` expression: create a new vault
@@ -2224,8 +2237,17 @@ impl GuiApp {
             });
             ui.add_space(10.0 * k);
             // The mode the session will open in, stated before the password is typed
-            // rather than discovered afterwards by a control that is missing.
-            if self.writable {
+            // rather than discovered afterwards by a control that is missing. Where the
+            // mode is chosen here rather than at launch (macOS), the statement is the
+            // switch itself — but never mid-"Change master passwords", which renders this
+            // same screen over an OPEN vault whose mode is already fixed.
+            if self.mode_switchable && self.auth_mode != AuthMode::ChangePassword {
+                ui.checkbox(&mut self.writable, "Open for editing").on_hover_text(
+                    "Off, the vault opens read-only and nothing in it can be changed by \
+                     accident — the right way to look something up. Turn it on to add, edit \
+                     or delete entries, or to create a new vault.",
+                );
+            } else if self.writable {
                 ui.label(egui::RichText::new("This session can make changes (--write).").weak().small());
             } else {
                 ui.label(
@@ -2456,7 +2478,7 @@ impl GuiApp {
             if create_blocked_by_read_only {
                 ui.colored_label(
                     egui::Color32::from_rgb(190, 120, 50),
-                    "No vault in this folder. Read-only — relaunch with --write to create one.",
+                    format!("No vault in this folder. Read-only — {} to create one.", self.how_to_write()),
                 );
             }
         });

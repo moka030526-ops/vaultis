@@ -147,3 +147,38 @@ the locked and unlocked icons respectively.
   against a stable folder holding both the exe and the icons.
 - **A hand-built `.ico`.** See the frame-format note above — an all-PNG `.ico` shows as
   a generic icon at Desktop sizes.
+
+## macOS
+
+There are no shortcuts on a Mac: the app is one bundle, `vaultis.app`, and the
+read-only/edit choice is the **Open for editing** tick box on its lock screen (off by
+default) instead of a second shortcut. The bundle uses the locked-vault icon.
+
+[`macos/make-app.sh`](macos/make-app.sh) assembles it from built binaries. It runs on a
+Mac only, because it needs `lipo`, `sips`, `iconutil` and `codesign` from the Xcode
+command-line tools:
+
+```bash
+cargo build --release -p vaultis --bins
+cargo run --release -p vaultis --example seed_sample_vault -- target/sample-vault sample1 sample2
+packaging/macos/make-app.sh target 0.4.0 \
+    target/release/vaultis-gui target/release/vaultis target/sample-vault
+open target/vaultis.app
+```
+
+That builds for the Mac you are on. The release (`.github/workflows/release.yml`)
+builds both architectures and joins them with `lipo` into one universal app first.
+
+- `Contents/MacOS/vaultis-gui` is the app; `Contents/MacOS/vaultis` is the terminal
+  version (`--tui`, the CLI).
+- `Contents/Resources/sample-vault` is the practice vault. The app never opens it in
+  place (the bundle is read-only and signed): it copies it to
+  `~/Library/Application Support/dev.vaultis.vaultis/sample-vault` and replaces that
+  copy once per new version (see `launch::sample_vault_dir`).
+- `Info.plist.in` is the template for `Contents/Info.plist`. Its bundle identifier,
+  `dev.vaultis.vaultis`, matches the data folder the app already uses.
+
+**Signing.** Set `MACOS_SIGN_IDENTITY` to a "Developer ID Application" identity in your
+keychain and the bundle is signed with the hardened runtime, ready for `xcrun notarytool`.
+Without it, it is signed ad hoc, which Apple Silicon needs before it will run the app
+at all. Ad hoc says nothing about who built it.

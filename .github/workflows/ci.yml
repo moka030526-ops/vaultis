@@ -2,7 +2,7 @@ name: CI
 
 # Runs the full verification suite on every push to main and every PR, so the
 # hardening (tests, crash/full-disk recovery, lints, dependency advisories, Windows
-# portability, and a parser fuzz smoke) can't silently regress. The project is
+# and macOS portability, and a parser fuzz smoke) can't silently regress. The project is
 # deliberately hand-formatted, so there is NO `cargo fmt` check.
 
 on:
@@ -108,6 +108,34 @@ jobs:
       # returns ExitCode::SUCCESS.
       - name: Smoke-test the built exe
         run: ./target/release/vaultis.exe --help
+
+  macos:
+    name: macos test + bundle
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # The whole suite, not just a build: every `cfg(unix)` path (file modes, the
+      # O_NOFOLLOW lock open, the single-instance socket, mlock) was written against
+      # Linux and only ASSUMED to hold on macOS. Clippy too, since `cfg(target_os =
+      # "macos")` code is invisible to the ubuntu job's lints.
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-targets
+      # The bundle the release ships, built for this runner's architecture only and
+      # signed ad hoc: proves make-app.sh, Info.plist.in and the icon steps work, and
+      # that the bundled binaries run.
+      - name: Build and smoke-test vaultis.app
+        run: |
+          cargo build --release -p vaultis --bins
+          cargo run --release -p vaultis --example seed_sample_vault -- target/ci-sample-vault sample1 sample2
+          packaging/macos/make-app.sh target 0.0.0-ci target/release/vaultis-gui target/release/vaultis target/ci-sample-vault
+          target/vaultis.app/Contents/MacOS/vaultis --help
+          test -f target/vaultis.app/Contents/Resources/sample-vault/vault.pmv
 
   fuzz-smoke:
     name: fuzz smoke (parsers)

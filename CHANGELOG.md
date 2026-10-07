@@ -12,7 +12,32 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
-Nothing yet.
+## [0.4.0] — 2026-10-07
+
+macOS support. Vault files, the crypto and the key-derivation paths are unchanged, and
+the release is compatible both ways with 0.3.3.
+
+### Added
+
+- **A macOS app.** Each release now also carries `vaultis-…-macos-universal.zip`, a
+  single `vaultis.app` for Apple Silicon and Intel Macs, built and (once the signing
+  secrets are set) signed and notarized in CI. `get_vaultis.bat` installs it too: the
+  file is both a Windows and a macOS installer, and every release attaches it on its
+  own, and again as `get_vaultis.sh` so a Mac user is not handed a `.bat`. On a Mac,
+  run `bash get_vaultis.sh` in Terminal.
+- **"Open for editing" on the Mac lock screen.** A Mac app has no second shortcut to
+  carry `--write`, so the choice of read-only or editing is a tick box under the
+  passwords, off by default. Windows and Linux are unchanged.
+- **Copied passwords are hidden from Mac clipboard managers**, which skip anything
+  marked `org.nspasteboard.ConcealedType`. Linux already did the equivalent.
+
+### Fixed
+
+- **`get_vaultis.bat` now updates itself on an in-place upgrade.** Run from inside the
+  installation folder, it used to leave its own file untouched, so the folder kept the old
+  installer next to the new binaries (or, after a pinned rollback, a newer one). The
+  package's copy is now staged as `get_vaultis.bat.new` and swapped in when the script
+  exits. A failed install leaves the existing script as it was.
 
 ## [0.3.3] — 2026-10-04
 

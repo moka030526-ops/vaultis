@@ -1,8 +1,11 @@
+:; exec /bin/bash -c "$(sed -n '/^#:SHBEGIN:/,/^#:PS[B]EGIN:/p' "$0" | tr -d '\r')" "$0" "$@" #
 @echo off
 setlocal EnableExtensions
 
 REM ==========================================================================
-REM Self-contained Windows setup script for vaultis: double-click it.
+REM Self-contained setup script for vaultis, for Windows AND macOS.
+REM   Windows: double-click it.
+REM   macOS:   in Terminal, run   bash get_vaultis.bat
 REM
 REM Downloads the latest released build and puts two shortcuts on your Desktop.
 REM Pass a tag to install that exact release instead -- get_vaultis.bat v0.2.1 --
@@ -28,6 +31,19 @@ REM The PowerShell source is everything after the ":PSBEGIN:" marker near the
 REM bottom. cmd.exe never reads that far -- the header ends at "exit /b" -- so
 REM the two languages never collide. Edit the PowerShell part as an ordinary
 REM script; just keep the marker line intact.
+REM
+REM It is a bash script too, for the Mac. The FIRST LINE is the whole trick: cmd.exe
+REM reads a line starting with ':' as a label and skips it, while bash reads ':' as
+REM a no-op and runs the rest -- which cuts the section from the ":SHBEGIN:" marker
+REM up to the PowerShell marker out of this file, strips the CRLF line endings this
+REM file must have for cmd (.gitattributes), and execs bash on it. So bash never
+REM reads past line 1 either. Rules for keeping all three working:
+REM   * line 1 must stay line 1, and must end in '#' so its CR is inside a comment;
+REM   * it must not contain the PowerShell marker literally (hence the [B]): the
+REM     PowerShell launcher below finds its section with an unanchored IndexOf,
+REM     and would start from line 1;
+REM   * the bash section sits after the batch header's final exit /b and before
+REM     the PowerShell marker, so neither of the other two ever reads it.
 REM ==========================================================================
 
 REM Prefer the fixed System32 path: PATH is not always intact in a shell spawned
@@ -85,13 +101,219 @@ if not "%RC%"=="0" (
     echo Setup failed with exit code %RC%.
 )
 
+REM A failed install leaves this file as it was: a half-finished run should not swap
+REM in an installer for a version that never got installed.
+if not "%RC%"=="0" if exist "%~f0.new" del /f /q "%~f0.new" >nul 2>&1
+
 REM Pause only when the console will vanish on exit -- i.e. when this was launched
 REM by double-clicking in Explorer, where an error would otherwise flash past too
 REM fast to read. cmd puts this file's name in cmdcmdline exactly in that case; when
-REM run from an existing prompt it does not.
-echo %cmdcmdline% | find /i "%~nx0" >nul && pause
+REM run from an existing prompt it does not. Decided here, but the pause itself is
+REM in the block below, so a warning from the swap is still on screen for it.
+set "PAUSE_AT_END="
+echo %cmdcmdline% | find /i "%~nx0" >nul && set "PAUSE_AT_END=1"
 
-exit /b %RC%
+REM When this ran from inside the install folder, the PowerShell section left the
+REM package's copy of this script beside it as "<name>.new" rather than overwrite a
+REM file cmd is still executing. Swap it in now. This must stay ONE parenthesized
+REM block ending in exit /b: cmd parses a whole block before running any of it, so
+REM once the move replaces this file nothing more is read from it -- a further line
+REM after the block would be read from the NEW file at the OLD offset. Keep any
+REM parentheses out of the echo text: they would end the block early.
+(
+    if exist "%~f0.new" (
+        move /y "%~f0.new" "%~f0" >nul || echo WARNING: Could not update "%~f0" - the new copy is "%~f0.new".
+    )
+    if defined PAUSE_AT_END pause
+    exit /b %RC%
+)
+
+#:SHBEGIN:
+# ==========================================================================
+# The macOS installer (bash). Reached only through line 1 of this file; see the
+# header. Same job as the PowerShell section below, the Mac way: download the
+# release's vaultis.app, verify it, and put it in Applications.
+#
+#   bash get_vaultis.bat                     latest release, asks where
+#   bash get_vaultis.bat v0.4.0              that exact release
+#   bash get_vaultis.bat v0.4.0 ~/Apps       that release into ~/Apps, no prompt
+#   bash get_vaultis.bat "" ~/Apps           latest release into ~/Apps
+# ==========================================================================
+set -euo pipefail
+
+REPO="moka030526-ops/vaultis"
+# Matched by pattern, not guessed: the asset carries its version. See the Windows side.
+ASSET_RE='^vaultis-.*-macos-universal\.zip$'
+# A vault's on-disk fingerprints -- the same list, and the same rule, as the Windows
+# side: never install into, replace or delete anything that holds one.
+VAULT_MARKERS=(vault.pmv manifest volume vaultis.lock)
+BUNDLE_ID="dev.vaultis.vaultis"
+
+die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+
+if [ "$(uname -s)" != "Darwin" ]; then
+    die "this installer is for Windows and macOS. On Linux, build from source: scripts/build.sh"
+fi
+
+looks_like_vault() {
+    local m
+    for m in "${VAULT_MARKERS[@]}"; do
+        if [ -e "$1/$m" ]; then return 0; fi
+    done
+    return 1
+}
+
+is_vaultis_app() {
+    [ -f "$1/Contents/Info.plist" ] &&
+        [ "$(plutil -extract CFBundleIdentifier raw -o - "$1/Contents/Info.plist" 2>/dev/null)" = "$BUNDLE_ID" ]
+}
+
+TAG=${1:-}
+CHOSEN=${2:-}
+
+# ------------------------------------------------------------------ where to install
+
+# /Applications is where Mac apps go and is writable by any admin account; a standard
+# account falls back to ~/Applications, which macOS also lists as an Applications folder.
+if [ -w /Applications ]; then DEFAULT_DIR=/Applications; else DEFAULT_DIR="$HOME/Applications"; fi
+
+if [ -z "$CHOSEN" ] && [ -t 0 ]; then
+    echo
+    echo "Where should vaultis be installed?"
+    echo "  Press Enter for the usual place:  $DEFAULT_DIR"
+    echo "  Or type a folder (vaultis.app is put inside it)."
+    read -r -p "Folder: " CHOSEN || CHOSEN=""
+fi
+CHOSEN=${CHOSEN#\"}; CHOSEN=${CHOSEN%\"}
+CHOSEN=${CHOSEN/#\~/$HOME}
+if [ -z "$CHOSEN" ]; then CHOSEN=$DEFAULT_DIR; fi
+
+CHOSEN_TRIMMED=${CHOSEN%/}
+if [[ "$CHOSEN_TRIMMED" == *.app ]] || is_vaultis_app "$CHOSEN"; then
+    # An .app path was given: only an existing vaultis.app may be named directly, and it
+    # is upgraded in place.
+    is_vaultis_app "$CHOSEN" || die "'$CHOSEN' is not an installed vaultis.app."
+    APP="$(cd "$CHOSEN" && pwd)"
+    PARENT=$(dirname "$APP")
+else
+    if [ -e "$CHOSEN" ] && looks_like_vault "$CHOSEN"; then
+        die "'$CHOSEN' looks like a vault. Refusing to install into a vault folder -- choose somewhere else."
+    fi
+    mkdir -p "$CHOSEN" || die "could not create '$CHOSEN'."
+    PARENT="$(cd "$CHOSEN" && pwd)"
+    APP="$PARENT/vaultis.app"
+fi
+[ -w "$PARENT" ] || die "'$PARENT' is not writable by you. Choose a folder you own, such as ~/Applications."
+
+if [ -e "$APP" ]; then
+    is_vaultis_app "$APP" || die "'$APP' exists and is not vaultis. Refusing to replace it."
+    # Nothing of the user's belongs inside the bundle -- the app keeps the practice vault
+    # and its own settings in ~/Library/Application Support -- but replacing a bundle
+    # deletes everything in it, so a vault somebody put there anyway stops the install.
+    STRAY=$(find "$APP" \( -name vault.pmv -o -name vaultis.lock \) \
+        -not -path "$APP/Contents/Resources/sample-vault/*" -print -quit 2>/dev/null || true)
+    if [ -n "$STRAY" ]; then
+        die "'$APP' contains a vault ($STRAY). Move it out of the app before updating."
+    fi
+fi
+echo "Installing to: $APP"
+
+# ------------------------------------------------------------------ find the release
+
+if [ -n "$TAG" ]; then
+    # Validated against the shape release tags have before it goes into a URL.
+    if ! [[ "$TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+        die "'$TAG' is not a vaultis release tag. Expected something like v0.4.0, or no argument for the latest."
+    fi
+    [[ "$TAG" == v* ]] || TAG="v$TAG"
+    echo "Looking up vaultis release $TAG..."
+    API="https://api.github.com/repos/$REPO/releases/tags/$TAG"
+    JSON=$(curl -fsSL -H "User-Agent: vaultis-setup" "$API") ||
+        die "no published release is tagged $TAG. See https://github.com/$REPO/releases"
+else
+    echo "Looking up the latest vaultis release..."
+    JSON=$(curl -fsSL -H "User-Agent: vaultis-setup" "https://api.github.com/repos/$REPO/releases/latest") ||
+        die "could not reach GitHub to find the latest release."
+fi
+
+# No jq on a stock Mac. The API's JSON puts each "browser_download_url" on its own line,
+# and an asset's name is the last segment of its URL, so that is all this needs.
+RELEASE_TAG=$(printf '%s\n' "$JSON" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+URLS=$(printf '%s\n' "$JSON" | sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p')
+ZIP_URL=""
+while IFS= read -r u; do
+    if [[ "${u##*/}" =~ $ASSET_RE ]]; then ZIP_URL=$u; break; fi
+done <<< "$URLS"
+[ -n "$ZIP_URL" ] || die "release $RELEASE_TAG has no macOS package. See https://github.com/$REPO/releases"
+grep -qxF "$ZIP_URL.sha256" <<< "$URLS" ||
+    die "release $RELEASE_TAG ships ${ZIP_URL##*/} with no .sha256 beside it. Refusing to install a download that cannot be verified."
+echo "Found $RELEASE_TAG: ${ZIP_URL##*/}"
+
+# ------------------------------------------------------------------ download and verify
+
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/vaultis-dl.XXXXXXXX")
+trap 'rm -rf "$WORK"' EXIT
+ZIP="$WORK/${ZIP_URL##*/}"
+
+echo "Downloading ${ZIP_URL##*/}..."
+curl -fL --progress-bar -o "$ZIP" "$ZIP_URL"
+curl -fsSL -o "$ZIP.sha256" "$ZIP_URL.sha256"
+
+echo "Verifying the download..."
+EXPECTED=$(awk '{ print tolower($1); exit }' "$ZIP.sha256")
+ACTUAL=$(shasum -a 256 "$ZIP" | awk '{ print $1 }')
+if [ "$EXPECTED" != "$ACTUAL" ]; then
+    die "the download does not match its published checksum. Refusing to install it.
+  expected: $EXPECTED
+  actual:   $ACTUAL"
+fi
+# The same honest limit as on Windows: this proves the bytes arrived intact, not who
+# made them. On a Mac the code signature below is what can say that -- when the
+# release is signed with a Developer ID rather than ad hoc.
+echo "Checksum OK."
+
+ditto -x -k "$ZIP" "$WORK/stage"
+NEW="$WORK/stage/vaultis.app"
+is_vaultis_app "$NEW" || die "the package does not contain vaultis.app."
+codesign --verify --strict "$NEW" 2>/dev/null ||
+    die "the app's code signature does not verify. Refusing to install it."
+
+# ------------------------------------------------------------------ install
+
+if pgrep -qf "$APP/Contents/MacOS/vaultis-gui"; then
+    echo "  (vaultis is open -- it keeps running the old version until you quit it)"
+fi
+
+# Copied in under a temporary name first, then swapped, so an interrupted install never
+# leaves a half-copied app under the real name.
+INCOMING="$PARENT/.vaultis.app.incoming-$$"
+OUTGOING="$PARENT/.vaultis.app.outgoing-$$"
+rm -rf "$INCOMING" "$OUTGOING"
+ditto "$NEW" "$INCOMING"
+if [ -e "$APP" ]; then mv "$APP" "$OUTGOING"; fi
+if ! mv "$INCOMING" "$APP"; then
+    [ -e "$OUTGOING" ] && mv "$OUTGOING" "$APP"
+    die "could not put the new vaultis.app in place; the previous one was restored."
+fi
+rm -rf "$OUTGOING"
+
+echo
+echo "------------------------------------------------------------------------"
+echo " vaultis $RELEASE_TAG is installed"
+echo "------------------------------------------------------------------------"
+echo "  Location: $APP"
+echo
+echo "  Open it from Launchpad, Spotlight, or the Applications folder."
+echo "  It opens read-only; tick \"Open for editing\" on the lock screen to"
+echo "  make changes."
+echo
+echo "  The terminal version (vaultis --tui, and the command line):"
+echo "    \"$APP/Contents/MacOS/vaultis\""
+echo
+echo "  Run this file again any time to update, or pass a tag to install a"
+echo "  specific release:  bash ${0##*/} v0.4.0"
+echo "------------------------------------------------------------------------"
+exit 0
 
 #:PSBEGIN:
 $ErrorActionPreference = "Stop"
@@ -359,12 +581,16 @@ try {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     Write-Host "Installing into $InstallDir..."
 
-    # The file currently being executed. cmd.exe holds this open for the rest of the
-    # batch header, and Windows generally refuses to overwrite it -- which, now that
-    # get_vaultis.bat ships inside the package, would fail an in-place install partway
-    # through. Skip exactly that one file: the copy being skipped is the same version
-    # being installed, so nothing is lost. Every other case (any destination other than
-    # the folder this was launched from) writes it normally.
+    # The file currently being executed. cmd.exe is still running it -- it reads a batch
+    # file a line at a time, by offset, as it goes -- so overwriting it now would at best
+    # be refused and at worst have cmd resume reading the NEW file at the OLD offset. Yet
+    # skipping it is not harmless either: the running copy is whatever version you
+    # double-clicked, not necessarily the one being installed, so an in-place upgrade
+    # would leave an old installer next to new binaries, and a pinned rollback a newer
+    # one. So the package's copy is written beside it as "<name>.new", and the batch
+    # header swaps it in after PowerShell has exited, as the very last thing it does.
+    # Every other case (any destination other than the folder this was launched from)
+    # writes it normally.
     $SelfPath = $null
     if ($env:VAULTIS_SELF -and (Test-Path -LiteralPath $env:VAULTIS_SELF)) {
         $SelfPath = (Get-Item -LiteralPath $env:VAULTIS_SELF).FullName
@@ -379,7 +605,9 @@ try {
         if ($SelfPath -and -not $Item.PSIsContainer -and (Test-Path -LiteralPath $Target)) {
             $Existing = Get-Item -LiteralPath $Target -ErrorAction SilentlyContinue
             if ($Existing -and $Existing.FullName -eq $SelfPath) {
-                Write-Host "  keeping the running $($Item.Name) (same version as the package)"
+                # Exactly the name the batch header looks for: "%~f0.new".
+                Copy-Item -LiteralPath $Item.FullName -Destination ($env:VAULTIS_SELF + '.new') -Force
+                Write-Host "  updating the running $($Item.Name) once this script finishes"
                 continue
             }
         }

@@ -38,7 +38,13 @@ installs it, and puts the two shortcuts on your Desktop. Nothing else is needed 
 developer tools, and it does not ask for administrator rights. Double-click it again
 any time to update.
 
-On Mac/Linux, see **Part 2** (or ask whoever set it up for you).
+**On a Mac:** download **`get_vaultis.sh`** from the
+[latest release](https://github.com/moka030526-ops/vaultis/releases/latest), open
+**Terminal**, and run `bash ~/Downloads/get_vaultis.sh`. It puts **vaultis** in your
+Applications folder.
+Run it again any time to update.
+
+On Linux, see **Part 2** (or ask whoever set it up for you).
 
 ## Starting the program
 
@@ -46,7 +52,8 @@ On Mac/Linux, see **Part 2** (or ask whoever set it up for you).
   command/console window alongside it. (There is also a `vaultis.exe` — that one is
   the command-line version and *does* show a console; it's only for the advanced
   commands further down. For everyday use, always launch `vaultis-gui.exe`.)
-- **Mac/Linux:** double-click the **`vaultis-gui`** program (or `vaultis`), or open
+- **Mac:** open **vaultis** from Launchpad, Spotlight or the Applications folder.
+- **Linux:** double-click the **`vaultis-gui`** program (or `vaultis`), or open
   it the way the person who set it up showed you.
 
 When it opens it is in **View-only mode** (a 🔒 READ-ONLY badge shows at the
@@ -58,6 +65,10 @@ the **Edit shortcut** described next.
 
 To **create** a vault or **change** anything, the program must be started in
 **Edit mode**.
+
+> **On a Mac there is nothing to set up.** The lock screen has an **Open for editing**
+> tick box under the passwords. Leave it off to look things up; tick it before unlocking
+> when you want to make changes. Skip straight to "Creating your vault the first time".
 
 > **If you installed with `get_vaultis.bat`, this is already done for you** — both
 > shortcuts are on your Desktop: **vaultis (View)** and **vaultis (Edit)**. Skip
@@ -495,7 +506,38 @@ exception is this package's own `sample-vault`, which is replaced with the curre
 vault on every install.
 
 `get_vaultis.bat` is itself included in the install, so an installed copy can update or
-relocate itself without fetching the script again.
+relocate itself without fetching the script again. Run from inside the install folder, it
+updates its own file too, once it has finished.
+
+**On macOS, the same file installs the Mac app.** It is a bash script as well as a batch
+file (see the header in it). Every release also attaches it as `get_vaultis.sh` — the
+same bytes under a name a Mac user will not take for the Windows download — and bash
+ignores the extension, so either name works. In Terminal:
+
+```text
+bash get_vaultis.sh                      latest release, prompts for the folder
+bash get_vaultis.sh v0.4.0               that exact release
+bash get_vaultis.sh v0.4.0 ~/Apps        that release as ~/Apps/vaultis.app, no prompt
+bash get_vaultis.sh "" ~/Apps            the latest release, no prompt
+```
+
+It installs one universal `vaultis.app` (Apple Silicon and Intel) into `/Applications`,
+or `~/Applications` for an account that cannot write there, and replaces an older
+`vaultis.app` in place. The same vault rules apply: it never installs into a vault folder,
+and refuses to replace an app that has a vault inside it. Every release also carries the
+script on its own, at `https://github.com/moka030526-ops/vaultis/releases/latest/download/get_vaultis.bat`
+(and `…/get_vaultis.sh`). The current script on `main` is always at
+`https://raw.githubusercontent.com/moka030526-ops/vaultis/main/get_vaultis.bat`.
+Differences from Windows:
+
+- **No View/Edit shortcuts.** A Mac app opens one way, so the choice is the **Open for
+  editing** tick box on the lock screen instead, off by default.
+- **The terminal version** (`--tui` and the CLI) is inside the app:
+  `/Applications/vaultis.app/Contents/MacOS/vaultis`.
+- **The sample vault** ships inside the app, which is read-only, so the first time
+  you use it the app copies it to
+  `~/Library/Application Support/dev.vaultis.vaultis/sample-vault` and opens that copy.
+  It is replaced the first time a new version runs, just as the Windows install replaces it.
 
 The install includes a **sample vault** — a complete, filled-in practice vault of
 invented data, in a `sample-vault` folder beside the binaries. The lock screen's
@@ -515,6 +557,14 @@ new records file, leftover document partitions from the old one — would not op
 >
 > The release is **not code-signed yet**, so the checksum proves the download arrived
 > intact but not who produced it, and Windows SmartScreen will warn on first launch.
+>
+> The Mac app is built on a `macos-latest` runner by the same workflow. Until the
+> `MACOS_*` / `APPLE_*` signing secrets it documents are set, it is signed only *ad hoc*
+> and not notarized. Installed by `get_vaultis.bat` it opens normally (a `curl` download
+> is not quarantined), but a `vaultis-…-macos-universal.zip` downloaded in a browser is
+> blocked by Gatekeeper until it is allowed under **System Settings → Privacy &
+> Security**. To build the bundle locally on a Mac, see
+> [`packaging/macos/make-app.sh`](packaging/macos/make-app.sh).
 
 ## Building from source
 

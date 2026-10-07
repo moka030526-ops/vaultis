@@ -1,7 +1,7 @@
 name: release
 
-# Builds the Windows binaries and publishes them as a GitHub Release, so end users can
-# install vaultis by downloading it rather than by compiling it.
+# Builds the Windows and macOS packages and publishes them as one GitHub Release, so end
+# users can install vaultis by downloading it rather than by compiling it.
 #
 # This exists because compiling on the user's machine turned out not to be possible
 # without a separate multi-gigabyte toolchain install. Every toolchain rustup can
@@ -12,6 +12,8 @@ name: release
 #   gnullvm  - needs an external llvm-mingw (x86_64-w64-mingw32-clang)
 # A GitHub windows-latest runner already has MSVC, so the compile happens HERE, once,
 # where the toolchain is a solved problem - and get_vaultis.bat just downloads.
+# The macOS package is built on a macos-latest runner for the same reason, and for one
+# more: only a Mac can run lipo, codesign and notarytool.
 #
 # Cut a release by pushing a tag:
 #   git tag v0.1.0 && git push origin v0.1.0
@@ -73,8 +75,8 @@ jobs:
           Copy-Item packaging/windows/make-shortcuts.ps1  $Stage
           # Shipped so an installed copy can update or relocate itself without going back
           # to GitHub for the script first -- `get_vaultis.bat v0.2.4` from the install
-          # folder upgrades in place. It is also why the installer skips overwriting the
-          # copy that is currently executing.
+          # folder upgrades in place. It is also why the installer stages the copy that is
+          # currently executing as get_vaultis.bat.new and swaps it in on exit.
           Copy-Item get_vaultis.bat                       $Stage
 
           # The single-writer lock file the seeder leaves behind. It is session state, not
@@ -122,8 +124,127 @@ jobs:
             ${{ env.ZIP }}.sha256
           if-no-files-found: error
 
+  macos:
+    name: macos universal
+    runs-on: macos-latest
+    env:
+      # All optional. Without them the app is signed ad hoc and not notarized, which
+      # runs when installed by get_vaultis.bat (curl sets no quarantine flag) but is
+      # blocked by Gatekeeper when the zip is downloaded in a browser. With them:
+      #   MACOS_CERTIFICATE_P12       base64 of the "Developer ID Application" .p12
+      #   MACOS_CERTIFICATE_PASSWORD  its export password
+      #   MACOS_SIGN_IDENTITY         e.g. "Developer ID Application: Name (TEAMID)"
+      #   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD   for notarytool (an app-specific
+      #                               password from appleid.apple.com, not the real one)
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+
+      # One universal app rather than one per architecture: nobody downloading an estate
+      # vault should have to know which chip their Mac has.
+      - name: Build both architectures and join them
+        run: |
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release -p vaultis --bins --target "$t"
+          done
+          mkdir -p stage/bin
+          for b in vaultis vaultis-gui; do
+            lipo -create -output "stage/bin/$b" \
+              "target/aarch64-apple-darwin/release/$b" "target/x86_64-apple-darwin/release/$b"
+          done
+          lipo -info stage/bin/vaultis-gui
+
+      # The same practice vault the Windows package ships; see that job's comment.
+      - name: Seed the sample vault
+        run: cargo run --release -p vaultis --example seed_sample_vault -- stage/sample-vault sample1 sample2
+
+      - name: Version label
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=dev-${GITHUB_SHA:0:8}" >> "$GITHUB_ENV"
+          fi
+
+      # A throwaway keychain holding only the signing certificate, so codesign can reach
+      # it without a password prompt. Skipped entirely when no certificate is configured.
+      - name: Import the signing certificate
+        if: env.MACOS_CERTIFICATE_P12 != ''
+        run: |
+          KC="$RUNNER_TEMP/build.keychain-db"
+          KC_PW=$(uuidgen)
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PW" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Build vaultis.app
+        run: |
+          # make-app.sh signs with MACOS_SIGN_IDENTITY only when a certificate was
+          # imported; otherwise ad hoc.
+          if [ -z "$MACOS_CERTIFICATE_P12" ]; then unset MACOS_SIGN_IDENTITY; fi
+          packaging/macos/make-app.sh stage "$VERSION" stage/bin/vaultis-gui stage/bin/vaultis stage/sample-vault
+
+      - name: Notarize
+        if: env.MACOS_CERTIFICATE_P12 != '' && env.APPLE_ID != ''
+        run: |
+          ditto -c -k --keepParent stage/vaultis.app "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --wait \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          xcrun stapler staple stage/vaultis.app
+
+      - name: Zip it, with a checksum
+        run: |
+          ZIP="vaultis-$VERSION-macos-universal.zip"
+          # ditto, not zip: it keeps the bundle's extended attributes and the stapled
+          # notarization ticket, and is what Finder itself uses.
+          ditto -c -k --keepParent stage/vaultis.app "$ZIP"
+          shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vaultis-macos-universal
+          path: |
+            ${{ env.ZIP }}
+            ${{ env.ZIP }}.sha256
+          if-no-files-found: error
+
+  # One release, created once both packages exist: a release that appeared with only
+  # the Windows zip would send `get_vaultis.bat` on a Mac to /releases/latest and find
+  # nothing to install.
+  publish:
+    name: publish the release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # get_vaultis.bat is attached on its own as well, so both platforms have one
+      # stable URL to fetch it from:
+      #   https://github.com/<repo>/releases/latest/download/get_vaultis.bat
+      # and again, byte for byte, as get_vaultis.sh: the same installer under a name a
+      # Mac user does not mistake for the Windows download (bash ignores the extension).
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" "${{ env.ZIP }}" "${{ env.ZIP }}.sha256" --generate-notes
+        run: |
+          cp get_vaultis.bat get_vaultis.sh
+          gh release create "${{ github.ref_name }}" dist/* get_vaultis.bat get_vaultis.sh --generate-notes
