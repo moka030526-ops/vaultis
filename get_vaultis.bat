@@ -236,10 +236,12 @@ else
         die "could not reach GitHub to find the latest release."
 fi
 
-# No jq on a stock Mac. The API's JSON puts each "browser_download_url" on its own line,
-# and an asset's name is the last segment of its URL, so that is all this needs.
-RELEASE_TAG=$(printf '%s\n' "$JSON" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
-URLS=$(printf '%s\n' "$JSON" | sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p')
+# No jq on a stock Mac. grep -o pulls out every "browser_download_url" wherever it sits:
+# the API may return its JSON pretty-printed or all on one line (it now does the latter,
+# and a per-line sed then saw only the last asset). An asset's name is the last segment
+# of its URL, so that is all this needs.
+RELEASE_TAG=$(printf '%s\n' "$JSON" | grep -oE '"tag_name": *"[^"]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/')
+URLS=$(printf '%s\n' "$JSON" | grep -oE '"browser_download_url": *"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
 ZIP_URL=""
 while IFS= read -r u; do
     if [[ "${u##*/}" =~ $ASSET_RE ]]; then ZIP_URL=$u; break; fi
