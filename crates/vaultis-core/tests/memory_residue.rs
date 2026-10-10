@@ -157,9 +157,15 @@ fn measure(mode: &str) -> (usize, usize) {
     // on stdin so the state cannot move under us while we read it. libtest writes its own
     // banner ("running 1 test", blank lines) to the same stdout, so scan for the marker
     // rather than assuming it lands first.
-    let out = BufReader::new(ch.stdout.take().expect("child stdout"));
+    //
+    // The reader is kept ALIVE until the scan is over, not dropped at READY. Dropping it
+    // closes the pipe, and the child's libtest then prints its "has been running for over
+    // 60 seconds" notice into it, panics on the broken pipe and exits — mid-scan, whenever
+    // a scan is slow, which under ASan it is. Every later read of `/proc/<pid>/mem` then
+    // returns EOF, and the `hold` control reports 0 live secrets (audit 2026-10-10, A-2).
+    let mut lines = BufReader::new(ch.stdout.take().expect("child stdout")).lines();
     let mut ready = false;
-    for line in out.lines().map_while(Result::ok) {
+    for line in lines.by_ref().map_while(Result::ok) {
         if line.starts_with("READY") {
             ready = true;
             break;
@@ -169,6 +175,13 @@ fn measure(mode: &str) -> (usize, usize) {
 
     let (hits, hits_rec, scanned) =
         count_in_process_memory(ch.id(), needle.as_bytes(), needle_rec.as_bytes());
+    // The photograph is only of the child if the child was alive for all of it: a process
+    // that exits mid-scan reads back as EOF, which would silently count as "nothing found".
+    assert!(
+        matches!(ch.try_wait(), Ok(None)),
+        "the child exited DURING the scan in mode {mode}, so nothing after that point was \
+         read and these counts mean nothing"
+    );
     // Printed (visible under --nocapture) because the NUMBERS are the evidence: a
     // reviewer needs to see that the live control found copies and that the scan covered
     // a plausible amount of memory, not just that the asserts held.
@@ -177,8 +190,10 @@ fn measure(mode: &str) -> (usize, usize) {
          across {scanned} bytes of the child's anonymous memory"
     );
 
-    // Release the child (closing its stdin ends its wait), then reap it.
+    // Release the child (closing its stdin ends its wait), drain whatever it prints on its
+    // way out so it never writes into a closed pipe, then reap it.
     drop(ch.stdin.take());
+    for _ in lines.map_while(Result::ok) {}
     let _ = ch.wait();
     (hits, hits_rec)
 }

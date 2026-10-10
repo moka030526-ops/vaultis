@@ -41,6 +41,11 @@ The full, per-finding security write-up for the hardening work below lives in
   it, which would open every vault editable, passed the whole suite. Both binaries now decide
   writability through one tested function, `launch::wants_write`. The shipped behavior was
   already correct.
+- **The memory-residue test could not observe anything under the sanitizers** (audit
+  2026-10-10, A-2). It closed its child's output pipe after start-up, so any scan longer than
+  60 seconds killed the child mid-measurement. Its own control caught this rather than
+  reporting a false pass. The pipe now stays open, and the test asserts the child is alive
+  after every scan.
 - Four doc comments that had become attached to the wrong function
   (`checked_export_dir`, `write_vault_file`, `error_banner_is_stale`, `password_field`).
 
