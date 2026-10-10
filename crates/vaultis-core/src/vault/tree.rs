@@ -215,6 +215,9 @@ impl OpenVault {
         if vault.version != FORMAT_VERSION {
             return Err(VaultError::BadVersion(vault.version));
         }
+        // A brand-new vault written by THIS release, whatever stamp the mirror carried
+        // (`export_tree` writes the source vault's own `written_by` into it).
+        vault.written_by = Some(APP_VERSION.to_string());
         // The mirror is UNTRUSTED. `vault.id` becomes the AEAD AAD domain for every
         // volume/manifest, and `volume_max_size` drives partition placement — sanitize
         // both rather than adopting crafted values. The id is normally 32 random hex

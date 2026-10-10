@@ -59,12 +59,14 @@ mod paths; // virtual paths + untrusted-path safety checks
 mod redundancy; // mirror + .bak generations of the vault file
 mod rekey; // password change: staged re-encryption + crash recovery
 mod tree; // whole-vault export / import
+mod upgrade; // safety copy before a new release first writes a vault
 mod vault_file; // reading, decrypting and writing vault.pmv
 
 pub use backup::*;
 pub use compact::*;
 pub use fsutil::*;
 pub use paths::*;
+pub use upgrade::*;
 pub use vault_file::*;
 use redundancy::*;
 use rekey::*;
@@ -153,6 +155,23 @@ pub enum VaultError {
     Locked,
     #[error("no such partition: {0}")]
     NoSuchPartition(u32),
+    /// A writable open of a vault last written by a NEWER vaultis than this one. Writing
+    /// it with older code could drop or mangle what that release stored, so only a
+    /// read-only open is allowed (see `vault/upgrade.rs`).
+    #[error(
+        "this vault was last saved by vaultis {written_by}, which is newer than this app \
+         ({}); open it read-only, or install vaultis {written_by} or later to edit it",
+        upgrade::APP_VERSION
+    )]
+    NewerVault { written_by: String },
+    /// The pre-upgrade safety copy could not be made or did not verify, so the vault was
+    /// NOT opened for writing (see `vault/upgrade.rs`).
+    #[error(
+        "could not save a safety copy of this vault before this version's first change to it \
+         ({0}); it was not opened for editing. Free some disk space or check the folder's \
+         permissions, or open it read-only"
+    )]
+    SafetyCopyFailed(String),
     // `#[from]` generates a conversion so a `StorageError` (etc.) automatically
     // becomes a `VaultError` — this is what lets the `?` operator (used below)
     // bubble up errors of other types without manual wrapping. `transparent`
@@ -256,6 +275,9 @@ pub struct OpenVault {
     /// notice the front-ends surface so the user knows a roll-forward/rollback
     /// happened. `None` on a normal open.
     recovery_notice: Option<String>,
+    /// The pre-upgrade safety copy this open took (its `vault.pmv`), when the vault had
+    /// last been written by an older release; `None` otherwise (see `vault/upgrade.rs`).
+    safety_copy: Option<PathBuf>,
     /// Held for a writable session: the OS advisory lock on `vaultis.lock`.
     /// `None` for read-only opens. Released automatically when this `OpenVault`
     /// drops (including on process crash), so the lock never goes stale.
@@ -393,6 +415,7 @@ impl OpenVault {
 
         let mut vault = Vault::default(); // `default()` builds an empty/zeroed value
         vault.version = FORMAT_VERSION;
+        vault.written_by = Some(APP_VERSION.to_string());
         vault.last_opened_at = records::unix_now();
         vault.id = records::random_id()?; // binds the volumes/manifests to this vault
         vault.categories = TypeLists::with_defaults();
@@ -416,6 +439,7 @@ impl OpenVault {
             read_only: false,
             storage,
             recovery_notice: None,
+            safety_copy: None,
             _write_lock: write_lock,
         };
         open.save()?; // first on-disk commit of the new vault file
@@ -460,6 +484,19 @@ impl OpenVault {
         // is `Some(notice)` when the live `vault.pmv` was unreadable and we recovered
         // from an in-place redundant copy (§12.8); `None` on a normal open.
         let (mut vault, header, key, notice) = decrypt_with_redundancy(&path, pw1, pw2)?;
+        // Upgrade safety (see `vault/upgrade.rs`): the release that last WROTE the vault is
+        // only known once it decrypts, and the open-time save below writes straight
+        // after — so this is the one point where a vault from an older release can still be
+        // copied aside untouched, and one from a newer release refused for writing. Under
+        // the lock, before the document store opens. A read-only open writes nothing and
+        // needs neither. Then stamp this release, which every save from here writes out.
+        let safety_copy = if read_only {
+            None
+        } else {
+            let copy = upgrade::before_first_write(&path, &dir, vault.written_by.as_deref())?;
+            vault.written_by = Some(APP_VERSION.to_string());
+            copy
+        };
         let previous_access = vault.last_opened_at;
         let previous_generation = vault.generation;
         vault.last_opened_at = records::unix_now();
@@ -505,6 +542,7 @@ impl OpenVault {
             read_only,
             storage,
             recovery_notice: notice,
+            safety_copy,
             _write_lock: write_lock,
         };
         // Best-effort refresh of last-opened; skipped entirely in read-only mode.

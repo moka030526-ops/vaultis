@@ -135,8 +135,17 @@ pub(super) fn backup_snapshot(vault_path: &Path, src_dir: &Path, dest_dir: &Path
         target = dest_dir.join(format!("backup-{stamp}_{n}")); // reassign `target` (it's `mut`)
         n += 1;
     }
-    fs::create_dir_all(&target)?;
-    harden_dir(&target);
+    copy_vault_tree(vault_path, src_dir, &target)?;
+    Ok(target.join(VAULT_FILE))
+}
+
+/// Copy one vault's files (`vault.pmv` + `manifest/` + `volume/`) into the fresh
+/// directory `target`, encrypted as-is, refusing symlinks and a password change that is
+/// in flight. Shared by [`backup_snapshot`] and the pre-upgrade safety copy
+/// ([`super::upgrade`]); the caller holds (or deliberately skips) the single-writer lock.
+pub(super) fn copy_vault_tree(vault_path: &Path, src_dir: &Path, target: &Path) -> Result<(), VaultError> {
+    fs::create_dir_all(target)?;
+    harden_dir(target);
 
     fs::copy(vault_path, target.join(VAULT_FILE))?;
     harden_file(&target.join(VAULT_FILE))?;
@@ -151,10 +160,10 @@ pub(super) fn backup_snapshot(vault_path: &Path, src_dir: &Path, dest_dir: &Path
     // write lock held (desktop) no writer can have started a rekey during the copy, so
     // this can only fire on the lock-less build; harmless to keep on both.
     if src_dir.join(REKEY_DIR).exists() {
-        let _ = fs::remove_dir_all(&target);
+        let _ = fs::remove_dir_all(target);
         return Err(VaultError::RekeyPending);
     }
-    Ok(target.join(VAULT_FILE))
+    Ok(())
 }
 
 /// Recursively copy a directory tree (files hardened to 0600 on Unix).

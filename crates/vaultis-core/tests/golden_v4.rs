@@ -86,3 +86,38 @@ fn committed_v4_vault_still_opens_and_header_prefix_is_pinned() {
     drop(ov);
     std::fs::remove_dir_all(&work).ok();
 }
+
+/// The upgrade path a real user takes: the committed fixture was written by an earlier
+/// release, so it carries no `written_by` stamp. The FIRST writable open by this release
+/// must copy it aside — byte for byte, as the old release left it — before writing, then
+/// stamp it; the next writable open copies nothing. Proves the safety copy works on a vault
+/// this release did not create, which no runtime-built test can.
+#[test]
+fn an_old_release_vault_gets_one_safety_copy_on_its_first_writable_open() {
+    use vaultis_core::vault::{APP_VERSION, SAFETY_DIR};
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/golden_v4");
+    let root = tmp("upgrade");
+    let work = root.join("golden");
+    copy_dir(&fixture, &work);
+    let original = std::fs::read(work.join("vault.pmv")).unwrap();
+
+    let ov = OpenVault::open(work.join("vault.pmv"), b"golden-pw-one", b"golden-pw-two")
+        .expect("an old vault must open for writing with today's code");
+    let copy = ov.safety_copy().expect("an unstamped (older) vault is copied first").to_path_buf();
+    assert_eq!(ov.vault.written_by.as_deref(), Some(APP_VERSION));
+    drop(ov);
+
+    assert!(copy.starts_with(root.join(SAFETY_DIR)), "{}", copy.display());
+    let folder = copy.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned();
+    assert!(folder.starts_with(&format!("golden@before-v{APP_VERSION}@")), "{folder}");
+    assert_eq!(std::fs::read(&copy).unwrap(), original, "the copy is the old release's bytes");
+    let old = OpenVault::open_read_only(copy, b"golden-pw-one", b"golden-pw-two").expect("the copy opens");
+    assert!(old.vault.written_by.is_none(), "the copy keeps the old, unstamped state");
+    drop(old);
+
+    let ov = OpenVault::open(work.join("vault.pmv"), b"golden-pw-one", b"golden-pw-two").unwrap();
+    assert!(ov.safety_copy().is_none(), "already stamped by this release: no second copy");
+    drop(ov);
+    assert_eq!(std::fs::read_dir(root.join(SAFETY_DIR)).unwrap().count(), 1);
+    std::fs::remove_dir_all(&root).ok();
+}

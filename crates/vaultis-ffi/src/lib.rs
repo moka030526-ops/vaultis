@@ -125,7 +125,10 @@ impl From<CoreVaultError> for VaultError {
             CoreVaultError::AlreadyExists(_)
             | CoreVaultError::ReadOnly
             | CoreVaultError::StillReferenced
-            | CoreVaultError::NoSuchPartition(_) => VaultError::Internal,
+            | CoreVaultError::NoSuchPartition(_)
+            // Both arise only in a WRITABLE open (the upgrade rule never runs read-only).
+            | CoreVaultError::NewerVault { .. }
+            | CoreVaultError::SafetyCopyFailed(_) => VaultError::Internal,
         }
     }
 }

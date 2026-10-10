@@ -4826,3 +4826,371 @@ fn audit_a1_read_only_open_must_not_delete_manifest_spares() {
     assert!(mirror.exists(), "a read-only open must not delete anything in the vault folder");
     cleanup(&path);
 }
+
+// --- Upgrade safety copies (`vault/upgrade.rs`) ---------------------------------------
+//
+// Each test nests its vault one level down (`<root>/<name>/vault.pmv`) so the copies land
+// in that test's own `<root>/vaultis-backups/`, never in a shared temp folder.
+
+/// A fresh vault at `<root>/household/vault.pmv`, then rewritten with `stamp` as its
+/// `written_by`, as an older (or newer) release would have left it. Returns the root and
+/// the vault path and the id of the document stored in it; the vault is closed again.
+fn vault_written_by(tag: &str, stamp: Option<&str>) -> (PathBuf, PathBuf, String) {
+    let root = std::env::temp_dir().join(format!("pmvault-upgrade-{tag}-{}", nanos()));
+    let path = root.join("household").join(VAULT_FILE);
+    let mut ov = OpenVault::create(path.clone(), b"pw-one", b"pw-two", fast()).unwrap();
+    let doc = write_src(&format!("upgrade-{tag}"), b"the deed, in full");
+    let doc_id = ov.add_document("deeds", "deed.txt", &doc).unwrap();
+    let _ = fs::remove_file(&doc);
+    ov.save().unwrap();
+    ov.vault.written_by = stamp.map(str::to_string);
+    write_vault_file(&ov.path, &ov.vault, &ov.key, &ov.salt, ov.params).unwrap();
+    drop(ov);
+    (root, path, doc_id)
+}
+
+/// The safety-copy folders under `root`, sorted by name.
+fn safety_copies(root: &Path) -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir(root.join(SAFETY_DIR))
+        .map(|rd| rd.filter_map(Result::ok).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+/// The `written_by` stamp on disk, read through a read-only open (which never writes).
+fn stamp_on_disk(path: &Path) -> Option<String> {
+    OpenVault::open_read_only(path.to_path_buf(), b"pw-one", b"pw-two").unwrap().vault.written_by.clone()
+}
+
+#[test]
+fn upgrade_classification_follows_semver_and_fails_toward_taking_a_copy() {
+    use upgrade::{classify, Upgrade};
+    assert_eq!(classify(Some("0.5.1"), "0.5.1"), Upgrade::Same);
+    assert_eq!(classify(Some("0.5.1-rc1"), "0.5.1"), Upgrade::Same, "a pre-release tag is the same release");
+    assert_eq!(classify(Some("0.5.0"), "0.5.1"), Upgrade::Older("v0.5.0".into()));
+    assert_eq!(classify(Some("0.9.9"), "1.0.0"), Upgrade::Older("v0.9.9".into()));
+    assert_eq!(classify(Some("0.10.0"), "0.9.0"), Upgrade::Newer("0.10.0".into()), "numeric, not text, comparison");
+    assert_eq!(classify(Some("1.0.0"), "0.5.1"), Upgrade::Newer("1.0.0".into()));
+    // No stamp: a vault from 0.5.0 or earlier.
+    assert_eq!(classify(None, "0.5.1"), Upgrade::Older("before-v0.5.1".into()));
+    // Unparseable cannot be shown newer, so it is copied rather than refused or skipped,
+    // and the stamp only reaches the folder name filtered to one safe path component.
+    assert_eq!(classify(Some("../../etc"), "0.5.1"), Upgrade::Older("v....etc".into()));
+    assert_eq!(classify(Some("garbage"), "0.5.1"), Upgrade::Older("vgarbage".into()));
+    assert_eq!(classify(Some(""), "0.5.1"), Upgrade::Older("vunknown".into()));
+}
+
+#[test]
+fn a_vault_this_release_wrote_is_stamped_and_takes_no_copy_on_reopen() {
+    let root = std::env::temp_dir().join(format!("pmvault-upgrade-same-{}", nanos()));
+    let path = root.join("household").join(VAULT_FILE);
+    drop(OpenVault::create(path.clone(), b"pw-one", b"pw-two", fast()).unwrap());
+    assert_eq!(stamp_on_disk(&path).as_deref(), Some(APP_VERSION), "create stamps this release");
+    let ov = OpenVault::open(path.clone(), b"pw-one", b"pw-two").unwrap();
+    assert!(ov.safety_copy().is_none());
+    drop(ov);
+    assert!(safety_copies(&root).is_empty(), "same release: nothing copied");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_older_vault_is_copied_untouched_before_the_first_write_then_stamped() {
+    let (root, path, doc_id) = vault_written_by("older", Some("0.0.1"));
+    let before_pmv = fs::read(&path).unwrap();
+    let dir = parent_dir(&path);
+
+    let ov = OpenVault::open(path.clone(), b"pw-one", b"pw-two").unwrap();
+    let copy = ov.safety_copy().expect("an older release's vault must be copied").to_path_buf();
+    drop(ov);
+
+    // Where, and named for the release that wrote it.
+    let copies = safety_copies(&root);
+    assert_eq!(copies.len(), 1, "{copies:?}");
+    assert!(copies[0].starts_with("household@v0.0.1@"), "{copies:?}");
+    assert_eq!(copy, root.join(SAFETY_DIR).join(&copies[0]).join(VAULT_FILE));
+    // The copy is the vault as the OLD release left it — taken before the open-time save
+    // rewrote vault.pmv — and carries its document store.
+    assert_eq!(fs::read(&copy).unwrap(), before_pmv, "copy must predate this release's first write");
+    assert_ne!(fs::read(&path).unwrap(), before_pmv, "the open itself then wrote the live vault");
+    assert!(upgrade_dirs_identical(&dir.join("volume"), &copy.parent().unwrap().join("volume")));
+    // The copy opens on its own, with the same passwords and content.
+    let restored = OpenVault::open_read_only(copy.clone(), b"pw-one", b"pw-two").unwrap();
+    assert_eq!(restored.vault.written_by.as_deref(), Some("0.0.1"));
+    assert_eq!(restored.read_document(&doc_id).unwrap().as_slice(), b"the deed, in full");
+    drop(restored);
+
+    // The live vault now carries this release, so the next writable open copies nothing.
+    assert_eq!(stamp_on_disk(&path).as_deref(), Some(APP_VERSION));
+    drop(OpenVault::open(path.clone(), b"pw-one", b"pw-two").unwrap());
+    assert_eq!(safety_copies(&root).len(), 1, "one copy per upgrade, not per open");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_unstamped_vault_from_before_the_field_existed_is_copied_too() {
+    let (root, path, _) = vault_written_by("unstamped", None);
+    drop(OpenVault::open(path.clone(), b"pw-one", b"pw-two").unwrap());
+    let copies = safety_copies(&root);
+    assert_eq!(copies.len(), 1, "{copies:?}");
+    assert!(copies[0].starts_with(&format!("household@before-v{APP_VERSION}@")), "{copies:?}");
+    assert_eq!(stamp_on_disk(&path).as_deref(), Some(APP_VERSION));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_vault_from_a_newer_release_opens_read_only_but_is_never_written() {
+    let (root, path, _) = vault_written_by("newer", Some("999.0.0"));
+    let before = fs::read(&path).unwrap();
+    match OpenVault::open(path.clone(), b"pw-one", b"pw-two") {
+        Err(VaultError::NewerVault { written_by }) => assert_eq!(written_by, "999.0.0"),
+        Err(e) => panic!("expected NewerVault, got {e:?}"),
+        Ok(_) => panic!("a newer release's vault must not open for writing"),
+    }
+    assert_eq!(fs::read(&path).unwrap(), before, "a refused open writes nothing");
+    assert!(safety_copies(&root).is_empty());
+    // Reading is fine, and leaves the stamp alone.
+    assert_eq!(stamp_on_disk(&path).as_deref(), Some("999.0.0"));
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_read_only_open_of_an_older_vault_copies_nothing_and_keeps_its_stamp() {
+    let (root, path, _) = vault_written_by("ro", Some("0.0.1"));
+    let before = fs::read(&path).unwrap();
+    let ov = OpenVault::open_read_only(path.clone(), b"pw-one", b"pw-two").unwrap();
+    assert!(ov.safety_copy().is_none());
+    drop(ov);
+    assert!(safety_copies(&root).is_empty());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn if_the_safety_copy_cannot_be_made_the_vault_is_not_opened_for_writing() {
+    let (root, path, _) = vault_written_by("blocked", Some("0.0.1"));
+    // Something that is not a folder where the copies must go.
+    fs::write(root.join(SAFETY_DIR), b"in the way").unwrap();
+    let before = fs::read(&path).unwrap();
+    match OpenVault::open(path.clone(), b"pw-one", b"pw-two") {
+        Err(VaultError::SafetyCopyFailed(_)) => {}
+        Err(e) => panic!("expected SafetyCopyFailed, got {e:?}"),
+        Ok(_) => panic!("must not open writable without its safety copy"),
+    }
+    assert_eq!(fs::read(&path).unwrap(), before, "no write without a safety copy");
+    assert_eq!(stamp_on_disk(&path).as_deref(), Some("0.0.1"), "still unstamped, so the next try copies");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[cfg(unix)]
+#[test]
+fn the_backups_folder_is_never_a_symlink_to_somewhere_else() {
+    let (root, path, _) = vault_written_by("symlinked", Some("0.0.1"));
+    let elsewhere = root.join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, root.join(SAFETY_DIR)).unwrap();
+    assert!(matches!(OpenVault::open(path, b"pw-one", b"pw-two"), Err(VaultError::SafetyCopyFailed(_))));
+    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0, "nothing written through the symlink");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn only_the_newest_copies_are_kept_and_manual_copies_never_evict_upgrade_ones() {
+    let (root, path, _) = vault_written_by("retention", Some("0.0.1"));
+    let dir = parent_dir(&path);
+    let safety = root.join(SAFETY_DIR);
+    fs::create_dir_all(&safety).unwrap();
+    // Older upgrade copies already present, plus folders that are NOT ours to touch:
+    // another vault's copy, and a symlink that merely looks like one of ours.
+    for t in ["20000101-000000", "20000102-000000", "20000103-000000"] {
+        let old = safety.join(format!("household@v0.0.0@{t}"));
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join(COMPLETE_MARKER), b"finished").unwrap();
+    }
+    // A folder with a copy's name but no completion marker was not finished by this
+    // module (or not made by it at all): never counted, never deleted.
+    fs::create_dir_all(safety.join("household@v0.0.0@19990101-000000")).unwrap();
+    fs::create_dir_all(safety.join("other@v0.0.0@19990101-000000")).unwrap();
+    #[cfg(unix)]
+    {
+        let outside = root.join("outside");
+        fs::create_dir_all(outside.join("keep")).unwrap();
+        std::os::unix::fs::symlink(&outside, safety.join("household@v0.0.0@19000101-000000")).unwrap();
+    }
+
+    // This open adds a fourth upgrade copy, so the oldest real one goes.
+    drop(OpenVault::open(path.clone(), b"pw-one", b"pw-two").unwrap());
+    let upgrade_copies: Vec<String> =
+        safety_copies(&root).into_iter().filter(|n| n.starts_with("household@v0.0") && !n.contains("1900") && !n.contains("1999")).collect();
+    assert_eq!(upgrade_copies.len(), KEEP_SAFETY_COPIES, "{upgrade_copies:?}");
+    assert!(!upgrade_copies.iter().any(|n| n.ends_with("20000101-000000")), "the oldest was pruned");
+    assert!(upgrade_copies.iter().any(|n| n.starts_with("household@v0.0.1@")), "the new one was kept");
+    assert!(safety.join("other@v0.0.0@19990101-000000").is_dir(), "another vault's copy is untouched");
+    assert!(safety.join("household@v0.0.0@19990101-000000").is_dir(), "an unmarked folder is untouched");
+    #[cfg(unix)]
+    assert!(root.join("outside/keep").is_dir(), "a symlink is never followed or deleted");
+
+    // Manual copies keep their own count and leave the upgrade copies alone.
+    for _ in 0..(KEEP_SAFETY_COPIES + 2) {
+        manual_safety_copy(&dir.join(VAULT_FILE)).unwrap();
+    }
+    let all = safety_copies(&root);
+    assert_eq!(all.iter().filter(|n| n.starts_with("household@manual@")).count(), KEEP_SAFETY_COPIES, "{all:?}");
+    assert_eq!(
+        all.iter().filter(|n| n.starts_with("household@v0.0") && !n.contains("1900") && !n.contains("1999")).count(),
+        KEEP_SAFETY_COPIES,
+        "manual copies must not evict upgrade copies: {all:?}"
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_manual_copy_of_an_open_writable_vault_does_not_deadlock_on_its_own_lock() {
+    let (root, path, _) = vault_written_by("manual-open", None);
+    let ov = OpenVault::open(path.clone(), b"pw-one", b"pw-two").unwrap();
+    let copy = ov.manual_safety_copy().unwrap();
+    assert!(copy.parent().unwrap().file_name().unwrap().to_string_lossy().starts_with("household@manual@"));
+    assert!(OpenVault::open_read_only(copy, b"pw-one", b"pw-two").is_ok(), "the copy opens");
+    // The free function would need the lock this session holds (where the lock exists:
+    // the mobile/no-default build compiles it as a no-op).
+    #[cfg(feature = "single-writer-lock")]
+    assert!(matches!(manual_safety_copy(&path), Err(VaultError::Locked)));
+    drop(ov);
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// Every file under `a` exists under `b` with the same bytes, and vice versa.
+fn upgrade_dirs_identical(a: &Path, b: &Path) -> bool {
+    let list = |d: &Path| {
+        let mut v: Vec<(String, Vec<u8>)> = fs::read_dir(d)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().unwrap().is_file())
+            .map(|e| (e.file_name().to_string_lossy().into_owned(), fs::read(e.path()).unwrap()))
+            .collect();
+        v.sort();
+        v
+    };
+    list(a) == list(b)
+}
+
+#[test]
+fn a_finished_copy_carries_its_completion_marker_and_no_staging_is_left() {
+    let (root, path, _) = vault_written_by("marker", Some("0.0.1"));
+    let ov = OpenVault::open(path, b"pw-one", b"pw-two").unwrap();
+    let copy_dir = ov.safety_copy().unwrap().parent().unwrap().to_path_buf();
+    drop(ov);
+    let marker = fs::read_to_string(copy_dir.join(COMPLETE_MARKER)).expect("the marker is written last");
+    assert!(marker.contains(&format!("made by: vaultis {APP_VERSION}")), "{marker}");
+    assert!(marker.contains("label: v0.0.1"), "{marker}");
+    assert!(marker.contains(VAULT_FILE) && marker.contains("volume/") && marker.contains("manifest/"), "{marker}");
+    assert!(
+        !safety_copies(&root).iter().any(|n| n.starts_with('.')),
+        "no staging folder survives a successful copy: {:?}",
+        safety_copies(&root)
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn leftovers_of_a_crashed_copy_are_cleared_and_never_count_as_a_copy() {
+    let (root, path, _) = vault_written_by("leftover", Some("0.0.1"));
+    let safety = root.join(SAFETY_DIR);
+    // What a crash mid-copy leaves: a staging folder with part of a vault in it.
+    let stale = safety.join(".incomplete-household@v0.0.1@20000101-000000");
+    fs::create_dir_all(stale.join("volume")).unwrap();
+    fs::write(stale.join(VAULT_FILE), b"half a vault").unwrap();
+    // Another vault's leftover is not ours to clear.
+    let foreign = safety.join(".incomplete-parents@v0.0.1@20000101-000000");
+    fs::create_dir_all(&foreign).unwrap();
+
+    drop(OpenVault::open(path, b"pw-one", b"pw-two").unwrap());
+    assert!(!stale.exists(), "this vault's crashed attempt is cleared");
+    assert!(foreign.exists(), "another vault's leftover is untouched");
+    let finished: Vec<String> = safety_copies(&root).into_iter().filter(|n| !n.starts_with('.')).collect();
+    assert_eq!(finished.len(), 1, "{finished:?}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// A full disk at either point inside the copy: the open is refused, the vault is not
+/// written or stamped, no staging folder or half copy is left, and once there is room
+/// again the next open makes the copy and proceeds.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn a_full_disk_during_the_safety_copy_refuses_the_open_and_leaves_no_half_copy() {
+    for point in ["safety.copied", "safety.committing"] {
+        let (root, path, _) = vault_written_by("enospc", Some("0.0.1"));
+        let before = fs::read(&path).unwrap();
+        crate::fault::fail_at(point, 1);
+        let result = OpenVault::open(path.clone(), b"pw-one", b"pw-two");
+        crate::fault::clear();
+        match result {
+            Err(VaultError::SafetyCopyFailed(_)) => {}
+            Err(e) => panic!("{point}: expected SafetyCopyFailed, got {e:?}"),
+            Ok(_) => panic!("{point}: must not open writable without a finished copy"),
+        }
+        assert_eq!(fs::read(&path).unwrap(), before, "{point}: vault untouched");
+        assert_eq!(stamp_on_disk(&path).as_deref(), Some("0.0.1"), "{point}: still unstamped");
+        assert!(safety_copies(&root).is_empty(), "{point}: nothing left behind: {:?}", safety_copies(&root));
+
+        let ov = OpenVault::open(path.clone(), b"pw-one", b"pw-two").expect("with room again, it opens");
+        assert!(ov.safety_copy().is_some(), "{point}: and only after making the copy");
+        drop(ov);
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
+#[test]
+fn far_future_named_folders_can_never_push_out_the_copy_just_made() {
+    let (root, path, _) = vault_written_by("future", Some("0.0.1"));
+    let safety = root.join(SAFETY_DIR);
+    for t in ["99991231-235957", "99991231-235958", "99991231-235959"] {
+        let fake = safety.join(format!("household@v9.9.9@{t}"));
+        fs::create_dir_all(&fake).unwrap();
+        fs::write(fake.join(COMPLETE_MARKER), b"planted").unwrap();
+    }
+    let ov = OpenVault::open(path, b"pw-one", b"pw-two").unwrap();
+    let copy = ov.safety_copy().unwrap().to_path_buf();
+    drop(ov);
+    assert!(copy.is_file(), "the copy this open relies on must survive pruning");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn same_second_copies_keep_strict_order_past_ten_and_never_reuse_a_pruned_name() {
+    use upgrade::KEEP_SAFETY_COPIES as KEEP;
+    let (root, path, _) = vault_written_by("same-second", Some("0.0.1"));
+    drop(OpenVault::open(path.clone(), b"pw-one", b"pw-two").unwrap());
+    // Twelve manual copies, most within one second: suffixes pass _9 → _10 → _11.
+    let mut made = Vec::new();
+    for _ in 0..12 {
+        made.push(manual_safety_copy(&path).unwrap().parent().unwrap().to_path_buf());
+    }
+    let kept: Vec<PathBuf> = made.iter().filter(|p| p.is_dir()).cloned().collect();
+    assert_eq!(kept.len(), KEEP, "{kept:?}");
+    assert_eq!(kept, made[made.len() - KEEP..].to_vec(), "exactly the newest {KEEP} survive, in order");
+    let mut names: Vec<&PathBuf> = made.iter().collect();
+    names.dedup();
+    assert_eq!(names.len(), made.len(), "no name was ever reused");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn clearing_leftovers_never_touches_a_vault_whose_name_merely_starts_the_same() {
+    let root = std::env::temp_dir().join(format!("pmvault-upgrade-at-{}", nanos()));
+    let path = root.join("a").join(VAULT_FILE);
+    let mut ov = OpenVault::create(path.clone(), b"pw-one", b"pw-two", fast()).unwrap();
+    ov.vault.written_by = Some("0.0.1".into());
+    ov.save().unwrap();
+    drop(ov);
+    // Vault `a@b`'s copy in progress, and vault `a`'s own crashed leftover.
+    let theirs = root.join(SAFETY_DIR).join(".incomplete-a@b@v0.0.1@20000101-000000");
+    let ours = root.join(SAFETY_DIR).join(".incomplete-a@v0.0.1@20000101-000000");
+    fs::create_dir_all(&theirs).unwrap();
+    fs::create_dir_all(&ours).unwrap();
+    drop(OpenVault::open(path, b"pw-one", b"pw-two").unwrap());
+    assert!(theirs.is_dir(), "another vault's in-progress copy is left alone");
+    assert!(!ours.exists(), "this vault's own leftover is cleared");
+    let _ = fs::remove_dir_all(&root);
+}

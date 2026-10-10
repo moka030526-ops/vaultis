@@ -728,6 +728,7 @@ fn every_core_record_collection_is_reachable_through_the_ffi() {
         zakat,
         // --- everything else: metadata, not user-visible record collections -------
         version: _,
+        written_by: _,
         generation: _,
         last_opened_at: _,
         id: _,

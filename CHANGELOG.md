@@ -12,6 +12,22 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+### Added
+
+- **A safety copy before a new version first changes a vault.** Each vault now records
+  which vaultis version last saved it (inside the encrypted file). The first time a newer
+  version opens it for editing, the vault is copied, byte for byte as the previous version
+  left it, into `vaultis-backups/<vault>@v<old version>@<time>/` beside the vault folders,
+  and the copy is verified before anything is written. The copy is all-or-nothing: staged
+  in a hidden folder, compared byte for byte, flushed to disk, marked
+  `SAFETY-COPY-COMPLETE`, then renamed into place. A full disk or a crash at any point
+  before that leaves the vault untouched and unopened for editing, and the next open
+  makes the copy again first. Read-only opens never copy, since they never write. The
+  newest 3 copies are kept per vault, and the on-disk format is unchanged (v4).
+- **A vault saved by a newer version opens read-only only**, so an older version can't
+  overwrite what a newer one stored. (Versions before this one don't know to refuse;
+  the safety copy covers them.)
+
 ## [0.5.0] — 2026-10-10
 
 The terminal UI is removed: the graphical app is now the only interactive interface, and

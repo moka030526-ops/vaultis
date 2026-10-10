@@ -954,6 +954,16 @@ impl Default for VaultSettings {
 pub struct Vault {
     #[serde(default)]
     pub version: u8, // u8 = unsigned 8-bit integer (0..=255)
+    /// The vaultis release that last WROTE this vault, e.g. `"0.5.1"` — set on every
+    /// writable open, so it names the code that produced the bytes on disk. `None` for a
+    /// vault last written before the field existed (0.5.0 and earlier). It decides what a
+    /// writable open does first: a vault last written by an OLDER release is copied to
+    /// `vaultis-backups/` before this release writes anything, and one written by a NEWER
+    /// release is refused for writing (see `vault/upgrade.rs`). Inside the encrypted body,
+    /// not beside it, so it cannot be edited to switch the safety copy off.
+    /// `#[serde(default)]` keeps older vaults loadable; older releases ignore the field.
+    #[serde(default)]
+    pub written_by: Option<String>,
     /// Monotonically increasing write counter, bumped on every successful save.
     /// Surfaced on unlock so a user can notice a whole-file rollback to an older
     /// snapshot (see `docs/DESIGN.md` §9.12).
