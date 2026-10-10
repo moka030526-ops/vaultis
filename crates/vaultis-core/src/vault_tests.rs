@@ -4879,6 +4879,10 @@ fn upgrade_classification_follows_semver_and_fails_toward_taking_a_copy() {
     assert_eq!(classify(Some("../../etc"), "0.5.1"), Upgrade::Older("v....etc".into()));
     assert_eq!(classify(Some("garbage"), "0.5.1"), Upgrade::Older("vgarbage".into()));
     assert_eq!(classify(Some(""), "0.5.1"), Upgrade::Older("vunknown".into()));
+    // A stamp of nothing but dots is no label at all (and never a `..` path component).
+    assert_eq!(classify(Some(".."), "0.5.1"), Upgrade::Older("vunknown".into()));
+    assert_eq!(classify(Some("..."), "0.5.1"), Upgrade::Older("vunknown".into()));
+    assert_eq!(classify(Some(".a"), "0.5.1"), Upgrade::Older("v.a".into()), "dots plus a real character stay");
 }
 
 #[test]
@@ -5192,5 +5196,63 @@ fn clearing_leftovers_never_touches_a_vault_whose_name_merely_starts_the_same() 
     drop(OpenVault::open(path, b"pw-one", b"pw-two").unwrap());
     assert!(theirs.is_dir(), "another vault's in-progress copy is left alone");
     assert!(!ours.exists(), "this vault's own leftover is cleared");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// The byte-for-byte check is what stands between "copied" and "safe to write the vault":
+/// a faithful copy must pass, and EVERY way a copy can be wrong must fail it. (Mutation
+/// testing found nothing asserted this — a check that always said "identical" passed.)
+#[test]
+fn the_copy_verification_rejects_every_kind_of_unfaithful_copy() {
+    use upgrade::{files_identical, trees_identical};
+    let (root, path, _) = vault_written_by("verify", Some("0.0.1"));
+    let dir = parent_dir(&path);
+    // A volume file well past one 64 KiB read, so a difference deep in it needs the loop.
+    let big = dir.join("volume").join("vol.big");
+    let mut bytes = vec![0x5Au8; 200 * 1024];
+    fs::write(&big, &bytes).unwrap();
+
+    let fresh = |tag: &str| {
+        let t = root.join(format!("copy-{tag}"));
+        let _ = fs::remove_dir_all(&t);
+        backup::copy_vault_tree(&path, &dir, &t).unwrap();
+        t
+    };
+    assert!(trees_identical(&path, &dir, &fresh("ok")).unwrap(), "a faithful copy passes");
+
+    // One byte flipped at 150 KiB: same length, differs only in the third chunk.
+    let t = fresh("flip");
+    bytes[150 * 1024] ^= 0xFF;
+    fs::write(t.join("volume/vol.big"), &bytes).unwrap();
+    bytes[150 * 1024] ^= 0xFF;
+    assert!(!trees_identical(&path, &dir, &t).unwrap(), "a flipped byte deep in a file");
+    assert!(!files_identical(&big, &t.join("volume/vol.big")).unwrap());
+
+    let t = fresh("short");
+    fs::write(t.join("volume/vol.big"), &bytes[..bytes.len() - 1]).unwrap();
+    assert!(!trees_identical(&path, &dir, &t).unwrap(), "a truncated file");
+
+    let t = fresh("long");
+    let mut longer = bytes.clone();
+    longer.push(0);
+    fs::write(t.join("volume/vol.big"), &longer).unwrap();
+    assert!(!trees_identical(&path, &dir, &t).unwrap(), "an extended file");
+
+    let t = fresh("missing");
+    let manifest = fs::read_dir(t.join("manifest")).unwrap().next().unwrap().unwrap().path();
+    fs::remove_file(manifest).unwrap();
+    assert!(!trees_identical(&path, &dir, &t).unwrap(), "a file missing from the copy");
+
+    let t = fresh("extra");
+    fs::write(t.join("volume/stray"), b"x").unwrap();
+    assert!(!trees_identical(&path, &dir, &t).unwrap(), "an extra file in the copy");
+
+    let t = fresh("pmv");
+    let mut pmv = fs::read(t.join(VAULT_FILE)).unwrap();
+    let last = pmv.len() - 1;
+    pmv[last] ^= 1;
+    fs::write(t.join(VAULT_FILE), pmv).unwrap();
+    assert!(!trees_identical(&path, &dir, &t).unwrap(), "a different vault.pmv");
+
     let _ = fs::remove_dir_all(&root);
 }

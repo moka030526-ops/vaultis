@@ -278,7 +278,7 @@ fn write_marker(staging: &Path, label: &str, files: &[(String, u64)]) -> Result<
 /// file under `manifest/` and `volume/`, compared byte for byte (streamed, so a large
 /// volume never sits in memory). The source cannot change meanwhile — the caller holds
 /// the single-writer lock.
-fn trees_identical(vault_path: &Path, src_dir: &Path, target: &Path) -> Result<bool, VaultError> {
+pub(super) fn trees_identical(vault_path: &Path, src_dir: &Path, target: &Path) -> Result<bool, VaultError> {
     if !files_identical(vault_path, &target.join(VAULT_FILE))? {
         return Ok(false);
     }
@@ -291,7 +291,7 @@ fn trees_identical(vault_path: &Path, src_dir: &Path, target: &Path) -> Result<b
     Ok(true)
 }
 
-fn dirs_identical(src: &Path, dst: &Path) -> Result<bool, VaultError> {
+pub(super) fn dirs_identical(src: &Path, dst: &Path) -> Result<bool, VaultError> {
     let mut count = 0usize;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -310,7 +310,7 @@ fn dirs_identical(src: &Path, dst: &Path) -> Result<bool, VaultError> {
     Ok(fs::read_dir(dst)?.count() == count)
 }
 
-fn files_identical(a: &Path, b: &Path) -> Result<bool, VaultError> {
+pub(super) fn files_identical(a: &Path, b: &Path) -> Result<bool, VaultError> {
     use std::io::Read;
     let (Ok(fa), Ok(fb)) = (fs::File::open(a), fs::File::open(b)) else { return Ok(false) };
     if fa.metadata()?.len() != fb.metadata()?.len() {
