@@ -2,6 +2,11 @@
 
 _Last updated: 2026-06-16_
 
+> **2026-10-10 — the terminal UI (`vaultis --tui`, `ui.rs`) has been removed.** The
+> graphical app is now the only interactive interface; the console `vaultis` binary keeps
+> every CLI subcommand. Passages below that describe the TUI are kept for history until
+> this document's next full revision, and no longer describe shipped behavior.
+
 How the code is structured, **as built**. Read `DESIGN.md` first for the "why"
 (threat model, format rationale, crypto choices, crash-safety guarantees); this
 document is the "how" and the "where" — the module map, the key types and

@@ -132,7 +132,7 @@ fn safe_path_repairs_windows_reserved_names_exactly_like_the_core_exporter() {
     assert_eq!(safe_relative_path("", "LPT0.log", "id9"), PathBuf::from("LPT0.log"));
 }
 
-/// The two path sanitizers — the core's `doc_tree_relpath` (used by the GUI/TUI
+/// The two path sanitizers — the core's `doc_tree_relpath` (used by the GUI's
 /// `export_document_into` and by `export_tree`'s `documents/` view) and this CLI's
 /// `safe_relative_path` — must lay out the same stored path identically, or `vaultis
 /// extract` and the windowed app produce different trees for one vault. Silent drift

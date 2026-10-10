@@ -7,8 +7,8 @@
 //! category lists ([`types`]), the random password generator ([`password`]),
 //! and the [`vault::OpenVault`] API that ties them together.
 //!
-//! It has **no UI and no desktop/OS front-end dependencies** (no egui, ratatui,
-//! arboard, or directories), so the exact same audited code is reused unchanged
+//! It has **no UI and no desktop/OS front-end dependencies** (no egui, arboard,
+//! or directories), so the exact same audited code is reused unchanged
 //! behind the desktop binaries (the `vaultis` crate) and the mobile FFI (the
 //! `vaultis-ffi` crate). The fuzz targets under `fuzz/` link against it
 //! directly to hammer the untrusted-input parsers.

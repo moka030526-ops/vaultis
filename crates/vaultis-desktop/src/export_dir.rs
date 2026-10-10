@@ -5,15 +5,14 @@ use std::path::{Path, PathBuf};
 
 use super::*;
 
-// --- Cleartext-export destination guard (shared by the CLI, GUI and TUI) ------
+// --- Cleartext-export destination guard (shared by the CLI and GUI) -----------
 //
 // Writing a decrypted document — or a per-tab CSV, which carries every account and
 // portal password in the clear — INTO the encrypted vault directory strands plaintext
 // next to `vault.pmv`, where the user's next backup or folder sync sweeps it up. The CLI
 // has refused that since the `extract`/`export-tree`/`compact --backup-dest` guards; the
-// windowed and terminal front-ends export to the Config directory and so need the same
-// check. It lives here (not in the `vaultis` binary) so all three front-ends share ONE
-// definition and cannot drift.
+// GUI exports to the Config directory and so needs the same check. It lives here (not in
+// the `vaultis` binary) so the CLI and GUI share ONE definition and cannot drift.
 
 /// Validate the Config-screen export directory for a session whose vault file is
 /// `vault_path`, returning the normalized directory to write into or the message the
@@ -27,8 +26,8 @@ use super::*;
 ///    plaintext with it. `dest_inside` resolves both sides through the filesystem, so a
 ///    symlinked export directory pointing back into the vault is caught too.
 ///
-/// Shared by the GUI and TUI so the rule and its wording cannot drift between them; the
-/// CLI's `extract`/`export-tree`/`compact --backup-dest` enforce the same thing directly.
+/// Used by the GUI's exports; the CLI's `extract`/`export-tree`/`compact --backup-dest`
+/// enforce the same thing directly.
 pub fn checked_export_dir(vault_path: &Path, configured: &str) -> Result<PathBuf, String> {
     let dir = records::unquote_path(configured);
     if dir.is_empty() {

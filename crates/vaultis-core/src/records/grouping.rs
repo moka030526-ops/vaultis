@@ -107,7 +107,7 @@ impl AcctNode {
     }
 }
 
-/// Build the **grouped tree** of `accounts` for the GUI/TUI "grouped" view: each
+/// Build the **grouped tree** of `accounts` for the GUI's "grouped" view: each
 /// account is placed along the path of its NON-EMPTY grouping values in the order
 /// **owner → type → subtype**, then added as a leaf (title only) at the end of that
 /// path. An empty owner/type/subtype is **skipped** — there are no "(none)" nodes —
@@ -171,7 +171,7 @@ pub fn asset_tree<'a>(assets: impl IntoIterator<Item = &'a AssetLiability>) -> A
 // --- Asset ↔ account links ----------------------------------------------------
 //
 // `AssetLiability::linked_accounts` holds Account record ids. These two helpers are
-// the shared resolve/reverse-lookup used by both front-ends (GUI + TUI) and the CSV
+// the shared resolve/reverse-lookup used by the GUI and the CSV
 // export, so the display convention lives in ONE place.
 
 /// Resolve an account id to its display label ([`Record::label`]: "Title - Type -

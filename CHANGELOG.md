@@ -12,6 +12,19 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+### Removed
+
+- **The terminal UI (`vaultis --tui`).** The graphical app already did everything the
+  terminal interface did, so the interface now has one implementation instead of two.
+  The console `vaultis` binary keeps every subcommand (`decrypt`, `backup`, `extract`,
+  `export-tree`, `import-tree`, `update-from`, `compact`, …). `vaultis --tui` and
+  `vaultis-gui --tui` now exit with a message pointing to the graphical app and the
+  subcommands. A build without the `gui` feature (the static musl build) is now
+  command-line only and refuses an interactive launch with an explanation.
+- **79 third-party crates** that only the terminal UI pulled in (ratatui and its
+  tree). Nothing was added and no version changed; the CLI's no-echo password prompt
+  now uses `crossterm` directly, the same version as before.
+
 ### Changed
 
 - **Internal structure only, no behavior change:** the largest source files are split

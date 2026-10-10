@@ -1,10 +1,10 @@
 //! vaultis — command-line entry point for the standalone, offline,
 //! two-password encrypted **estate vault**.
 //!
-//! `main` handles command-line dispatch, chooses the vault file path, and sets
-//! up / tears down the terminal. The whole implementation (data model, file
-//! format, crypto, the two UIs, and the category lists) lives in the `vaultis`
-//! library crate (`src/lib.rs`); this binary is a thin wrapper over it.
+//! `main` handles command-line dispatch and chooses the vault file path. The whole
+//! implementation (data model, file format, crypto, the GUI, and the category lists)
+//! lives in the `vaultis` library crate (`src/lib.rs`); this binary is a thin wrapper
+//! over it.
 //!
 //! Notes for readers new to Rust (this `//!` block is a *module doc comment*;
 //! `///` documents the item that follows, `//` is an ordinary line comment):
@@ -24,7 +24,6 @@
 //! Usage:
 //! ```text
 //!   vaultis [DIR]                    launch the graphical UI (default vault if omitted)
-//!   vaultis --tui [DIR]             launch the terminal UI instead
 //!   vaultis decrypt [DIR]           decrypt the vault and print its JSON to stdout
 //!   vaultis manifest [DIR] [--part N]  print the document manifest (one partition or all)
 //!   vaultis extract [DIR] OUT [--part N]  decrypt documents into OUT (one volume or all)
@@ -58,11 +57,11 @@ use zeroize::{Zeroize, Zeroizing};
 // below unqualified.
 use vaultis::launch::{default_vault_path, vault_file};
 use vaultis::vault::OpenVault;
-// `dest_inside` used to live here; it moved into the library so the GUI and TUI export
-// paths enforce the same "never write cleartext inside the vault directory" rule.
+// `dest_inside` used to live here; it moved into the library so the GUI's export paths
+// enforce the same "never write cleartext inside the vault directory" rule.
 use vaultis::dest_inside;
-use vaultis::{ui, vault};
-// The GUI is behind the `gui` feature; a `--no-default-features` build is terminal-only.
+use vaultis::vault;
+// The GUI is behind the `gui` feature; a `--no-default-features` build is CLI-only.
 #[cfg(feature = "gui")]
 use vaultis::gui;
 
@@ -88,13 +87,12 @@ If omitted, the per-user default directory is used.
 This is the console build. The graphical app is a separate binary, `vaultis-gui`
 (`vaultis-gui[.exe]`), which is identical to `vaultis [DIR]` but opens with no
 console window on Windows. Use `vaultis-gui` for the GUI; use this binary for the
-commands below and the terminal UI.
+commands below.
 
 USAGE:
     vaultis [DIR]                  Launch the graphical UI (read-only by default)
                                     (prefer `vaultis-gui` — no console window)
     vaultis --write [DIR]          Launch writable (allow creating/editing/deleting)
-    vaultis --tui [DIR]            Launch the terminal UI instead (add --write to edit)
     vaultis decrypt [DIR]          Decrypt the vault and print its JSON to stdout
     vaultis manifest [DIR] [--part N]
                                     Decrypt the document manifest (index): one
@@ -319,15 +317,18 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // The interactive UI is read-only unless --write is given; --tui selects the
-    // terminal UI over the graphical one.
+    // The terminal UI was removed; refuse its old flag with a pointer to what replaced
+    // it, rather than silently opening a window (the TUI was used over SSH, where no
+    // window can appear) or treating `--tui` as a vault directory name.
+    if args.iter().any(|a| a == "--tui") {
+        eprintln!("vaultis error: {}", vaultis::launch::TUI_REMOVED);
+        return ExitCode::FAILURE;
+    }
+    // The interactive UI is read-only unless --write is given.
     let writable = args.iter().any(|a| a == "--write");
-    let tui = args.iter().any(|a| a == "--tui");
-    // Keep only the *positional* args by filtering out the recognized flags.
-    // `matches!(value, pattern)` is true if `value` fits the pattern; here the
-    // `|` lists alternatives. `.collect()` rebuilds them into a new `Vec<String>`.
-    let pos: Vec<String> =
-        args.into_iter().filter(|a| !matches!(a.as_str(), "--write" | "--tui")).collect();
+    // Keep only the *positional* args by filtering out the recognized flag.
+    // `.collect()` rebuilds them into a new `Vec<String>`.
+    let pos: Vec<String> = args.into_iter().filter(|a| a != "--write").collect();
 
     // The (optional) positional vault DIRECTORY → its vault.pmv file. This is a
     // closure capturing `pos`: `.get(i)` returns `Option<&String>` (the i-th arg
@@ -437,34 +438,32 @@ fn main() -> ExitCode {
         Some("compact") => cli_compact(&pos, &cflags),
         // THROWAWAY: `migrate-doc-paths [DIR]` — owner-first path migration + history drop + compact.
         Some("migrate-doc-paths") => migrate_cli::run(&pos, &cflags),
-        // Otherwise the (optional) positional argument is the vault directory for
-        // the interactive UI (graphical by default, terminal with --tui). In a build
-        // without the `gui` feature there is no graphical UI, so always run the TUI.
+        // Otherwise the (optional) positional argument is the vault directory for the
+        // graphical UI. A build without the `gui` feature has no interactive UI at all.
         _ => {
-            // Interactive launch: `vaultis [DIR] [--write] [--tui]` — at most ONE positional
+            // Interactive launch: `vaultis [DIR] [--write]` — at most ONE positional
             // (the optional vault DIR; there is no subcommand here). Reject a 2nd+ positional
             // (a stray token, or a mistyped subcommand like `extarct OUT`) instead of silently
             // ignoring it and opening pos[0] — matching the explicit arity checks on every
             // subcommand above.
             if pos.len() > 1 {
                 Err(anyhow::anyhow!(
-                    "unrecognized extra arguments: {:?}\nUsage: vaultis [DIR] [--write] [--tui], or a subcommand (run `vaultis --help`).",
+                    "unrecognized extra arguments: {:?}\nUsage: vaultis [DIR] [--write], or a subcommand (run `vaultis --help`).",
                     &pos[1..]
                 ))
             } else {
                 let path = vault_dir_arg(0);
                 #[cfg(feature = "gui")]
                 {
-                    if tui {
-                        run_ui(path, writable)
-                    } else {
-                        gui::run(path, writable)
-                    }
+                    gui::run(path, writable)
                 }
                 #[cfg(not(feature = "gui"))]
                 {
-                    let _ = tui; // the flag is accepted but the TUI is the only UI here
-                    run_ui(path, writable)
+                    let _ = (path, writable);
+                    Err(anyhow::anyhow!(
+                        "this build has no interactive UI (it was built without the `gui` feature); \
+                         use a subcommand (run `vaultis --help`)."
+                    ))
                 }
             }
         }
@@ -478,19 +477,6 @@ fn main() -> ExitCode {
     }
     // No trailing semicolon: this expression is the function's return value.
     ExitCode::SUCCESS
-}
-
-fn run_ui(path: PathBuf, writable: bool) -> anyhow::Result<()> {
-    // `ratatui::init` enters the alternate screen + raw mode and installs a
-    // panic hook that restores the terminal before printing the panic, so a
-    // crash never leaves the user's terminal in a broken state.
-    let mut terminal = ratatui::init();
-    // `&mut terminal` passes an *exclusive borrow* so `ui::run` can draw to and
-    // mutate the terminal while `run_ui` retains ownership and restores it after.
-    let result = ui::run(&mut terminal, path, writable);
-    ratatui::restore();
-    // Return the UI's `Result` unchanged (last expression, no semicolon).
-    result
 }
 
 /// Decrypt the vault and print its full JSON (including all passwords) to
@@ -1189,14 +1175,14 @@ fn read_password(prompt: &str) -> anyhow::Result<Zeroizing<String>> {
 fn read_line_no_echo() -> anyhow::Result<Zeroizing<String>> {
     // Function-local `use`: these imports are only in scope inside this function.
     // `self` in `{self, Event, ...}` imports the `event` module itself too.
-    use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-    use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
     // RAII guard: restore cooked/echo mode on EVERY exit path — including a panic unwinding
     // out of event::read()/crossterm. Without it a panic between enable_raw_mode and the
     // explicit restore would leave the user's shell in raw, no-echo mode (they'd have to
     // blindly run `reset`/`stty sane`), and a password typed into a following command could
-    // be mishandled. Mirrors the panic-safe terminal restore ratatui::init() gives the TUI.
+    // be mishandled.
     struct RawModeGuard;
     impl Drop for RawModeGuard {
         fn drop(&mut self) {

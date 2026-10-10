@@ -6,7 +6,7 @@ use super::*;
 /// The virtual folder a tax year's documents live in: `taxes/<sanitized-year>`.
 /// Non-alphanumeric characters in the year are dropped so the folder name is
 /// always safe; an empty/blank year falls back to `taxes/unspecified`. Shared by
-/// the GUI and TUI so both store a given year's documents in the same place.
+/// the front-ends so all store a given year's documents in the same place.
 pub fn tax_doc_location(year: &str) -> String {
     let y: String = year.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     if y.is_empty() { "taxes/unspecified".to_string() } else { format!("taxes/{y}") }

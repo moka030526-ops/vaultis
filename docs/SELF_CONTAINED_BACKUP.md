@@ -2,6 +2,11 @@
 
 _Status: **PROPOSED — not implemented.** Design notes for discussion. Last updated: 2026-06-25._
 
+> **2026-10-10 — the terminal UI (`vaultis --tui`, `ui.rs`) has been removed.** The
+> graphical app is now the only interactive interface; the console `vaultis` binary keeps
+> every CLI subcommand. Passages below that describe the TUI are kept for history until
+> this document's next full revision, and no longer describe shipped behavior.
+
 ## 1. Goal
 
 From **Config → "Generate a backup"**, in addition to (or instead of) the current

@@ -274,7 +274,7 @@ pub fn zakat_csv(rows: &[ZakatEntry]) -> String {
 
 // --- Tab dispatch (shared by both front-ends) --------------------------------
 
-/// Which record tab to export. Lets the GUI and TUI share ONE tab -> collection
+/// Which record tab to export. Lets the front-ends share ONE tab -> collection
 /// mapping (each front-end has its own `Tab` enum but maps it to this), so adding a
 /// record type or changing a base filename is a single-site change here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

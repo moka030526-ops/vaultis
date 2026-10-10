@@ -338,7 +338,7 @@ fn compact_volume_keeps_tax_and_re_docs_simultaneously() {
 
 #[test]
 fn deleting_tax_filing_then_reclaiming_docs_and_compacting_frees_all() {
-    // Mirrors the GUI/TUI delete flow: remove the record, save, then
+    // Mirrors the GUI delete flow: remove the record, save, then
     // remove_document each attached blob, then `compact --volume` reclaims them.
     let path = tmp_path("deltax");
     let mut v = OpenVault::create(path.clone(), b"a", b"b", fast()).unwrap();
@@ -4378,8 +4378,8 @@ fn merge_preview_count_matches_apply_for_sanitize_colliding_types() {
 #[test]
 fn merge_preview_sanitizes_untrusted_source_record_labels() {
     // A crafted SOURCE vault must not inject bidi/zero-width characters into the merge
-    // preview label the user authorizes (terminal/TUI/GUI spoofing). The label is cleaned
-    // at the source in plan_collection, so neither the CLI nor the TUI renderer is spoofable.
+    // preview label the user authorizes (terminal/GUI spoofing). The label is cleaned
+    // at the source in plan_collection, so neither the CLI nor the GUI renderer is spoofable.
     let s_path = tmp_path("merge-spoof-src");
     let mut s = OpenVault::create(s_path.clone(), b"s1", b"s2", fast()).unwrap();
     let mut a = acct_with("spoof", "alice", "pw", 100);

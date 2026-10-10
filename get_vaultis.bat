@@ -309,7 +309,7 @@ echo "  Open it from Launchpad, Spotlight, or the Applications folder."
 echo "  It opens read-only; tick \"Open for editing\" on the lock screen to"
 echo "  make changes."
 echo
-echo "  The terminal version (vaultis --tui, and the command line):"
+echo "  The command-line tools:"
 echo "    \"$APP/Contents/MacOS/vaultis\""
 echo
 echo "  Run this file again any time to update, or pass a tag to install a"

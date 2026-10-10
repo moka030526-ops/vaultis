@@ -14,7 +14,7 @@
 #
 #   vaultis.app/Contents/Info.plist
 #   vaultis.app/Contents/MacOS/vaultis-gui          the app (CFBundleExecutable)
-#   vaultis.app/Contents/MacOS/vaultis              the console binary: CLI and --tui
+#   vaultis.app/Contents/MacOS/vaultis              the console binary: the CLI
 #   vaultis.app/Contents/Resources/vaultis.icns
 #   vaultis.app/Contents/Resources/sample-vault/    copied out on first use, never opened
 #                                                   in place (see launch::sample_vault_dir)

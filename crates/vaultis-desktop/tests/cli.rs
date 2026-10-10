@@ -30,7 +30,6 @@ fn help_lists_every_subcommand_and_exits_zero() {
         "compact",
         "migrate-doc-paths",
         "--write",
-        "--tui",
     ] {
         assert!(stdout.contains(sub), "help should mention `{sub}`");
     }
@@ -40,6 +39,43 @@ fn help_lists_every_subcommand_and_exits_zero() {
         stdout.starts_with(concat!("vaultis ", env!("CARGO_PKG_VERSION"), " —")),
         "help's first line should be the version line; got: {stdout}"
     );
+}
+
+/// The terminal UI was removed. Its old flag must fail loudly with a pointer to the GUI
+/// and the subcommands — not silently open a window (useless over SSH, where the TUI was
+/// used) and not be taken as a vault directory name — wherever it appears on the line.
+#[test]
+fn the_removed_tui_flag_is_refused_with_a_pointer_to_its_replacement() {
+    for args in [&["--tui"][..], &["--tui", "/some/dir"], &["/some/dir", "--write", "--tui"], &["decrypt", "--tui"]] {
+        let out = Command::new(bin()).args(args).output().expect("run --tui");
+        assert!(!out.status.success(), "{args:?} must exit non-zero");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("terminal UI (--tui) has been removed"), "{args:?}: {stderr}");
+    }
+    // ...and the help no longer advertises it.
+    let help = Command::new(bin()).arg("--help").output().expect("run --help");
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("--tui"), "help must not offer --tui");
+}
+
+/// The windowed binary refuses `--tui` the same way, so `vaultis DIR --tui` and
+/// `vaultis-gui DIR --tui` cannot diverge (one erroring, the other opening a window).
+#[cfg(feature = "gui")]
+#[test]
+fn the_windowed_binary_refuses_the_removed_tui_flag_too() {
+    let out = Command::new(env!("CARGO_BIN_EXE_vaultis-gui")).args(["/some/dir", "--tui"]).output().expect("run gui");
+    assert!(!out.status.success(), "vaultis-gui --tui must exit non-zero");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("terminal UI (--tui) has been removed"));
+}
+
+/// A build without the `gui` feature has no interactive UI at all (the terminal UI that
+/// used to fill that role was removed), so a bare interactive launch must fail with an
+/// explanation instead of doing nothing or prompting for passwords.
+#[cfg(not(feature = "gui"))]
+#[test]
+fn a_cli_only_build_refuses_an_interactive_launch() {
+    let out = Command::new(bin()).arg("/some/dir").output().expect("run interactive");
+    assert!(!out.status.success(), "an interactive launch must exit non-zero");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no interactive UI"));
 }
 
 #[test]

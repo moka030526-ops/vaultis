@@ -37,7 +37,6 @@ use crate::password::{self, GenOptions};
 use crate::records::{
     self, Account, AssetLiability, GeneralDocument, Instruction, RealEstate, Record, TaxFiling, TrustWill, Urgent,
 };
-use crate::ui::format_time;
 use crate::vault::{self, CategoryRemoval, OpenVault, VaultError};
 
 // The window is split by screen and tab. Each submodule adds its own `impl GuiApp` block
@@ -561,8 +560,8 @@ impl GuiApp {
         // deadline has been scheduled. `&egui::Context` is a shared borrow.
         if let Some(deadline) = self.clipboard_clear_at {
             let now = Instant::now();
-            // The deadline/status-preservation rules live in a pure, unit-tested helper
-            // shared with the TUI; `Some` means "wipe now", `None` means "not yet".
+            // The deadline/status-preservation rules live in a pure, unit-tested helper;
+            // `Some` means "wipe now", `None` means "not yet".
             match crate::clipboard_tick_decision(Some(deadline), now, &self.status) {
                 Some(status_change) => {
                     clear_clipboard();

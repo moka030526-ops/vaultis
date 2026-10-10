@@ -432,7 +432,6 @@ rem It is best effort - a missing script, no icons, a locked Desktop - because n
 rem that means the build failed. Warn, then print the summary anyway.
 :shortcuts
 set "GUI_BIN=%REPO_ROOT%\target\%PROFILE%\vaultis-gui.exe"
-set "CLI_BIN=%REPO_ROOT%\target\%PROFILE%\vaultis.exe"
 set "SHORTCUT_PS1=%REPO_ROOT%\packaging\windows\make-shortcuts.ps1"
 set "SHORTCUT_NOTE=  Desktop shortcuts: not installed - packaging\windows\make-shortcuts.ps1"
 if "%SHORTCUTS%"=="0" goto summary
@@ -466,8 +465,6 @@ echo   Password 2:  %SAMPLE_PW2%
 echo.
 echo   Open it - graphical, editable:
 echo     "%GUI_BIN%" "%SAMPLE_DIR%" --write
-echo   Open it - terminal:
-echo     "%CLI_BIN%" --tui "%SAMPLE_DIR%" --write
 echo.
 echo %SHORTCUT_NOTE%
 echo.

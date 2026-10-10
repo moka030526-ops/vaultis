@@ -2,6 +2,11 @@
 
 _Last updated: 2026-06-15. Format version 4 (partitioned document store)._
 
+> **2026-10-10 — the terminal UI (`vaultis --tui`, `ui.rs`) has been removed.** The
+> graphical app is now the only interactive interface; the console `vaultis` binary keeps
+> every CLI subcommand. Passages below that describe the TUI are kept for history until
+> this document's next full revision, and no longer describe shipped behavior.
+
 ## 1. Purpose
 
 `vaultis` is a **standalone, offline, two-password encrypted estate vault**. It

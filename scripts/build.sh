@@ -287,7 +287,6 @@ else
 fi
 
 gui_bin="$repo_root/target/$profile/vaultis-gui"
-cli_bin="$repo_root/target/$profile/vaultis"
 
 # --- Desktop shortcuts ---------------------------------------------------------
 #
@@ -331,8 +330,6 @@ cat <<EOF
 
   Open it (graphical, editable):
     "$gui_bin" "$sample_dir" --write
-  Open it (terminal):
-    "$cli_bin" --tui "$sample_dir" --write
 
 $shortcut_note
 

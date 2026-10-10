@@ -110,7 +110,7 @@ impl OwnerValueRow {
 /// Build the owner × (Asset buckets / Liability buckets) summary from an asset/liability
 /// iterator. Rows are sorted by owner (case-insensitive); a blank owner groups under
 /// "(no owner)". An unparseable `approx_value` contributes 0 (the save-time validation keeps
-/// real entries numeric). Used by the GUI + TUI Summary tabs.
+/// real entries numeric). Used by the GUI's Summary tab.
 pub fn owner_value_summary<'a>(items: impl IntoIterator<Item = &'a AssetLiability>) -> Vec<OwnerValueRow> {
     let mut map: std::collections::BTreeMap<String, OwnerValueRow> = std::collections::BTreeMap::new();
     for a in items {

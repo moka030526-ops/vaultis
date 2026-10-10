@@ -98,8 +98,21 @@ fn resolve_interactive_rejects_extra_positionals() {
     // first with the rest ignored. Flags don't count toward the positional total.
     assert!(resolve_interactive(&["/a".into(), "/b".into()]).is_err());
     assert!(resolve_interactive(&["/a".into(), "--write".into(), "/b".into()]).is_err());
-    // Exactly one positional (with any flags) is still fine.
-    assert!(resolve_interactive(&["/a".into(), "--write".into(), "--tui".into()]).is_ok());
+    // Exactly one positional (with the flag) is still fine.
+    assert!(resolve_interactive(&["/a".into(), "--write".into()]).is_ok());
+}
+
+#[test]
+fn resolve_interactive_refuses_the_removed_tui_flag() {
+    // The terminal UI is gone; `--tui` is an error with a pointer to its replacement, in
+    // the windowed binary exactly as in the console one.
+    for args in [vec!["--tui"], vec!["/a", "--tui"], vec!["--tui", "--write", "/a"]] {
+        let args: Vec<String> = args.into_iter().map(String::from).collect();
+        match resolve_interactive(&args) {
+            Err(e) => assert_eq!(e, TUI_REMOVED),
+            Ok(_) => panic!("{args:?} must be refused"),
+        }
+    }
 }
 
 #[test]

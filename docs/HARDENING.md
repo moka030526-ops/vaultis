@@ -4,6 +4,9 @@ _Adversarial security review, mutation testing, fuzzing, and supply-chain audit 
 the estate-vault codebase (workspace: `vaultis-core`, `vaultis-desktop`,
 `vaultis-ffi`, and the Compose Multiplatform `mobile/` viewer)._
 
+> **2026-10-10 — the terminal UI (`vaultis --tui`, `ui.rs`) has since been removed.**
+> TUI findings below are the historical record of what was found and fixed at the time.
+
 > **Scope and honesty.** This report describes the assurance work performed and the
 > defects it found and fixed. It is **not** a proof that the code is bug-free — no
 > such proof exists for software of this size. What it does establish is that several

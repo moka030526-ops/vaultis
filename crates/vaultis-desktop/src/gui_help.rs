@@ -123,13 +123,12 @@ pub(crate) const TOPICS: &[Topic] = &[
                  each with its own two passwords. See “Opening or creating a vault” for exactly \
                  how that works and what to click.",
             ),
-            Block::Sub("Three ways to open the same vault"),
+            Block::Sub("Two ways to open the same vault"),
             Block::P(
                 "This window is the point-and-click version (vaultis-gui), used for everyday \
-                 viewing and editing. The same vault can also be opened with a text-based, \
-                 keyboard-driven interface (vaultis --tui), and there are separate command-line \
-                 tools for bulk jobs like backups and exports. Most people only ever need this \
-                 window; the others are covered in “Command line” under Reference.",
+                 viewing and editing. There are also separate command-line tools for bulk jobs \
+                 like backups and exports. Most people only ever need this window; the \
+                 command-line tools are covered in “Command line” under Reference.",
             ),
         ],
     },
@@ -1116,9 +1115,6 @@ pub(crate) const TOPICS: &[Topic] = &[
                 "This manual's own search box, in the top-right corner of the Help screen, matches \
                  topic titles and article text the same way, and also requires every word you \
                  type to be found.",
-                "The keyboard-driven terminal interface has the same account search: press / to \
-                 type a query, Enter to keep it, Esc to clear it. It shows up in the header there \
-                 as find~\"…\".",
             ]),
         ],
     },
@@ -1557,12 +1553,6 @@ pub(crate) const TOPICS: &[Topic] = &[
                 ("Hover over a button", "Shows a small tooltip explaining exactly what that button does."),
                 ("Hover over the vault name", "Shows the full folder path of the vault that is currently open."),
             ]),
-            Block::Note(
-                "This graphical window is built mouse-first, on purpose. The separate terminal \
-                 interface (`vaultis --tui`) is the keyboard-driven one instead: there, the number \
-                 keys 1–9 jump between tabs, n and d create and delete a record, g toggles grouped \
-                 view, r reveals passwords, / starts a search, and Ctrl+S saves.",
-            ),
         ],
     },
     Topic {
@@ -1580,7 +1570,6 @@ pub(crate) const TOPICS: &[Topic] = &[
             Block::Rows(&[
                 ("vaultis [DIR]", "Launches this same graphical app, in read-only mode."),
                 ("vaultis --write [DIR]", "Launches it able to make changes instead."),
-                ("vaultis --tui [DIR]", "Launches the keyboard-driven terminal interface instead of this window."),
                 ("vaultis decrypt [DIR]", "Prints the ENTIRE decrypted vault as JSON text — every secret, in plain readable text."),
                 ("vaultis manifest [DIR]", "Prints the decrypted index of your uploaded documents."),
                 ("vaultis extract [DIR] OUT", "Decrypts every single stored document out into the folder OUT."),

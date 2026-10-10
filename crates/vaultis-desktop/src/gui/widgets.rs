@@ -242,8 +242,7 @@ pub(super) fn tab_button(ui: &mut egui::Ui, current: &mut Tab, tab: Tab, label: 
 // `kind` ("acct" / "asset") prefixes the header id_salt so the Accounts and Assets trees get
 // DISTINCT persistent collapse state for a same-named group (e.g. owner "Bob" in both). egui's
 // ScrollArea id_salt namespaces only the scroll offset, not child widget ids, so without this
-// the two trees would share expand/collapse state (the TUI keeps separate expand-sets for the
-// same reason).
+// the two trees would share expand/collapse state.
 pub(super) fn render_acct_node(
     ui: &mut egui::Ui,
     node: &records::AcctNode,
@@ -787,6 +786,19 @@ pub(super) fn history_view(ui: &mut egui::Ui, history: &[records::Change]) {
             }
         });
     });
+}
+
+/// Format a unix-seconds timestamp as `YYYY-MM-DD HH:MM:SS UTC` (no date crate).
+/// Returns "never" for a zero/negative timestamp. The calendar math lives once in
+/// [`crate::records::civil_from_unix`].
+pub(super) fn format_time(ts: i64) -> String {
+    if ts <= 0 {
+        return "never".to_string();
+    }
+    // Destructure the six returned date/time components into named bindings.
+    let (year, mo, d, h, m, s) = records::civil_from_unix(ts);
+    // `{year:04}` etc. are format specs: zero-pad to the given width (4 or 2).
+    format!("{year:04}-{mo:02}-{d:02} {h:02}:{m:02}:{s:02} UTC")
 }
 
 /// A single-line text field for a SECRET (a password), hardening egui's stock

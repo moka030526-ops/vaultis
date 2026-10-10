@@ -109,7 +109,7 @@ impl GuiApp {
                     None => return,
                 };
                 // Capture any document this record already had, so re-attaching
-                // reclaims the replaced blob instead of orphaning it (matches TUI).
+                // reclaims the replaced blob instead of orphaning it.
                 let previous = match target {
                     DocTarget::TrustWill => self.edit_trustwill.as_ref().and_then(|r| r.file.clone()),
                     DocTarget::Asset => self.edit_asset.as_ref().and_then(|r| r.statement.clone()),

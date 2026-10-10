@@ -3143,3 +3143,34 @@ fn zakat_values_stay_selectable_in_a_read_only_session() {
     assert_eq!(h.query_all_by_label("🗑").count(), 0);
     cleanup(&path);
 }
+
+// Moved from the removed terminal UI's tests: these helpers are now the GUI's alone.
+#[test]
+fn formats_timestamps() {
+    assert_eq!(format_time(0), "never");
+    assert_eq!(format_time(-5), "never");
+    assert_eq!(format_time(1_609_459_200), "2021-01-01 00:00:00 UTC");
+    assert_eq!(format_time(1_609_459_201), "2021-01-01 00:00:01 UTC");
+}
+
+#[test]
+fn presize_secret_keeps_headroom_and_content() {
+    // Audit L3: a secret String must always carry >= 128 bytes of spare capacity so the
+    // next per-keystroke push can't reallocate (a realloc frees the old buffer WITHOUT
+    // zeroizing, stranding cleartext password fragments in freed heap).
+    let mut s = String::from("hunter2");
+    presize_secret(&mut s);
+    assert!(s.capacity() >= s.len() + 128, "headroom reserved");
+    assert_eq!(s, "hunter2", "content preserved by presize");
+    // Simulate per-keystroke typing well past the initial headroom: the invariant must
+    // hold before every push, and the content must stay exactly what was typed.
+    let mut expected = String::from("hunter2");
+    for i in 0..400 {
+        presize_secret(&mut s);
+        assert!(s.capacity() >= s.len() + 128, "headroom holds before push #{i}");
+        let c = (b'a' + (i % 26) as u8) as char;
+        s.push(c);
+        expected.push(c);
+    }
+    assert_eq!(s, expected, "content intact across managed growth");
+}

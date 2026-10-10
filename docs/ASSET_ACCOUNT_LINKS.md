@@ -2,6 +2,11 @@
 
 _Status: implemented. Added 2026-07-03. Schema stays at format version 4._
 
+> **2026-10-10 — the terminal UI (`vaultis --tui`, `ui.rs`) has been removed.** The
+> graphical app is now the only interactive interface; the console `vaultis` binary keeps
+> every CLI subcommand. Passages below that describe the TUI are kept for history until
+> this document's next full revision, and no longer describe shipped behavior.
+
 ## 1. Problem
 
 Assets and liabilities usually have online accounts behind them — the brokerage

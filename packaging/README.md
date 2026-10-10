@@ -169,8 +169,8 @@ open target/vaultis.app
 That builds for the Mac you are on. The release (`.github/workflows/release.yml`)
 builds both architectures and joins them with `lipo` into one universal app first.
 
-- `Contents/MacOS/vaultis-gui` is the app; `Contents/MacOS/vaultis` is the terminal
-  version (`--tui`, the CLI).
+- `Contents/MacOS/vaultis-gui` is the app; `Contents/MacOS/vaultis` is the
+  command-line version.
 - `Contents/Resources/sample-vault` is the practice vault. The app never opens it in
   place (the bundle is read-only and signed): it copies it to
   `~/Library/Application Support/dev.vaultis.vaultis/sample-vault` and replaces that

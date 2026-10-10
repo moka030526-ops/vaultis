@@ -673,7 +673,7 @@ fn summary<R: Record>(r: &R) -> RecordSummary {
 
 /// Format a unix-seconds timestamp as `YYYY-MM-DD HH:MM:SS UTC`, or `"never"` for a
 /// zero/negative stamp. Byte-for-byte the desktop's `format_time` (vaultis-desktop
-/// `ui.rs`), including the shared `civil_from_unix` calendar math, so the "last
+/// `gui/widgets.rs`), including the shared `civil_from_unix` calendar math, so the "last
 /// opened" line the mobile host shows is identical to the desktop's.
 fn format_time(ts: i64) -> String {
     if ts <= 0 {

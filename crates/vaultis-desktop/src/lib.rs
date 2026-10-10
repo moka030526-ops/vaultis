@@ -1,11 +1,11 @@
-//! vaultis (desktop) — the command-line, terminal (ratatui) and graphical
-//! (egui) front-ends for the offline, two-password encrypted **estate vault**.
+//! vaultis (desktop) — the command-line and graphical (egui) front-ends for the
+//! offline, two-password encrypted **estate vault**.
 //!
 //! All of the vault logic — data model, file format, crypto, and the
 //! [`vault::OpenVault`] API — lives in the headless [`vaultis_core`] crate.
 //! This crate is the desktop *shell* on top of it: the two binaries
 //! (`vaultis`, the console build, and `vaultis-gui`, the Windows
-//! GUI-subsystem build) plus the interchangeable [`gui`] and [`ui`] front-ends.
+//! GUI-subsystem build) plus the graphical front-end, `gui` (behind the `gui` feature).
 //!
 //! The core modules are re-exported here so the binaries' `vaultis::<mod>`
 //! import paths and the front-ends' in-crate `crate::<mod>` paths keep
@@ -20,29 +20,37 @@
 pub use vaultis_core::{crypto, csv, fault, merge, password, records, storage, types, vault};
 
 #[cfg(feature = "gui")]
-pub mod gui; // graphical front-end (drives the same vault API as `ui`); behind `gui`
+pub mod gui; // graphical front-end; behind `gui`
 #[cfg(feature = "gui")]
 pub mod gui_help; // the GUI's built-in manual (content + the help browser); behind `gui`
 pub mod launch; // vault-path/flag resolution shared by the console + windowed binaries
 #[cfg(feature = "gui")]
 pub mod single_instance; // GUI single-instance guard (raises the egui window); behind `gui`
-pub mod ui; // text/terminal front-end (interchangeable with `gui`)
 
 // Shared plumbing, split by concern. The modules are private and their items are
 // re-exported at the crate root at their original visibility, so the
 // `crate::read_prefs_obj` / `vaultis::dest_inside` style paths used across the
 // front-ends, binaries and tests resolve unchanged.
+//
+// `clipboard`, `prefs` and `fmt_money` serve only the GUI (they were shared with the
+// terminal UI until it was removed). They stay compiled in a `--no-default-features`
+// (CLI-only) build so their tests keep running there too, with the dead-code lint
+// relaxed for that build alone; the linker drops the unused code from the binary.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod clipboard; // secret/plain clipboard copies + the auto-clear rule
 mod export_dir; // export-directory validation + "inside the vault?" check
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod prefs; // the per-root prefs.json file and its typed preferences
 
+#[cfg_attr(not(feature = "gui"), allow(unused_imports))]
 pub(crate) use clipboard::*;
 pub use export_dir::*;
 pub(crate) use prefs::*;
 
-/// Format a Summary-tab amount as a grouped, whole-unit currency string, shared by the GUI
-/// and TUI so both render identically: `1_234_567.8 -> "$1,234,568"`, `-2500.0 -> "-$2,500"`,
+/// Format a Summary-tab amount as a grouped, whole-unit currency string for the GUI:
+/// `1_234_567.8 -> "$1,234,568"`, `-2500.0 -> "-$2,500"`,
 /// `0.0 -> "$0"`. The summary is an approximation, so cents are rounded away for legibility.
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub(crate) fn fmt_money(v: f64) -> String {
     // A non-finite total can reach here even though `parse_approx_value` rejects a non-finite
     // FIELD: the Summary sums many finite values, and two near-`f64::MAX` entries add to +inf.

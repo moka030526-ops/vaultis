@@ -182,7 +182,7 @@ impl OpenVault {
                         change: sel.change,
                         id: s.id().to_string(),
                         // Sanitize the UNTRUSTED source label for display: this string is
-                        // rendered into the CLI/TUI merge preview the user authorizes, so a
+                        // rendered into the CLI/GUI merge preview the user authorizes, so a
                         // crafted source vault must not inject terminal escapes or bidi/zero-
                         // width characters that spoof which records are being merged in.
                         label: records::display_safe(&s.label()),

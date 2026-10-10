@@ -213,7 +213,7 @@ fn checked_export_dir_refuses_unset_and_anything_inside_the_vault_folder() {
     // A per-tab CSV holds every account and portal password in the CLEAR, and a document
     // export is the decrypted file. Either one written INSIDE the vault folder is swept
     // into the user's next backup or folder sync of that vault. The CLI has refused this
-    // since the extract/export-tree guards; this is the shared check the GUI and TUI use.
+    // since the extract/export-tree guards; this is the check the GUI uses.
     let dir = tmp_prefs_dir();
     let vault_dir = dir.join("myvault");
     std::fs::create_dir_all(&vault_dir).unwrap();

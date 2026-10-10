@@ -633,8 +633,7 @@ impl GuiApp {
 // into the caller's field.
 /// Validate a to-be-saved account, returning the user-facing error for the first
 /// missing mandatory field (title, then owner) or `None` when it may be saved. The
-/// GUI save path and its tests share this so the rule lives in exactly one place
-/// (the TUI enforces the same rule on its `fields[0]`/`fields[3]`).
+/// GUI save path and its tests share this so the rule lives in exactly one place.
 pub(super) fn account_required_field_error(a: &Account) -> Option<&'static str> {
     if a.title.trim().is_empty() {
         Some("Title is required — every account must have a title.")

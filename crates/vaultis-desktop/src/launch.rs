@@ -1,7 +1,7 @@
 //! Launch helpers shared by the two binaries.
 //!
 //! The project ships two executables that resolve the vault location identically:
-//! the console `vaultis` (CLI subcommands + the `--tui` terminal UI) and the
+//! the console `vaultis` (CLI subcommands) and the
 //! windowed `vaultis-gui` (the graphical UI built as a Windows **GUI-subsystem**
 //! app, so it opens *without* a command window). Keeping the path/flag logic here —
 //! instead of duplicated in each binary — guarantees `vaultis DIR` and
@@ -463,8 +463,8 @@ USAGE:
 DIR is the vault DIRECTORY (it holds vault.pmv, manifest/, and volume/); the per-user
 default is used if it is omitted. This windowed binary understands only an interactive
 launch. The CLI subcommands (decrypt, manifest, extract, backup, export-tree,
-import-tree, update-from, compact) and the terminal UI live in the console binary —
-run `vaultis --help` for those."
+import-tree, update-from, compact) live in the console binary — run `vaultis --help`
+for those."
 );
 
 /// What a windowed-binary command line asked for.
@@ -480,6 +480,10 @@ pub enum Interactive {
     /// `--help` / `-h`.
     Help,
 }
+
+/// The error both binaries give for the removed `--tui` flag.
+pub const TUI_REMOVED: &str = "the terminal UI (--tui) has been removed; run `vaultis-gui [DIR]` (or `vaultis [DIR]`) \
+     for the graphical app, or use a subcommand (run `vaultis --help`).";
 
 /// Resolve an interactive launch from the process arguments (everything *after*
 /// the program name).
@@ -501,15 +505,20 @@ pub fn resolve_interactive(args: &[String]) -> Result<Interactive, String> {
     if args.iter().any(|a| a == "--version" || a == "-V") {
         return Ok(Interactive::Version);
     }
+    // The terminal UI was removed; refuse its old flag in both binaries alike (see
+    // `TUI_REMOVED`) instead of silently ignoring it here while the console one errors.
+    if args.iter().any(|a| a == "--tui") {
+        return Err(TUI_REMOVED.to_string());
+    }
     let writable = args.iter().any(|a| a == "--write");
     // Treat ONLY the exact known flags as flags — NOT any '-'-prefixed token. A blanket
     // `starts_with('-')` filter silently ignored a vault directory whose name begins with
     // '-' (falling back to the default vault) while the console binary, which strips only the
-    // exact `--write`/`--tui` tokens, treated it as the directory — so `vaultis DIR` and
+    // exact `--write` token, treated it as the directory — so `vaultis DIR` and
     // `vaultis-gui DIR` could open DIFFERENT vaults. Matching the exact set keeps both
     // binaries' resolution identical (the module's stated guarantee). The help/version
     // tokens never reach here — they returned above, in both binaries.
-    let positionals: Vec<&String> = args.iter().filter(|a| !matches!(a.as_str(), "--write" | "--tui")).collect();
+    let positionals: Vec<&String> = args.iter().filter(|a| *a != "--write").collect();
     // At most ONE positional (the optional vault DIR). Reject extras instead of silently
     // opening the first and ignoring the rest — matching the console binary's arity checks.
     if positionals.len() > 1 {

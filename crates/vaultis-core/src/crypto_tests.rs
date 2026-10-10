@@ -106,7 +106,7 @@ fn dropping_chained_keys_leaves_no_page_locked() {
 
 #[test]
 fn default_params_pass_their_own_validator() {
-    // Invariant: the SHIPPED default must validate — the GUI/TUI/CLI always create
+    // Invariant: the SHIPPED default must validate — the GUI/CLI always create
     // and import with `KdfParams::default()`, so if the default fell outside the
     // bounds, every new vault would be rejected (BadParams). This also pins the
     // ceilings ABOVE the default (e.g. catches MAX_M_COST being mis-set below the

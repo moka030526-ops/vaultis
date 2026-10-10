@@ -231,8 +231,7 @@ impl GuiApp {
                 self.auth_error = Some("Wrong password(s) or corrupted/unreadable vault.".into());
                 // Wipe the entered passwords on failure too (not just on success), so
                 // they don't linger in memory after a failed attempt — the moment a
-                // user is most likely to step away. Mirrors the TUI, which rebuilds
-                // (and thus zeroizes) its AuthState on a failed unlock.
+                // user is most likely to step away.
                 self.wipe_passwords();
             }
             // `Err(e)` catches every other (password-independent) error variant.

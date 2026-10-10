@@ -1,7 +1,7 @@
 //! The per-root `prefs.json` file: bounded, symlink-refusing reads, atomic writes, and the
-//! typed load/save helpers for each preference shared by the front-ends.
+//! typed load/save helpers for each preference the GUI keeps.
 
-// --- Local, non-secret preferences (shared by the GUI and TUI) ---------------
+// --- Local, non-secret preferences (used by the GUI) -------------------------
 //
 // UI preferences live in ONE optional file, `prefs.json`, in the **vault root** — the
 // folder that holds your vault folders, not the encrypted vault itself. Nothing is ever
@@ -21,7 +21,7 @@
 // two passwords can edit it. Two settings are therefore deliberately not persisted
 // anywhere, so that write access can never become plaintext theft:
 //
-//   * `export_dir` — where the front-ends write CLEARTEXT exports: the per-tab CSV (every
+//   * `export_dir` — where the GUI writes CLEARTEXT exports: the per-tab CSV (every
 //     account and portal password in the clear) and every decrypted document. Persisting
 //     it here would let a tampered vault root silently redirect those secrets to a
 //     cloud-synced folder, a Windows UNC share, or back into the vault folder where the
@@ -39,8 +39,7 @@
 // executables turned it into a trap (see `launch::initial_root_and_name`). The vault NAME
 // within the root is never pre-selected — the user always picks it.
 //
-// Both front-ends share these helpers, and every write is a read-modify-write so one key
-// never clobbers another.
+// Every write is a read-modify-write so one key never clobbers another.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -123,7 +122,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    // A unique hidden temp beside the target, so two front-ends (or two callers) saving at
+    // A unique hidden temp beside the target, so two windows (or two callers) saving at
     // once never collide on the same temp name.
     let Ok(suffix) = crypto::random_bytes::<8>() else { return };
     let suffix: String = suffix.iter().map(|b| format!("{b:02x}")).collect();
@@ -176,7 +175,7 @@ pub(crate) fn effective_prefs_obj_from(path: &Path) -> serde_json::Map<String, s
 
 /// The export-destination directory for THIS SESSION ("" until the user sets one).
 ///
-/// Deliberately **not persisted anywhere**. This is where the front-ends write CLEARTEXT
+/// Deliberately **not persisted anywhere**. This is where the GUI writes CLEARTEXT
 /// exports — the per-tab CSV (every account and portal password in the clear) and every
 /// decrypted document. The only file the app writes is `<vault_root>/prefs.json`, which
 /// sits unencrypted beside the vault folders and is therefore authored by anyone who can
@@ -192,7 +191,7 @@ pub(crate) fn load_export_dir(_vault_root: &str) -> String {
 
 // --- View defaults: cosmetic, persisted in `<vault_root>/prefs.json` ---------
 //
-// Both front-ends read these at startup to seed per-tab view state. They only choose
+// The GUI reads these at startup to seed per-tab view state. They only choose
 // grouped-vs-flat list rendering, which carries no security meaning, so they are safe to
 // carry in a file that travels with the vault media.
 //

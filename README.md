@@ -231,9 +231,6 @@ typing and the list narrows to the matching accounts, scrolling the best match i
 view. Only accounts not already linked to that asset are offered, and the search is
 forgotten when the popup closes.
 
-The terminal version has the same account search: press <kbd>/</kbd> to type a query,
-<kbd>Enter</kbd> to keep it, <kbd>Esc</kbd> to clear it.
-
 ## Attaching a document (a will, a statement, a deed)
 
 You can store scanned documents (PDFs, images) **inside** the vault, encrypted
@@ -325,8 +322,7 @@ re-typing anything. It is **one-way and additive**: it brings in records that ar
 **newer** (or entirely new) in the other vault, along with the documents they reference,
 and it **never deletes** anything from your current vault.
 
-1. In **Edit mode**, open **Config** and click **“Update from another vault…”** (in the
-   terminal UI, press **Ctrl+U** on the Config screen).
+1. In **Edit mode**, open **Config** and click **“Update from another vault…”**.
 2. Enter the **other vault's folder** and its **two passwords**. (The other vault is only
    ever read — it is opened read-only.)
 3. You'll see a **preview**: exactly which records would change (new vs updated, with their
@@ -346,7 +342,7 @@ Notes:
 
 ## Changing your master passwords
 
-Use the **🔑 Passwords** button (Edit mode) — or `p` in the terminal UI — to set two
+Use the **🔑 Passwords** button (Edit mode) to set two
 new passwords. The program fully re-encrypts your vault under the new passwords.
 
 **Important — this does NOT change your old backups.** A backup is a separate copy,
@@ -532,7 +528,7 @@ Differences from Windows:
 
 - **No View/Edit shortcuts.** A Mac app opens one way, so the choice is the **Open for
   editing** tick box on the lock screen instead, off by default.
-- **The terminal version** (`--tui` and the CLI) is inside the app:
+- **The command-line tools** are inside the app:
   `/Applications/vaultis.app/Contents/MacOS/vaultis`.
 - **The sample vault** ships inside the app, which is read-only, so the first time
   you use it the app copies it to
@@ -576,7 +572,6 @@ don't have it, then build:
 ```bash
 cargo build --release
 ./target/release/vaultis-gui         # graphical window
-./target/release/vaultis --tui       # terminal version (works over SSH)
 ./target/release/vaultis decrypt …   # command-line tools (see "advanced" below)
 ```
 
@@ -611,7 +606,7 @@ leaves an existing sample vault untouched (so edits you made while exploring sur
 skips it entirely.
 
 The build produces **two programs**: `vaultis-gui` (the graphical app) and
-`vaultis` (the command-line/terminal version). On Linux/Mac they behave the same
+`vaultis` (the command-line version). On Linux/Mac they behave the same
 way; the split matters on Windows (next), where the GUI build avoids popping a
 console window.
 
@@ -621,9 +616,9 @@ someone just the binary and it runs **on a normal desktop of the same OS + CPU**
 (it borrows the system's own libraries — you don't ship any). For a build you can
 drop on *any* Linux box with nothing installed, see the next section.
 
-#### A single, fully self-contained Linux file (static, terminal-only)
+#### A single, fully self-contained Linux file (static, command-line only)
 
-The terminal/CLI program can be built as **one statically-linked file with zero
+The command-line program can be built as **one statically-linked file with zero
 external dependencies** — no shared libraries, no glibc, nothing to install — using
 the musl target with the GUI/clipboard features turned off:
 
@@ -636,11 +631,11 @@ cargo build --release -p vaultis --bin vaultis \
 ldd target/x86_64-unknown-linux-musl/release/vaultis       # => "statically linked"
 ```
 
-Copy that one file to any x86-64 Linux machine and run `vaultis --tui` (or the CLI
-subcommands) — it needs no libraries at all. The trade-offs of this minimal build:
-**no graphical window** (terminal UI only) and **no OS-clipboard copy** (the on-screen
-copy becomes a no-op — fine over SSH, where there's no clipboard anyway). The
-graphical app cannot be made fully static: it fundamentally needs the host's graphics
+Copy that one file to any x86-64 Linux machine and run the CLI subcommands
+(`vaultis decrypt`, `vaultis backup`, …) — it needs no libraries at all. The trade-off
+of this minimal build: it has **no interactive interface** — no graphical window and
+no OS-clipboard copy — only the subcommands. The graphical app cannot be made fully
+static: it fundamentally needs the host's graphics
 drivers, which can't be bundled into a portable file.
 
 If the build complains about missing system libraries, install the dev headers:
@@ -672,8 +667,7 @@ The build produces **two `.exe` files**:
   beside it. **This is the one to hand to a non-technical user** (along with the
   "Edit shortcut" steps in Part 1).
 - **`vaultis.exe`** — the *console* version, for the advanced command-line tools
-  (`decrypt`, `extract`, `compact`, …) and the `--tui` terminal UI, which need a
-  console to show their output.
+  (`decrypt`, `extract`, `compact`, …), which need a console to show their output.
 
 Each is a **single self-contained file** (the C runtime is linked statically via
 `.cargo/config.toml`). Copy them to any **Windows 10 or 11 (x64)** machine and they
@@ -717,7 +711,7 @@ sudo apt install mingw-w64                    # one-time: the cross-linker + dll
 RUSTFLAGS="-C target-feature=+crt-static" \
   cargo build --release --target x86_64-pc-windows-gnu
 # -> target/x86_64-pc-windows-gnu/release/vaultis-gui.exe  (graphical, no console)
-# -> target/x86_64-pc-windows-gnu/release/vaultis.exe      (command-line / --tui)
+# -> target/x86_64-pc-windows-gnu/release/vaultis.exe      (command-line)
 ```
 
 (Building **on Windows** with the default MSVC toolchain is simpler and already
@@ -728,7 +722,7 @@ Use the GNU cross-build only when you must produce a Windows `.exe` from Linux.)
 
 These are commands of the **console** `vaultis` build. For the graphical app, use
 **`vaultis-gui`** instead (same as `vaultis [DIR]`, but with no console window on
-Windows); the `--tui` terminal UI and the subcommands below need the console build.
+Windows); the subcommands below need the console build.
 
 `DIR` is the vault **directory** — the folder holding `vault.pmv`, `manifest/`, and
 `volume/` — not a file. Omit it to use the per-user default vault. `vaultis --help` is
@@ -737,7 +731,6 @@ the authoritative list; this is the summary.
 ```text
 vaultis [DIR]                Launch the graphical UI (READ-ONLY; or use vaultis-gui)
 vaultis --write [DIR]        Launch in edit mode (create / edit / delete / upload)
-vaultis --tui [DIR]          Launch the terminal UI instead (add --write to edit)
 vaultis decrypt [DIR]        Decrypt the vault and print its JSON to stdout
 vaultis manifest [DIR]       Decrypt and print the document index (add --part N for one)
 vaultis extract [DIR] OUT    Decrypt all stored documents into OUT
@@ -806,28 +799,6 @@ vaultis compact ./myvault --volume --dry-run             # just report what it w
   **`--backup DEST`** chooses where the pre-compaction backup goes (must be outside
   the vault folder); **`--no-backup`** skips it. Prompts for the two passwords.
 
-### Terminal (`--tui`) key bindings
-
-**Unlock / Create:** `Tab`/`↑/↓` move between the **Vault root** field, the **Vault**
-row, and the two passwords · type to edit the root, or to type/extend the vault name ·
-on the Vault row, `←/→` cycle through the vaults found one level under the root · `Enter`
-next/submit · `Esc` quit. The open target is `<root>/<vault>`; an existing one is
-**Unlock**, a new name is **Create** (needs `--write`).
-
-**Browse:** `←/→` or `1`–`8` switch tab · `↑/↓` select · `Enter` edit · `n` new ·
-`d` delete · `t`/`s`/`o`/`v` Account filters (type/subtype/owner/review) ·
-`c` Config · `p` change passwords · `q` quit.
-
-**Edit:** `Tab`/`↑`/`↓` move between fields · `←/→` cycle a dropdown · `Ctrl+S`
-save · `Ctrl+G` generate password · `Ctrl+R` reveal · `Ctrl+Y` copy (auto-clears
-after 15s and on exit) · `Ctrl+U` upload document · `Ctrl+E` export document (to the
-**Export directory** set in Config) · `Ctrl+K` detach document · `Esc` cancel.
-
-**Config (`c`):** `Tab`/`↑/↓` move between fields · type to edit · `Enter` apply
-(add a type/subtype, set the volume size or redundancy, run a backup, or set the
-**Export directory**) · `Del` delete the focused type/subtype (if unused) · `Esc`
-back. The **Export directory** and **backup** are usable even in read-only mode.
-
 ## How it works & security
 
 - **Two passwords** are combined with a chained **Argon2id** key derivation;
@@ -872,7 +843,7 @@ storage logic is reimplemented. The repo is a Cargo workspace:
 
 - `crates/vaultis-core` — the headless, audited vault (crypto + storage + records
   + `OpenVault`), reused by every front-end; `#![forbid(unsafe_code)]`.
-- `crates/vaultis-desktop` — the desktop CLI/TUI/GUI binaries (`vaultis`,
+- `crates/vaultis-desktop` — the desktop CLI/GUI binaries (`vaultis`,
   `vaultis-gui`) — unchanged behaviour.
 - `crates/vaultis-ffi` — a thin [UniFFI](https://mozilla.github.io/uniffi-rs/)
   wrapper the mobile apps call through ([Gobley](https://gobley.dev) generates the
