@@ -12,6 +12,19 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-10-10
+
+A documentation release. The app, vault files, the crypto and the key-derivation paths are
+unchanged from 0.6.1, and the release is compatible both ways with it.
+
+### Changed
+
+- **The design documents no longer describe the removed terminal UI.** `DESIGN.md`,
+  `IMPLEMENTATION.md`, `ASSET_ACCOUNT_LINKS.md` and `SELF_CONTAINED_BACKUP.md` now
+  describe the graphical app and the command-line tools that ship. `IMPLEMENTATION.md`'s
+  module map is updated for the module split, and its `prefs.json` passage is corrected:
+  the file lives in the vault root, not an OS config folder.
+
 ## [0.6.1] — 2026-10-10
 
 A maintenance release. The app, vault files, the crypto and the key-derivation paths are
