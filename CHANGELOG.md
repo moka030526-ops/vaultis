@@ -12,6 +12,15 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-10
+
+A safety release for every future update. Before a new version first changes a vault, it
+now saves a complete, verified copy of the vault as the previous version left it, and it
+refuses to edit a vault if that copy can't be made. Vault files stay on format v4 and the
+crypto and key-derivation paths are unchanged. 0.5.0 opens vaults written by this version,
+and this version opens 0.5.0's, which it copies aside before its first change. Audited in
+`docs/AUDIT_2026-10-10_round2.md`.
+
 ### Added
 
 - **A safety copy before a new version first changes a vault.** Each vault now records
