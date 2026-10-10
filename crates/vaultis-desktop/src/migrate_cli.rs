@@ -79,6 +79,7 @@ pub fn run(pos: &[String], f: &CompactFlags) -> anyhow::Result<()> {
     }
 
     let mut v = OpenVault::open(path.clone(), pw1.as_bytes(), pw2.as_bytes())?;
+    crate::note_safety_copy(&v);
     let report = v.migrate_v2_throwaway(true)?;
     if report.changed == 0 {
         eprintln!("Document paths already migrated.");

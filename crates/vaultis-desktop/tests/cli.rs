@@ -267,3 +267,40 @@ fn compact_succeeds_with_an_explicit_backup_destination() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&dest);
 }
+
+/// A writable subcommand on a vault last saved by an older vaultis: the core copies it
+/// aside before the first write, and the CLI says so and where. The vault is nested in
+/// its own root so the copy lands in this test's folder.
+#[test]
+fn a_writable_subcommand_on_an_older_vault_reports_its_safety_copy() {
+    use vaultis::crypto::KdfParams;
+    use vaultis::vault::{OpenVault, SAFETY_DIR};
+
+    let root = std::env::temp_dir().join(format!(
+        "vaultis-cli-upgrade-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    let dir = root.join("household");
+    let path = dir.join("vault.pmv");
+    let mut v = OpenVault::create(path.clone(), b"p1", b"p2", KdfParams { m_cost: 256, t_cost: 1, p_cost: 1 }).unwrap();
+    let src = root.join("payload.bin");
+    std::fs::write(&src, vec![7u8; 32 * 1024]).unwrap();
+    let id = v.add_document("doc", "payload.bin", &src).unwrap();
+    v.remove_document(&id).unwrap(); // dead bytes, so compact has work to do
+    v.vault.written_by = Some("0.0.1".to_string()); // as an older release left it
+    v.save().unwrap();
+    drop(v);
+
+    let out = run_compact(&dir, &["--volume", "--no-backup"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "compact should succeed; stderr: {stderr}");
+    assert!(stderr.contains("safety copy was made before any change"), "stderr: {stderr}");
+    let copies: Vec<String> = std::fs::read_dir(root.join(SAFETY_DIR))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(copies.len(), 1, "{copies:?}");
+    assert!(copies[0].starts_with("household@v0.0.1@"), "{copies:?}");
+    assert!(stderr.contains(&root.join(SAFETY_DIR).display().to_string()), "names where: {stderr}");
+    let _ = std::fs::remove_dir_all(&root);
+}

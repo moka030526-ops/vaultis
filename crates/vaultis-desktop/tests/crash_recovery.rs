@@ -414,3 +414,68 @@ fn merge_redundant_force_kill_at_ring_rotate_recovers() {
     assert!(run_crashop(&dir, "verify_merge", None), "current recovers consistently");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// --- A crash DURING the pre-upgrade safety copy --------------------------------------
+//
+// The first writable open by a newer release copies the vault aside before writing. If
+// the process dies mid-copy — at either fault point inside it — the vault must be exactly
+// as the old release left it (not written, not stamped), no half-made folder may pass for
+// a safety copy, and the next writable open must make the copy again before it proceeds.
+
+fn older_vault_in_root(tag: &str) -> (PathBuf, PathBuf) {
+    use vaultis::crypto::KdfParams;
+    let root = tmp_dir(tag);
+    let dir = root.join("household");
+    let mut v = OpenVault::create(vault_pmv(&dir), b"a", b"b", KdfParams { m_cost: 256, t_cost: 1, p_cost: 1 }).unwrap();
+    v.vault.written_by = Some("0.0.1".to_string()); // as an older release left it
+    v.save().unwrap();
+    drop(v);
+    (root, dir)
+}
+
+/// (finished copies, staging leftovers) in the root's backups folder.
+fn copies_and_leftovers(root: &Path) -> (Vec<String>, Vec<String>) {
+    use vaultis::vault::{COMPLETE_MARKER, SAFETY_DIR};
+    let mut done = Vec::new();
+    let mut left = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(root.join(SAFETY_DIR)) {
+        for e in rd.map(Result::unwrap) {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                left.push(name);
+            } else {
+                assert!(e.path().join(COMPLETE_MARKER).is_file(), "{name} has a final name but no marker");
+                done.push(name);
+            }
+        }
+    }
+    (done, left)
+}
+
+#[test]
+fn a_crash_mid_safety_copy_never_lets_the_new_version_write_and_is_retried() {
+    for point in ["safety.copied", "safety.committing"] {
+        let (root, dir) = older_vault_in_root("safety-crash");
+        let before = std::fs::read(vault_pmv(&dir)).unwrap();
+
+        assert!(!run_crashop(&dir, "upgrade-open", Some(point)), "{point}: the child must die mid-copy");
+
+        // Nothing written, nothing stamped, nothing that passes for a copy.
+        assert_eq!(std::fs::read(vault_pmv(&dir)).unwrap(), before, "{point}: vault untouched");
+        let ro = OpenVault::open_read_only(vault_pmv(&dir), b"a", b"b").unwrap();
+        assert_eq!(ro.vault.written_by.as_deref(), Some("0.0.1"), "{point}: still unstamped");
+        drop(ro);
+        let (done, _left) = copies_and_leftovers(&root);
+        assert!(done.is_empty(), "{point}: a killed copy must not count as one: {done:?}");
+
+        // The next writable open has to make the copy — completely — before proceeding.
+        assert!(run_crashop(&dir, "upgrade-open", None), "{point}: the retry succeeds");
+        let (done, left) = copies_and_leftovers(&root);
+        assert_eq!(done.len(), 1, "{point}: exactly one finished copy: {done:?}");
+        assert!(done[0].starts_with("household@v0.0.1@"), "{done:?}");
+        assert!(left.is_empty(), "{point}: the crashed attempt's leftovers are cleared: {left:?}");
+        let copy = root.join(vaultis::vault::SAFETY_DIR).join(&done[0]).join("vault.pmv");
+        assert_eq!(std::fs::read(&copy).unwrap(), before, "{point}: the copy is the old release's vault");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

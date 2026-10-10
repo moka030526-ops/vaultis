@@ -3174,3 +3174,85 @@ fn presize_secret_keeps_headroom_and_content() {
     }
     assert_eq!(s, expected, "content intact across managed growth");
 }
+
+// --- Upgrade safety copies, as the GUI presents them -----------------------------------
+
+/// `<root>/<name>/vault.pmv`, created and then saved with `stamp` as its `written_by` — the
+/// state an older (or newer) release leaves behind. Setting the field and saving persists
+/// it as-is: only a writable OPEN stamps the running release.
+fn gui_vault_written_by(root: &Path, name: &str, stamp: Option<&str>) -> std::path::PathBuf {
+    let path = root.join(name).join("vault.pmv");
+    let mut v = OpenVault::create(path.clone(), b"a", b"b", fast()).unwrap();
+    v.vault.written_by = stamp.map(str::to_string);
+    v.save().unwrap();
+    path
+}
+
+fn unlock(path: &Path, writable: bool) -> GuiApp {
+    let mut app = GuiApp::new(path.to_path_buf(), writable);
+    app.pw1 = "a".into();
+    app.pw2 = "b".into();
+    app.submit_auth();
+    app
+}
+
+#[test]
+fn unlocking_an_older_vault_for_editing_says_a_safety_copy_was_made_and_where() {
+    let root = std::env::temp_dir().join(format!("vaultis-gui-upgrade-{}", nanos()));
+    let path = gui_vault_written_by(&root, "household", Some("0.0.1"));
+    let app = unlock(&path, true);
+    assert!(app.vault.is_some(), "it opens; error: {:?}", app.auth_error);
+    let backups = root.join(vault::SAFETY_DIR);
+    assert!(app.status.contains("safety copy"), "{}", app.status);
+    assert!(app.status.contains(&backups.display().to_string()), "names the folder: {}", app.status);
+    assert!(app.status.contains("not a substitute for Backup"), "and is honest about it: {}", app.status);
+    assert_eq!(std::fs::read_dir(&backups).unwrap().count(), 1);
+    drop(app);
+    // Read-only, and a vault this release already stamped, both say nothing of the kind.
+    let again = unlock(&path, true);
+    assert!(!again.status.contains("safety copy"), "{}", again.status);
+    drop(again);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_vault_from_a_newer_release_is_refused_for_editing_with_a_way_forward() {
+    let root = std::env::temp_dir().join(format!("vaultis-gui-newer-{}", nanos()));
+    let path = gui_vault_written_by(&root, "household", Some("999.0.0"));
+    let app = unlock(&path, true);
+    assert!(app.vault.is_none(), "must not open for editing");
+    let err = app.auth_error.clone().unwrap_or_default();
+    assert!(err.contains("999.0.0") && err.contains("read-only"), "explains and offers read-only: {err}");
+    drop(app);
+    let ro = unlock(&path, false);
+    assert!(ro.vault.is_some(), "read-only still opens; error: {:?}", ro.auth_error);
+    drop(ro);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn safety_copy_all_vaults_copies_every_vault_under_the_root_including_the_open_one() {
+    let root = std::env::temp_dir().join(format!("vaultis-gui-copyall-{}", nanos()));
+    let open_path = gui_vault_written_by(&root, "household", None);
+    gui_vault_written_by(&root, "parents", None);
+    gui_vault_written_by(&root, "trust", None);
+    // Writable: the open vault's lock is held by this session, so the handler must copy
+    // it through the open handle rather than deadlocking on its own lock.
+    let mut app = unlock(&open_path, true);
+    assert!(app.vault.is_some(), "{:?}", app.auth_error);
+    app.vault_root = root.display().to_string();
+    let before = std::fs::read_dir(root.join(vault::SAFETY_DIR)).map(|d| d.count()).unwrap_or(0);
+    app.safety_copy_all_vaults();
+    assert!(app.status.starts_with("Saved safety copies of 3 vault(s)"), "{}", app.status);
+    let names: Vec<String> = std::fs::read_dir(root.join(vault::SAFETY_DIR))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names.len(), before + 3, "{names:?}");
+    for name in ["household", "parents", "trust"] {
+        assert!(names.iter().any(|n| n.starts_with(&format!("{name}@manual@"))), "{name}: {names:?}");
+    }
+    drop(app);
+    std::fs::remove_dir_all(&root).ok();
+}

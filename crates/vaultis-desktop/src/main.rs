@@ -529,6 +529,18 @@ fn cli_manifest(path: PathBuf, part: Option<u32>) -> anyhow::Result<()> {
 
 /// Copy the whole encrypted vault tree into `dest_dir` as a timestamped,
 /// self-consistent set. No passwords needed (nothing is decrypted).
+/// Tell the user when a writable open made a pre-upgrade safety copy (the vault had last
+/// been saved by an older vaultis — see `vault/upgrade.rs`), and where it went.
+fn note_safety_copy(v: &OpenVault) {
+    if let Some(copy) = v.safety_copy() {
+        eprintln!(
+            "note: this vault was last saved by an older vaultis, so a safety copy was made before \
+             any change: {}\n      (same disk as the vault — not a substitute for `vaultis backup`)",
+            copy.parent().unwrap_or(copy).display()
+        );
+    }
+}
+
 fn cli_backup(path: PathBuf, dest_dir: PathBuf) -> anyhow::Result<()> {
     // Both paths passed by shared borrow; the library copies files and returns the
     // path it created (or an error, which `?` would propagate).
@@ -643,6 +655,7 @@ fn cli_compact(pos: &[String], f: &CompactFlags) -> anyhow::Result<()> {
     let pw1 = read_password("Password 1: ")?;
     let pw2 = read_password("Password 2: ")?;
     let mut v = OpenVault::open(path.clone(), pw1.as_bytes(), pw2.as_bytes())?;
+    note_safety_copy(&v);
 
     // Skip the backup + rewrite entirely when there is genuinely nothing to do.
     let pre = v.compact_dry_run(&opts);
@@ -968,6 +981,7 @@ fn cli_update_from(other_dir: PathBuf, current_path: PathBuf, dry_run: bool) -> 
     // Real run: open the target WRITABLE (single-writer lock + rolls forward any pending
     // rekey), show the patch, then apply + save atomically.
     let mut current = OpenVault::open(current_path.clone(), dpw1.as_bytes(), dpw2.as_bytes())?;
+    note_safety_copy(&current);
     let plan = current.plan_merge_from(&source)?;
     print_merge_plan(&plan, false);
     if plan.is_empty() {
@@ -1352,6 +1366,12 @@ fn crashop(pos: &[String]) -> anyhow::Result<()> {
         // crash point can abort recovery itself (testing idempotent re-recovery).
         "open" => {
             let _ = OpenVault::open(path, b"c", b"d")?;
+        }
+        // A writable open under a/b of a vault an older release last wrote: the core must
+        // finish its pre-upgrade safety copy before writing anything, so a crash point
+        // inside the copy (`safety.copied`, `safety.committing`) aborts it mid-backup.
+        "upgrade-open" => {
+            let _ = OpenVault::open(path, b"a", b"b")?;
         }
         // Recovery check (used by the dm-flakey power-loss harness): the vault must
         // open and the committed, record-referenced document (doc-one) must be intact.

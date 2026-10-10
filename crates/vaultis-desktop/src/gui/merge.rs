@@ -264,12 +264,3 @@ impl GuiApp {
         }
     }
 }
-
-/// True if two `vault.pmv` paths refer to the same vault on disk (canonicalized when both
-/// exist, else compared raw). Used to refuse "update from another vault" pointed at itself.
-fn same_vault_path(a: &Path, b: &Path) -> bool {
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(x), Ok(y)) => x == y,
-        _ => a == b,
-    }
-}

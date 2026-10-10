@@ -27,6 +27,8 @@ The full, per-finding security write-up for the hardening work below lives in
 - **A vault saved by a newer version opens read-only only**, so an older version can't
   overwrite what a newer one stored. (Versions before this one don't know to refuse;
   the safety copy covers them.)
+- **Config → Safety-copy all vaults now:** the same kind of copy for every vault under the
+  vault root, on demand, kept separately from the update copies.
 
 ## [0.5.0] — 2026-10-10
 

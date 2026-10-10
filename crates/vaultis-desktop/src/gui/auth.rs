@@ -183,6 +183,18 @@ impl GuiApp {
                         v.opened_generation()
                     )
                 };
+                // The first writable open by a newer release copies the vault aside before
+                // writing (see `vault/upgrade.rs`). Say so, and say where — and that it sits on
+                // the same disk, so it is a guard against a bad release, not a backup.
+                if let Some(copy) = v.safety_copy() {
+                    let folder = copy.parent().unwrap_or(copy);
+                    self.status = format!(
+                        "{} · This vault was last saved by an older version, so a safety copy was \
+                         made before any change: {} (same disk — not a substitute for Backup)",
+                        self.status,
+                        folder.display()
+                    );
+                }
                 // Start the new vault's UI from a clean slate — never inherit the previous
                 // session's edit buffers/filters/reveal (see reset_per_vault_ui_state). Done
                 // BEFORE installing the vault so nothing from vault A is ever rendered for B.

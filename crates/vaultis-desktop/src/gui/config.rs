@@ -44,6 +44,7 @@ impl GuiApp {
         let mut add_account = false;
         let mut add_subtype = false;
         let mut do_backup = false;
+        let mut do_safety_all = false;
         let mut set_export = false;
         let mut set_volume = false;
         let mut set_redundancy = false;
@@ -278,6 +279,29 @@ impl GuiApp {
                     do_backup = true;
                 }
             });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .button("Safety-copy all vaults now")
+                    .on_hover_text(
+                        "Copy every vault under the vault root, encrypted as it is, into a \
+                         vaultis-backups folder beside them.",
+                    )
+                    .clicked()
+                {
+                    do_safety_all = true;
+                }
+            });
+            ui.label(
+                egui::RichText::new(format!(
+                    "Safety copies go to vaultis-backups beside your vault folders: the same place a new \
+                     version copies a vault to before it first changes it. The newest \
+                     {} of each kind are kept per vault. They are on the same disk as the vaults — \
+                     use Backup above for a copy that survives the drive.",
+                    vault::KEEP_SAFETY_COPIES
+                ))
+                .weak(),
+            );
 
             if self.writable {
                 ui.add_space(16.0);
@@ -468,6 +492,9 @@ impl GuiApp {
                 }
             }
         }
+        if do_safety_all {
+            self.safety_copy_all_vaults();
+        }
         if set_volume {
             // `.parse::<u64>()` parses text into an unsigned 64-bit integer,
             // returning a `Result` (`Err` if the text is not a number).
@@ -537,4 +564,61 @@ fn config_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(8.0);
     ui.label(egui::RichText::new(text).strong().size(16.0).color(ui_accent(ui)));
     ui.add_space(4.0);
+}
+
+impl GuiApp {
+    /// "Safety-copy all vaults now": a `manual` safety copy (see `vault/upgrade.rs`) of every
+    /// vault under the vault root, plus the open one wherever it lives. The open vault goes
+    /// through its own handle, which already holds the single-writer lock a fresh copy would
+    /// otherwise try to take; a vault another session is writing reports as busy.
+    pub(super) fn safety_copy_all_vaults(&mut self) {
+        let scan = crate::launch::discover_vaults(&self.vault_root);
+        let mut targets: Vec<std::path::PathBuf> = scan
+            .vaults
+            .iter()
+            .map(|name| crate::launch::vault_file(&crate::launch::join_root_name(&self.vault_root, name)))
+            .collect();
+        if self.vault.is_some() && !targets.iter().any(|t| same_vault_path(t, &self.path)) {
+            targets.push(self.path.clone());
+        }
+        if targets.is_empty() {
+            self.refuse("No vaults found under the vault root to copy.");
+            return;
+        }
+        let mut saved: Vec<std::path::PathBuf> = Vec::new();
+        let mut failed: Vec<String> = Vec::new();
+        for target in &targets {
+            let result = match self.vault.as_ref() {
+                Some(ov) if same_vault_path(target, &self.path) => ov.manual_safety_copy(),
+                _ => vault::manual_safety_copy(target),
+            };
+            let name = target.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            match result {
+                Ok(copy) => saved.push(copy),
+                Err(VaultError::Locked) => failed.push(format!("{name} (open for editing elsewhere)")),
+                Err(e) => failed.push(format!("{name} ({e})")),
+            }
+        }
+        // Where the copies went: `<parent>/vaultis-backups`, one folder per distinct parent.
+        let mut folders: Vec<String> = saved
+            .iter()
+            .filter_map(|p| p.parent()?.parent().map(|f| f.display().to_string()))
+            .collect();
+        folders.sort();
+        folders.dedup();
+        if failed.is_empty() {
+            self.status = format!(
+                "Saved safety copies of {} vault(s) to {} (same disk — not a substitute for Backup).",
+                saved.len(),
+                folders.join(", ")
+            );
+        } else {
+            self.fail(format!(
+                "Saved safety copies of {} of {} vault(s); could not copy: {}",
+                saved.len(),
+                targets.len(),
+                failed.join("; ")
+            ));
+        }
+    }
 }
