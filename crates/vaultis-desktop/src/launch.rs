@@ -32,8 +32,8 @@ const VAULT_FILE: &str = "vault.pmv";
 /// The ONE file this app writes outside a vault root: a single line, in the per-user OS
 /// data directory, naming the last vault root a vault was successfully opened from.
 /// Everything else it remembers — theme, ui scale, font, list grouping — lives in
-/// `<vault_root>/prefs.json` and travels with the vault media instead (see the `lib.rs`
-/// prefs comment); this exception exists purely so the start page can find its way back
+/// `<vault_root>/prefs.json` and travels with the vault media instead (see the `prefs.rs`
+/// header comment); this exception exists purely so the start page can find its way back
 /// to where you last worked without a shortcut or a `cd` trick.
 fn last_root_file() -> Option<PathBuf> {
     ProjectDirs::from("dev", "vaultis", "vaultis").map(|d| d.data_dir().join("last_root.txt"))

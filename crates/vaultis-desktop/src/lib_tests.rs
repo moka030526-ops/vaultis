@@ -11,6 +11,7 @@
 //! — never part of a shipped binary.
 
 use super::*;
+use std::path::PathBuf;
 
 // Hermetic prefs round-trip via the path-parametrized helpers (never touches the
 // real `~/.config` prefs). Uses a nanosecond-tagged temp dir for isolation.

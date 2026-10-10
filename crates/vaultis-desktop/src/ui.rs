@@ -520,7 +520,7 @@ struct App {
     cfg_volume_size: String,
     cfg_backup_dest: String,
     cfg_redundancy: String,
-    // Export destination directory for THIS SESSION (never persisted — see lib.rs prefs).
+    // Export destination directory for THIS SESSION (never persisted — see prefs.rs).
     // Document Export writes here, recreating the in-vault folder structure; settable
     // in read-only mode since it is a local preference, not vault content.
     cfg_export_dir: String,
@@ -562,7 +562,7 @@ impl App {
         // Collapsed start page: the open target is `<root>/<name>`. Seed the root from the
         // launched path, else the last root a vault was successfully opened from (see
         // `launch::save_last_root`), else EMPTY. The working directory is deliberately NOT
-        // consulted — see `launch::initial_root_and_name`. See the prefs comment in `lib.rs`
+        // consulted — see `launch::initial_root_and_name`. See the prefs comment in `prefs.rs`
         // for why only that one pointer lives outside a vault root.
         let last_root = crate::launch::load_last_root();
         let (auth_root, auth_name) = crate::launch::initial_root_and_name(&path, last_root.as_deref());

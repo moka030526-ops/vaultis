@@ -26,7 +26,38 @@ use egui_kittest::Harness;
 /// one line in the allow-list below, whereas a missed rendered one costs a tofu box.
 #[test]
 fn every_glyph_in_the_gui_source_exists_in_the_bundled_fonts() {
-    const SOURCES: [&str; 2] = [include_str!("gui.rs"), include_str!("gui_help.rs")];
+    // `include_str!` needs literal paths, so every file of the `gui` module is listed by
+    // hand; the check below fails if a file is added to `src/gui/` but not here, so a new
+    // module cannot quietly escape the scan.
+    const SOURCES: &[(&str, &str)] = &[
+        ("gui.rs", include_str!("gui.rs")),
+        ("gui_help.rs", include_str!("gui_help.rs")),
+        ("gui/accounts.rs", include_str!("gui/accounts.rs")),
+        ("gui/appearance.rs", include_str!("gui/appearance.rs")),
+        ("gui/assets.rs", include_str!("gui/assets.rs")),
+        ("gui/auth.rs", include_str!("gui/auth.rs")),
+        ("gui/config.rs", include_str!("gui/config.rs")),
+        ("gui/documents.rs", include_str!("gui/documents.rs")),
+        ("gui/export.rs", include_str!("gui/export.rs")),
+        ("gui/merge.rs", include_str!("gui/merge.rs")),
+        ("gui/realestate.rs", include_str!("gui/realestate.rs")),
+        ("gui/summary.rs", include_str!("gui/summary.rs")),
+        ("gui/taxes.rs", include_str!("gui/taxes.rs")),
+        ("gui/text_tabs.rs", include_str!("gui/text_tabs.rs")),
+        ("gui/widgets.rs", include_str!("gui/widgets.rs")),
+        ("gui/zakat.rs", include_str!("gui/zakat.rs")),
+    ];
+    let gui_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gui");
+    for entry in std::fs::read_dir(&gui_dir).expect("read src/gui") {
+        let name = entry.expect("dir entry").file_name().into_string().expect("utf-8 file name");
+        if name.ends_with(".rs") {
+            let listed = format!("gui/{name}");
+            assert!(
+                SOURCES.iter().any(|(path, _)| *path == listed),
+                "{listed} is not in SOURCES, so its glyphs are not checked — add it"
+            );
+        }
+    }
 
     // Characters that appear only in prose/comments and are never drawn as UI
     // chrome. Listed explicitly so the exemption is a decision, not an accident;
@@ -35,7 +66,7 @@ fn every_glyph_in_the_gui_source_exists_in_the_bundled_fonts() {
 
     let mut chars: Vec<char> = SOURCES
         .iter()
-        .flat_map(|s| s.chars())
+        .flat_map(|(_, s)| s.chars())
         .filter(|c| !c.is_ascii() && !COMMENT_ONLY.contains(*c))
         .collect();
     chars.sort_unstable();

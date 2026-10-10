@@ -12,6 +12,21 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+### Changed
+
+- **Internal structure only, no behavior change:** the largest source files are split
+  into modules by screen and responsibility — the GUI (`gui/`), the vault
+  (`vault/`), the records model (`records/`), the document store (`storage/`), and the
+  desktop library's clipboard, preferences and export-directory code. Every moved item
+  is byte-for-byte the code it was.
+- The GUI glyph test now scans every GUI source file, and fails if a new one is added
+  without being scanned.
+
+### Fixed
+
+- Four doc comments that had become attached to the wrong function
+  (`checked_export_dir`, `write_vault_file`, `error_banner_is_stale`, `password_field`).
+
 ## [0.4.2] — 2026-10-07
 
 A test-only release. The app, vault files, the crypto and the key-derivation paths are
