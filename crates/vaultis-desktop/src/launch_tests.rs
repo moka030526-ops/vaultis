@@ -102,6 +102,20 @@ fn resolve_interactive_rejects_extra_positionals() {
     assert!(resolve_interactive(&["/a".into(), "--write".into()]).is_ok());
 }
 
+/// A-1 (audit 2026-10-10): the read-only gate's first decision. Mutating this function's
+/// comparison must fail a test — it is the ONLY place either binary decides writability.
+#[test]
+fn wants_write_is_true_only_for_the_exact_write_flag() {
+    let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+    assert!(!wants_write(&a(&[])), "no arguments = read-only");
+    assert!(!wants_write(&a(&["/some/dir"])), "a vault dir alone = read-only");
+    assert!(!wants_write(&a(&["decrypt", "/some/dir"])), "a subcommand alone = read-only");
+    assert!(!wants_write(&a(&["--writ", "--write=yes", "-w", "--WRITE"])), "near-misses = read-only");
+    assert!(wants_write(&a(&["--write"])));
+    assert!(wants_write(&a(&["/some/dir", "--write"])));
+    assert!(wants_write(&a(&["--write", "/some/dir"])));
+}
+
 #[test]
 fn resolve_interactive_refuses_the_removed_tui_flag() {
     // The terminal UI is gone; `--tui` is an error with a pointer to its replacement, in

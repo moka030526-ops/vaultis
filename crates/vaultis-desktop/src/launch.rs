@@ -481,6 +481,14 @@ pub enum Interactive {
     Help,
 }
 
+/// Whether the command line asks for a WRITABLE session (`--write`). The read-only gate
+/// starts here: both binaries decide writability through this one function, so the rule
+/// is defined — and tested — once (audit 2026-10-10, A-1: the console binary used to
+/// compute it inline, where no test could observe it).
+pub fn wants_write(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--write")
+}
+
 /// The error both binaries give for the removed `--tui` flag.
 pub const TUI_REMOVED: &str = "the terminal UI (--tui) has been removed; run `vaultis-gui [DIR]` (or `vaultis [DIR]`) \
      for the graphical app, or use a subcommand (run `vaultis --help`).";
@@ -510,7 +518,7 @@ pub fn resolve_interactive(args: &[String]) -> Result<Interactive, String> {
     if args.iter().any(|a| a == "--tui") {
         return Err(TUI_REMOVED.to_string());
     }
-    let writable = args.iter().any(|a| a == "--write");
+    let writable = wants_write(args);
     // Treat ONLY the exact known flags as flags — NOT any '-'-prefixed token. A blanket
     // `starts_with('-')` filter silently ignored a vault directory whose name begins with
     // '-' (falling back to the default vault) while the console binary, which strips only the

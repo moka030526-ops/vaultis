@@ -325,7 +325,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     // The interactive UI is read-only unless --write is given.
-    let writable = args.iter().any(|a| a == "--write");
+    let writable = vaultis::launch::wants_write(&args);
     // Keep only the *positional* args by filtering out the recognized flag.
     // `.collect()` rebuilds them into a new `Vec<String>`.
     let pos: Vec<String> = args.into_iter().filter(|a| a != "--write").collect();

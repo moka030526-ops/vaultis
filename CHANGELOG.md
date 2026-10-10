@@ -37,6 +37,10 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ### Fixed
 
+- **The console binary's `--write` check had no test** (audit 2026-10-10, A-1). Inverting
+  it, which would open every vault editable, passed the whole suite. Both binaries now decide
+  writability through one tested function, `launch::wants_write`. The shipped behavior was
+  already correct.
 - Four doc comments that had become attached to the wrong function
   (`checked_export_dir`, `write_vault_file`, `error_banner_is_stale`, `password_field`).
 
