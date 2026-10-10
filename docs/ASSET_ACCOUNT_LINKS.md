@@ -1,11 +1,7 @@
 # Asset ↔ Account Links — Design
 
-_Status: implemented. Added 2026-07-03. Schema stays at format version 4._
-
-> **2026-10-10 — the terminal UI (`vaultis --tui`, `ui.rs`) has been removed.** The
-> graphical app is now the only interactive interface; the console `vaultis` binary keeps
-> every CLI subcommand. Passages below that describe the TUI are kept for history until
-> this document's next full revision, and no longer describe shipped behavior.
+_Status: implemented. Added 2026-07-03; terminal-UI parts removed with the TUI in 0.5.0
+(2026-10-10). Schema stays at format version 4._
 
 ## 1. Problem
 
@@ -19,8 +15,8 @@ validated against the Accounts tab and can silently drift when the account is
 renamed.
 
 This feature adds a first-class, navigable link: an asset/liability can be
-linked to any number of accounts, both front-ends (GUI and TUI) can jump from
-the asset to a linked account and back, and the export/merge/history machinery
+linked to any number of accounts, the GUI can jump from the asset to a linked
+account and back, and the export/merge/history machinery
 treats the link as real data.
 
 ## 2. Chosen design
@@ -76,11 +72,6 @@ immediate everywhere), so each surfaces the warning in its own idiom:
   asset/liability record(s) … will show as unresolved ids") with **Delete
   anyway** / **Cancel**; unlinked accounts (and every other tab) still delete
   immediately, exactly as before.
-- **TUI**: `d` stays immediate (its file-wide convention — no modal exists);
-  the linked-from count is captured before the remove and reported with the
-  outcome in the status line ("Deleted. Linked from N … now show as
-  unresolved"). Promoting this to a pre-delete confirm would mean introducing
-  the TUI's first modal flow — noted as possible future work.
 
 The links themselves are **not** touched — no cascade,
 no auto-unlink — for two reasons:
@@ -172,31 +163,7 @@ established recipe for additive fields (`title`, `url`, `beneficiary`,
 - **Delete**: the account-delete confirmation appends "linked from N
   asset/liability record(s); those links will show as unresolved ids".
 
-### 5.2 TUI (ratatui)
-
-- **Edit/view screen (Assets)**: a numbered cyan "Linked accounts (N)" sub-list
-  between the attached-document line and the History block (same rendering as
-  the Taxes/Real-Estate doc lists), each id resolved to the account label with
-  raw-id fallback.
-- **Editing**: an "Add link" Choice field (←/→ cycles candidate accounts; a
-  parallel id list keeps label collisions unambiguous) and a "Link #" selector
-  field, appended so that **every existing positional field index is
-  preserved** (the Assets form is index-coupled in commit/validation/doc-path
-  code). Keys, following the edit screen's Ctrl-combo convention:
-  - **Ctrl+L** — link the selected account (writable-gated),
-  - **Ctrl+O** — open link `#N` (allowed read-only; leaves the editor with the
-    same discard semantics Esc already has),
-  - **Ctrl+X** — unlink `#N` (writable-gated).
-- **Jump**: switches to the Accounts tab, relaxes any filters hiding the target
-  (the same filter-relaxing logic `save_edit` already uses), and selects its
-  row. A dangling link shows a status-line message and stays put.
-- **Account view**: read-only "Linked from (N)" sub-list (display-only — no
-  jump-back key, unlike the GUI's Open buttons); delete reporting per §4.1.
-  Read-only quirk: typing is inert in read-only mode, so read-only Ctrl+O can
-  only follow link **#1** (the blank-`Link #` default) — same limitation the
-  Doc# field already has for read-only exports.
-
-### 5.3 Mobile / FFI — deferred deliberately
+### 5.2 Mobile / FFI — deferred deliberately
 
 The UniFFI layer mirrors records into separate DTOs (`map_asset`), so the core
 field lands with **zero FFI changes** — the mobile surface simply doesn't carry
@@ -216,8 +183,8 @@ stays intact.
 - `metamorphic.rs`: `rand_asset` now generates (possibly dangling) links; the
   save/reopen round-trip key and merge properties cover the field.
 - `format_compat.rs`: old-style asset JSON (no `linked_accounts`) still loads.
-- `gui.rs` / `ui.rs`: link add/remove, jump behavior (incl. dangling), delete
-  warning, raw-id rendering — in each front-end's existing test harness.
+- `gui.rs` (now `gui/accounts.rs`): link add/remove, jump behavior (incl. dangling),
+  delete warning, raw-id rendering — in the GUI's test harness.
 
 ## 7. Future work
 
@@ -227,6 +194,4 @@ stays intact.
   replaces.
 - **Merge planner arm**: an advisory `MergePlan` note listing incoming assets
   whose links won't resolve in the destination (warn-only; never skip).
-- **FFI/mobile exposure**: per §5.3.
-- **TUI pre-delete confirm** and a **TUI jump-back** from the "Linked from"
-  list (both per §4.1/§5.2).
+- **FFI/mobile exposure**: per §5.2.

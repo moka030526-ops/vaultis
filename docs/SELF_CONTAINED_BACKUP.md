@@ -1,11 +1,7 @@
 # vaultis — Self-Contained Backup Executable (Design Proposal)
 
-_Status: **PROPOSED — not implemented.** Design notes for discussion. Last updated: 2026-06-25._
-
-> **2026-10-10 — the terminal UI (`vaultis --tui`, `ui.rs`) has been removed.** The
-> graphical app is now the only interactive interface; the console `vaultis` binary keeps
-> every CLI subcommand. Passages below that describe the TUI are kept for history until
-> this document's next full revision, and no longer describe shipped behavior.
+_Status: **PROPOSED — not implemented.** Design notes for discussion. Last updated: 2026-10-10
+(the terminal UI this proposal leaned on was removed in 0.5.0; §8.2 and §11 reflect that)._
 
 ## 1. Goal
 
@@ -176,14 +172,19 @@ per-platform stubs.
 
 ### 8.2 "Self-contained GUI" is the hard part
 
-The **CLI / TUI** already builds as a **fully-static single file** (musl), which
-absorbs cleanly into a real self-contained executable. The **GUI** dynamically links
+The **CLI** already builds as a **fully-static single file** (musl), which absorbs
+cleanly into a real self-contained executable. The **GUI** dynamically links
 the desktop graphics stack (X11 / Wayland / Mesa on Linux; Direct3D / the VC++
 runtime on Windows), so a copied GUI binary still needs those libraries present on
-the target — *not* truly self-contained. Realistically the self-contained backup
-embeds the **static CLI / TUI viewer** (heir runs it in a terminal). A windowed,
-double-click GUI would require bundling the graphics libraries, accepting
-"not fully self-contained," or a heavier installer.
+the target — *not* truly self-contained.
+
+This proposal originally recommended embedding the static **terminal viewer**. That
+viewer (the TUI) was removed in 0.5.0, so the fully-static build is now **CLI-only**:
+an heir could still run `export-tree` to unpack the vault into a readable folder of
+files, but there is no interactive browser in the static build any more. The realistic
+options are now: the **static CLI** (works anywhere, least friendly), a windowed GUI
+that bundles the graphics libraries (friendly, not fully self-contained), or a heavier
+installer.
 
 ### 8.3 Delivery friction (unsigned executable)
 
@@ -222,7 +223,7 @@ not use it).
   handling, overlay-strip. *Small.*
 - **`main.rs`:** early embedded-mode detection + bootstrap branch + write-action
   lockdown. *Small.*
-- **Config UI (`gui.rs` / `ui.rs`):** a write-mode-only "Generate self-contained
+- **Config UI (`gui/config.rs`):** a write-mode-only "Generate self-contained
   backup" action. *Small.*
 - **Core (`vaultis-core`):** **none** for the extract-to-temp MVP; add a
   `FileBackend` trait + `MemoryBackend` only if/when in-memory mounting is wanted.
@@ -232,7 +233,9 @@ paths** — the appealing part of this approach.
 
 ## 11. Recommended MVP scope
 
-- Stub = the **static CLI / TUI** viewer (the only genuinely self-contained option).
+- Stub = the **static CLI** (the only genuinely self-contained option): the heir runs
+  `export-tree` to unpack the vault into readable files. With the terminal viewer gone,
+  this is less friendly than first proposed, which makes open question 2 more pressing.
 - **Same-platform** output, **extract-to-temp** mounting, **read-only**, document
   export allowed.
 - Presented as an **opt-in convenience** beside the plain encrypted backup, with
@@ -243,7 +246,7 @@ paths** — the appealing part of this approach.
 1. **Who runs it, and on what?** Heir on Windows? You on the same machine?
    Cross-platform needed? — decides whether single-stub platform binding is
    acceptable or per-platform stubs are required.
-2. **Windowed double-click, or is a static CLI / TUI viewer acceptable?** — decides
+2. **Windowed double-click, or is the static CLI (`export-tree`) acceptable?** — decides
    whether "self-contained" is actually achievable or whether we must bundle the
    graphics stack / accept partial self-containment / code-sign.
 3. **Extract-to-temp now, in-memory later?** — or invest in the `FileBackend`

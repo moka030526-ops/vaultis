@@ -1,11 +1,6 @@
 # vaultis — Implementation Document
 
-_Last updated: 2026-06-16_
-
-> **2026-10-10 — the terminal UI (`vaultis --tui`, `ui.rs`) has been removed.** The
-> graphical app is now the only interactive interface; the console `vaultis` binary keeps
-> every CLI subcommand. Passages below that describe the TUI are kept for history until
-> this document's next full revision, and no longer describe shipped behavior.
+_Last updated: 2026-10-10_
 
 How the code is structured, **as built**. Read `DESIGN.md` first for the "why"
 (threat model, format rationale, crypto choices, crash-safety guarantees); this
@@ -37,22 +32,26 @@ crates/
 │       │                 The derived `Key` zeroizes on drop; its pages are mlock'd
 │       │                 (swap mitigation) only when the `mlock` feature is on (default
 │       │                 for desktop, OFF in the mobile build). CSPRNG `random_bytes`.
-│       ├── records.rs    The data model: the EIGHT record types, `Change`/history, the
-│       │                 `Record` trait + generic `upsert`/`remove`, the `Vault`
-│       │                 aggregate, and shared helpers (`unix_now`, `random_id`, the
-│       │                 civil-date math, history compaction, and the uniform document
-│       │                 path helpers `doc_slug`/`compact_utc`/`doc_upload_dir`/
-│       │                 `doc_filename` + per-tab `*_doc_location` prefixes).
+│       ├── records.rs    The data model: the record types, the `Record` trait + generic
+│       │                 `upsert`/`remove`, the `Vault` aggregate (incl. `written_by`,
+│       │                 the release that last wrote it). Helpers by topic in records/:
+│       │   records/      dates (civil-date math), doc_paths (`doc_slug`/`compact_utc`/
+│       │                 `doc_upload_dir`/`doc_filename` + per-tab `*_doc_location`),
+│       │                 grouping (facets, account/asset trees, links), history
+│       │                 (`Change`, compaction), search, summary (value buckets, Zakat).
 │       ├── storage.rs    The partitioned document engine (on-disk format v4):
-│       │                 `Manifest`/`VolumeStore`, fully bounds-checked frame parsers,
-│       │                 atomic commits, lazy reads, the crash-safe protocol, and the
-│       │                 scan-rebuild of a lost/corrupt manifest. `pub mod fuzz`.
-│       ├── vault.rs      `OpenVault` orchestration over `storage` (open/create/save,
-│       │                 document add/read/export/remove, staged re-encryption for
-│       │                 change_password+compact, in-place redundancy, backup, the
-│       │                 plaintext round-trip). The single-writer advisory lock is now
-│       │                 gated by the `single-writer-lock` feature (default desktop;
-│       │                 no-op in the mobile build).
+│       │                 `Manifest`/`VolumeStore` and `pub mod fuzz`. In storage/:
+│       │   storage/      blobs (lazy reads, append + atomic manifest commit), frame
+│       │                 (bounds-checked frame format + AAD), manifest (load/commit/
+│       │                 recovery, scan-rebuild), scan (frame-by-frame resync), fsutil.
+│       ├── vault.rs      `OpenVault` orchestration over `storage`: open/create/save, the
+│       │                 header, errors and the single-writer lock (gated by the
+│       │                 `single-writer-lock` feature; no-op in the mobile build).
+│       │   vault/        One module per responsibility, each adding its own
+│       │                 `impl OpenVault`: vault_file (decrypt/encrypt vault.pmv),
+│       │                 redundancy, rekey (staged re-encryption), compact, backup,
+│       │                 upgrade (the pre-upgrade safety copy), documents, tree
+│       │                 (export/import), merge_from, categories, paths, fsutil, migrate.
 │       ├── types.rs      Editable category lists (stored inside the encrypted vault).
 │       ├── password.rs   Bias-free random password generator.
 │       └── fault.rs      Crash-safety fault-injection hook (feature-gated, no-op in release).
@@ -61,11 +60,16 @@ crates/
 │   │                 which re-exports the core modules so `vaultis::…`/`crate::…`
 │   │                 paths resolve unchanged). Builds two binaries.
 │   └── src/
-│       ├── gui.rs           egui/eframe GUI — eight tabs (2-row bar) incl. multi-doc Taxes & RE + Summary.
-│       ├── ui.rs            ratatui TUI (`--tui`) — the same eight tabs (2-row bar).
-│       ├── single_instance.rs  GUI single-instance guard (§6.4).
+│       ├── gui.rs           egui/eframe GUI: app state, window, top bar, render loop.
+│       │   gui/             One module per screen or tab (auth, config, merge, the record
+│       │                    tabs, summary, zakat, documents, export) + appearance, widgets.
+│       ├── gui_help.rs      The in-app manual (content + help browser).
+│       ├── single_instance.rs  GUI single-instance guard (§6.3).
 │       ├── launch.rs        Vault-path/flag resolution shared by both binaries.
-│       ├── main.rs          Console binary `vaultis` (CLI + `--tui` + subcommands).
+│       ├── clipboard.rs, prefs.rs, export_dir.rs
+│       │                    Clipboard copy/auto-clear rule, prefs.json, export-dir guard.
+│       ├── main.rs          Console binary `vaultis` (CLI subcommands; `vaultis [DIR]`
+│       │                    launches the GUI).
 │       └── bin/vaultis-gui.rs  Windowed binary `vaultis-gui` (no console window).
 │
 └── vaultis-ffi/     Thin UniFFI wrapper (cdylib+staticlib) consumed by the mobile app.
@@ -468,20 +472,21 @@ dropdown/filter is dependent on the chosen account type. **Deletion** mirrors th
 `OpenVault::remove_{asset_type,account_type,account_subtype}` first scan the *live*
 records for usage (history is ignored) and refuse a type that still has subtypes,
 returning a `CategoryRemoval` outcome rather than a hard error; the `types.rs`
-`remove_*` helpers do the case-insensitive in-memory removal. GUI shows a × per item;
-the TUI deletes the focused field's value with `Del`.
+`remove_*` helpers do the case-insensitive in-memory removal. The GUI shows a × per
+item.
 
 ---
 
-## 6. UIs (`gui.rs`, `ui.rs`)
+## 6. UI (`gui.rs` and `gui/`)
 
-Both front-ends share a four-screen shape — **Auth** (unlock / create /
-change-password), **Browse** (a list of records for the active tab), **Edit** (a
-per-record form), and **Config** — and both drive the **same** `OpenVault` API, so
-all data/crypto behaviour is identical between them. Read-only mode hides every
-write control and shows a read-only badge.
+The GUI has a four-screen shape — **Auth** (unlock / create / change-password),
+**Browse** (a list of records for the active tab), **Edit** (a per-record form), and
+**Config** — and drives the same `OpenVault` API as the CLI and the mobile FFI, so all
+data/crypto behaviour lives in the core. Read-only mode hides every write control and
+shows a read-only badge. (A ratatui terminal UI, `ui.rs` / `--tui`, existed until
+0.5.0; it was removed because the GUI covered everything it did.)
 
-### 6.1 GUI specifics (`gui.rs`)
+### 6.1 Rendering and durability
 
 egui is **immediate-mode**: the whole UI is re-rendered every frame, and widgets
 borrow `self` mutably while drawing. To mutate the vault safely, the GUI uses a
@@ -501,47 +506,34 @@ pre-sized so per-keystroke typing doesn't reallocate and strand fragments, the o
 value is zeroized before a Generate overwrite, and the password buffers are wiped on
 a *failed* unlock too (`DESIGN.md` §13.2.6).
 
-### 6.2 TUI specifics (`ui.rs`)
-
-The terminal UI builds each edit form as a flat `Vec<Field>` (each `Field` is
-`Zeroize`/`ZeroizeOnDrop`, with a pre-sized buffer for password fields) and rebuilds
-the typed record by field index in `commit_edit_record`. Navigation is keyboard-
-driven; the Config screen is a focus-cycled set of text inputs (asset/account/
-subtype adds, volume size, backup destination, and the redundancy depth). The same
-durability gating applies: `save_edit`/`delete_selected` only report success and
-discard the edit buffer when `persist()` succeeded, and the unlock path surfaces the
-recovery notice. Every TUI screen is rendered to a ratatui `TestBackend` in tests.
-
-### 6.3 Shared behaviour
+### 6.2 Behaviour
 
 Selection resolves **by id** so filtered/sorted lists never act on the wrong
 record. Accounts can be filtered by title/type/subtype/owner/review and a free-text
-**username search** (case-insensitive substring via `records::matches_search`; the
-GUI has a search box, the TUI enters search with `/`, Enter keeps / Esc clears);
+**username search** (case-insensitive substring via `records::matches_search`, in a
+search box);
 Assets filter by review. The Accounts filters are **cross-filtered (faceted)** via
 `records::account_facets`: each dropdown lists only the distinct values present on
 accounts matching *all the other* active selections (incl. the review toggle + the
-username search). After any filter change both UIs run a fixpoint sweep that
-**auto-clears** a selection no longer among its narrowed options (GUI: a loop each
-frame in `tab_accounts`; TUI: `narrow_account_filters`). Two conveniences keep the
+username search). After any filter change a fixpoint sweep (a loop each frame in
+`tab_accounts`) **auto-clears** a selection no longer among its narrowed options. Two conveniences keep the
 worked-on entry visible: clicking **New** while a filter/search is active
 pre-populates the matching fields (title/type/subtype/owner/username) on the fresh
-record (TUI `start_edit` for a new record; GUI `new_account_from_filters`), and on
-**save** any active field filter is moved to the saved record's value (TUI
-`save_edit`; GUI `sync_account_filters_to`) so a changed filtered field follows the
+record (`new_account_from_filters`), and on **save** any active field filter is moved to
+the saved record's value (`sync_account_filters_to`) so a changed filtered field follows the
 entry rather than hiding it. A global **reveal** toggle on the Accounts screen
-(GUI `reveal_all` checkbox; TUI `r`) shows all account passwords, overriding the
+(the `reveal_all` checkbox) shows all account passwords, overriding the
 per-record reveal. These only seed/adjust the in-memory view; nothing is persisted
 except on an explicit save. **Every field of every record type is left/right-trimmed
-on save** (`Record::trim_fields`, called from the GUI/TUI commit path of each tab) —
+on save** (`Record::trim_fields`, called from the commit path of each tab) —
 secrets such as passwords included (chosen policy). A one-off **Trim all fields**
-maintenance action (GUI button on the Accounts filter row; TUI `T` from any tab) runs
+maintenance action (a button on the Accounts filter row) runs
 `records::trim_all_records` over the whole vault — all eight record kinds — routing
 each changed record through `upsert` so the trim is recorded in that record's history
 (old → new) and reports how many changed. A password copied to the clipboard is auto-cleared after
-15 s (a deadline the event loop polls for — the GUI schedules a repaint so it fires
-even when idle) and again on exit. The write `generation` is shown on unlock so a
-rollback is noticeable. Both UIs validate a document's virtual path against
+15 s (the GUI schedules a repaint at the deadline, so it fires even when idle) and
+again on exit. The write `generation` is shown on unlock so a
+rollback is noticeable. The GUI validates a document's virtual path against
 `storage::MAX_PATH_LEN` (256 bytes) before attaching. The Config screen has a
 **color-theme picker** (Light / Dark / High-contrast / Solarized / Sepia, built by
 `visuals_for`) whose choice applies live (even read-only) and persists to a small
@@ -550,7 +542,7 @@ best-effort and size-capped/symlink-refused so a hostile file can't stall startu
 it holds no vault data). Change-password runs through the Auth screen into
 `OpenVault::change_password`.
 
-### 6.4 Single-instance guard (`single_instance.rs`)
+### 6.3 Single-instance guard (`single_instance.rs`)
 
 The GUI window opens immediately at the lock screen, before the vault (and the
 single-writer lock) is opened, and the default launch is read-only (no lock at all)
@@ -580,7 +572,6 @@ dir).
 ```
 vaultis [DIR]                       graphical UI (READ-ONLY by default)
 vaultis --write [DIR]               writable (allow create/edit/delete/upload)
-vaultis --tui [DIR]                 terminal UI (add --write to edit)
 vaultis decrypt [DIR]               print the decrypted vault JSON (secrets!) to stdout
 vaultis manifest [DIR] [--part N]   print the document index: one partition or all
 vaultis extract [DIR] OUT [--part N]   decrypt documents into OUT: one volume or all
@@ -602,12 +593,14 @@ constant — `vaultis-gui` prints the version (and a short usage naming this bin
 home of the subcommands) rather than treating the flag as a vault directory, which is what
 it used to do (`AUDIT_2026-07-29_round2.md`, L-1).
 
-**Dispatch.** `--write`/`--tui` are position-independent flags filtered out before
-dispatch; `--part N`/`--part=N` (`extract_part_flag`) and the compact flags
+**Dispatch.** `--write` is a position-independent flag filtered out before dispatch
+(`launch::wants_write`, shared with `vaultis-gui`), and the removed `--tui` is refused
+with a pointer to the GUI and the subcommands in both binaries; `--part N`/`--part=N` (`extract_part_flag`) and the compact flags
 (`extract_compact_flags`) are likewise pulled out and **rejected on commands that
 don't accept them**. The subcommand `match` then routes to the handler; the
 catch-all arm treats any unrecognized first token as the vault directory and
-launches the interactive UI (graphical by default, terminal with `--tui`).
+launches the GUI. A build without the `gui` feature has no interactive UI and refuses
+that launch with an explanation.
 
 **Read-only is the default**, enforced authoritatively in `OpenVault`
 (`open_read_only` + a `read_only` guard on *every* mutator; nothing is written and
@@ -630,7 +623,7 @@ would reclaim; otherwise it backs up the encrypted tree first (to a sibling
 `--no-backup`), skips entirely when nothing is reclaimable, then runs
 `OpenVault::compact`.
 
-**Password input.** The no-echo reader uses crossterm raw mode on a TTY and falls
+**Password input.** The no-echo reader uses `crossterm` raw mode on a TTY and falls
 back to reading a piped line otherwise; the terminal raw mode is always restored,
 even on error/panic.
 
@@ -639,7 +632,7 @@ even on error/panic.
 ## 8. Build, test, coverage
 
 ```bash
-cargo build --release                         # GUI default; pass --tui at runtime for terminal
+cargo build --release                         # both binaries, GUI included
 cargo test                                    # unit + integration + property (proptest) tests
 cargo clippy --all-targets --all-features -- -D warnings   # lints, kept clean
 cargo check --target x86_64-pc-windows-gnu    # Windows portability
@@ -731,9 +724,9 @@ covered thoroughly: per-operation crash-injection and the full rekey/compaction
 roll-forward matrix, per-blob/per-manifest AAD binding and frame-substitution
 rejection, nonce uniqueness, partition/`end_offset` arithmetic, and `proptest`
 suites for the parsers and path normalization. Front-end logic is driven through the
-TUI key handler and the GUI's deferred methods directly, with every TUI screen
-rendered to a `TestBackend`; egui rendering itself is not unit-tested (it needs a GUI
-harness).
+GUI's deferred methods directly, and the real window is laid out and clicked headlessly
+through `egui_kittest` (a real egui context plus accesskit), so rendering, visibility and
+clicks are tested without a display.
 
 **Fuzzing.** The untrusted-input parsers (`parse_header`, `parse_frame`,
 `parse_manifest`, `scan_volume`) have `cargo-fuzz` targets with a committed seed
@@ -789,19 +782,19 @@ ordering, persist-before-reclaim in delete/detach, the `vault.pmv` size cap, and
 `append_frame` symlink refusal.
 
 A later round added the **`compact`** command (§3.6), the GUI **color-theme** picker
-(§6.3), and a whole-codebase deep security audit whose four confirmed findings were
+(§6.2), and a whole-codebase deep security audit whose four confirmed findings were
 fixed with regression tests (`O_NOFOLLOW` on `append_frame`; the size-capped/
 symlink-refused `prefs.json` read; the default `compact` backup-destination
 validation; `backup` refusing a symlinked destination).
 
 The **most recent round** (this document's update):
 
-- **Single-instance guard** (`single_instance.rs`, §6.4) — root-caused and fixed
+- **Single-instance guard** (`single_instance.rs`, §6.3) — root-caused and fixed
   the "many windows open" symptom (no self-spawn, no zombie — purely a missing
   guard), confirmed independently by a diagnosis workflow.
 - **A 12-finding correctness/hardening audit** (10 subsystems, every finding
   adversarially verified; 0 critical/high). Fixes, all with tests or covered by the
-  crash suite: the GUI/TUI "false Saved." durability gating (§3.5/§6); the narrowed
+  crash suite: the front-ends' "false Saved." durability gating (§3.5/§6); the narrowed
   manifest-rebuild trigger (§3.2); `add_document` non-regular-source rejection +
   capped read (§3.8); `import_tree` holding the lock across the build (§3.8);
   `dest_inside` lexical normalization (§7); the `password::uniform` 64-bit

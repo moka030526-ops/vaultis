@@ -1,11 +1,6 @@
 # vaultis — Design Document
 
-_Last updated: 2026-06-15. Format version 4 (partitioned document store)._
-
-> **2026-10-10 — the terminal UI (`vaultis --tui`, `ui.rs`) has been removed.** The
-> graphical app is now the only interactive interface; the console `vaultis` binary keeps
-> every CLI subcommand. Passages below that describe the TUI are kept for history until
-> this document's next full revision, and no longer describe shipped behavior.
+_Last updated: 2026-10-10. Format version 4 (partitioned document store)._
 
 ## 1. Purpose
 
@@ -50,7 +45,7 @@ Each numbered requirement from the brief maps to a concrete design element.
 | 7 | Highest encryption level | Argon2id KDF + XChaCha20-Poly1305 AEAD, per-blob (§5) |
 | 8 | Encrypted JSON | JSON vault + JSON manifests, all AEAD-encrypted on disk (§6) |
 | 9 | Two passwords, set sequentially | Chained Argon2id derivation (§5.2) |
-| 10 | Intuitive interface | Two interchangeable front-ends (egui GUI default, ratatui TUI) over one API (§7) |
+| 10 | Intuitive interface | An egui graphical front-end over one API, plus CLI subcommands for bulk jobs (§7) |
 | 11 | File identifiable | `PMVAULT\0` magic + self-describing header; fixed directory layout (§6) |
 | 12 | Random password generator | `password.rs`, bias-free rejection sampling over the OS CSPRNG (§5, §7) |
 | 13 | Simple to review | Small modules, no `unsafe` (crate-wide `#![forbid]`), commented, unit/property/fuzz/mutation-tested |
@@ -66,14 +61,13 @@ Each numbered requirement from the brief maps to a concrete design element.
   crate-wide, so there is *no* `unsafe` anywhere (even the page-locking goes
   through a safe wrapper, see below). `zeroize` integrates cleanly for wiping
   secrets on drop.
-- **Interface:** two interchangeable front-ends over the same vault API —
-  a [`ratatui`](https://crates.io/crates/ratatui) terminal UI (`ui.rs`, good for
-  SSH/headless) and an [`egui`/`eframe`](https://crates.io/crates/eframe)
-  graphical UI (`gui.rs`, the default). Both compile into the single standalone
-  binary; neither uses a browser, Electron, or the network. Keeping all crypto
-  and storage behind one `OpenVault` API means the (larger, less-audited) UI code
-  is *not* security-critical and can't reach around the core. `--tui` selects the
-  terminal UI.
+- **Interface:** an [`egui`/`eframe`](https://crates.io/crates/eframe) graphical
+  UI (`gui.rs` and its `gui/` modules) over the vault API, plus command-line
+  subcommands for bulk jobs (backup, export, import, compact, update-from). Neither uses
+  a browser, Electron, or the network. Keeping all crypto and storage behind one
+  `OpenVault` API means the (larger, less-audited) UI code is *not* security-critical
+  and can't reach around the core. (A ratatui terminal UI, `--tui`, existed until
+  0.5.0 and was removed because the GUI already covered everything it did.)
 - **KDF:** `argon2` (Argon2id) — the current best-practice memory-hard password
   hash (PHC winner, OWASP-recommended). Memory-hardness is what makes offline
   guessing expensive on GPUs/ASICs. Chosen over PBKDF2/bcrypt for that reason.
@@ -167,8 +161,8 @@ come from `categories`, which is stored **inside the encrypted vault** (§4.2,
   field, **including the password** (e.g. `password: "old" -> "new"`). This
   makes the history a complete record at rest. The security trade-off — the vault
   retains old passwords forever — is accepted here and noted in §9.4.
-- **Display masking.** The UIs never render a password value from history: both the
-  GUI and TUI history panes pass each entry through `records::display_detail`, which
+- **Display masking.** The UI never renders a password value from history: the GUI's
+  history pane passes each entry through `records::display_detail`, which
   masks any password-field line to `password: <hidden> -> <hidden>` (the field name
   and timestamp are kept). The live edit field has its own reveal toggle; the history
   pane deliberately does not extend it — you cannot copy from history, and showing an
@@ -184,8 +178,7 @@ sensible defaults on creation and editable from the Config screen. They live
 **inside the encrypted vault** (not in external files), so they travel with it
 and leak nothing at rest (§5, §4.4).
 
-**Deleting a type/subtype** (Config screen — GUI per-item ×, TUI `Del` on the focused
-field) is allowed only when **no live record** still references it, so a delete can
+**Deleting a type/subtype** (Config screen — the per-item ×) is allowed only when **no live record** still references it, so a delete can
 never orphan a record's `asset_type`/`account_type`/`account_subtype`. The usage scan
 looks at the live records ONLY — a type that appears merely in a record's *history*
 (`Change.detail`, e.g. `type: "Bank" -> "Email"`) does not block deletion. An account
@@ -242,7 +235,7 @@ design is in **§11**; the essentials:
   and checked against the manifest), so it is integrity-protected like the bytes. These
   helpers live in `records.rs` (`doc_slug`, `owner_initials`, `owner_prefix`,
   `compact_utc`, `timestamped_filename`, `doc_upload_dir`, and the per-tab
-  `*_doc_location` prefixes) and are shared verbatim by the GUI and TUI.
+  `*_doc_location` prefixes) and are shared verbatim by the front-ends.
 
 ### 4.4 Read-only by default
 
@@ -263,8 +256,7 @@ enforced in two layers:
   the text fields stay **selectable and copyable** — they bind an immutable `&str`
   buffer (an egui edit needs a *mutable* `TextBuffer`, selection needs only an
   interactive widget), so a read-only user can highlight and copy a value but not
-  change it (combos/checkboxes are simply disabled); the TUI's `handle_edit_key` drops
-  typing / backspace / choice-cycling unless `writable`. The changeable settings in
+  change it (combos/checkboxes are simply disabled). The changeable settings in
   read-only mode are the **local, non-secret preferences** kept in `<vault_root>/prefs.json`
   (not the vault) — the **color theme**, **interface size**, **typeface** and the two list
   grouping defaults — plus the session-only **export directory**, the **vault root** (§ Auth)
@@ -642,7 +634,7 @@ ephemeral storage and delete it promptly (§9.10, §9.17).
 ### 6.4 Cross-vault merge — "update from another vault"
 
 `update-from` (CLI `vaultis update-from OTHER [DIR]`; GUI Config → *Update from another
-vault…*; TUI Config → **Ctrl+U**) pulls changes from a SECOND vault into the current one.
+vault…*) pulls changes from a SECOND vault into the current one.
 It is implemented by `vaultis-core::merge` (the plan/report types + the pure, `Record`-
 generic diff helpers `collection_changes`/`merge_records`) plus `OpenVault::plan_merge_from`
 (preview, read-only) and `OpenVault::apply_merge_from` (commit, requires `--write`).
@@ -701,30 +693,31 @@ guards prevent the R-8 duplicate-frame rollback hazard: `put` is skipped when th
 already `contains` the id, and any record that references a doc id the destination has
 **tombstoned** (`deleted_docs`) is *skipped* (reported in the plan's `skipped` list, with the
 reason) rather than resurrected in place — compacting the destination clears the tombstone and
-unblocks it. Opening the source **collapses all errors into one generic message** in the GUI/
-TUI so the screen is not a password-correctness oracle for the other vault (mirrors §9.2's
+unblocks it. Opening the source **collapses all errors into one generic message** in the GUI so
+the screen is not a password-correctness oracle for the other vault (mirrors §9.2's
 unlock collapse). Source passwords use the same `Zeroizing`/pre-reserved-buffer hygiene as the
 unlock screen and are wiped on every exit path; the held decrypted source handle is dropped on
 cancel/apply.
 
 ## 7. User interface (req. 10)
 
-The app ships **two interchangeable front-ends** that drive the **same**
-`OpenVault` API and the same screen shape (Auth → browse → edit, plus a Config
-screen), so every line of crypto, storage, and data-model logic is shared and
-UI-independent. Adding or changing a front-end touches no security-critical code.
+The app's interactive front-end drives the `OpenVault` API through a fixed screen shape
+(Auth → browse → edit, plus a Config screen), so every line of crypto, storage, and
+data-model logic stays UI-independent — the same code the CLI subcommands and the mobile
+FFI use. Changing the front-end touches no security-critical code.
 
-- **Graphical (`gui.rs`, the default)** — `egui`/`eframe`, immediate-mode,
+- **Graphical (`gui.rs` and its `gui/` modules)** — `egui`/`eframe`, immediate-mode,
   on-screen buttons and tabs. Needs a desktop (X11/Wayland). Each screen's content
   (Auth, the per-tab browse/edit area, and Config) and the two-row top bar — a tabs
   row above an actions row, each its own horizontal scroll area — sit in
   scroll areas, so a window smaller than the content shows **vertical + horizontal
   scrollbars** instead of clipping — the fixed top bar and bottom status line stay
   put, and scrollbars appear only on genuine overflow.
-- **Terminal (`ui.rs`, `--tui`)** — `ratatui`, keyboard-driven, works over SSH /
-  headless. Key bindings are shown on-screen at all times; no mouse required.
 
-The desktop front-ends present the estate vault as **ten tabs**, laid out in two
+A build without the `gui` feature (the static musl build) has no interactive UI at all:
+it is CLI-only and refuses an interactive launch with an explanation.
+
+The desktop front-end presents the estate vault as **ten tabs**, laid out in two
 rows — nine record-type tabs (URGENT, Instructions, Trust & Will, Assets &
 Liabilities, Accounts, Real Estate, Taxes, General Documents, Zakat) plus a read-only
 **Summary** aggregate — over four screens. Zakat is the one record tab drawn as an
@@ -739,11 +732,10 @@ include URGENT.) The four screens are:
 
 1. **Auth (unlock / create).** Prompts for password 1, then password 2 (masked).
    The start page selects the vault by **root + a collapsed "Vault" control** rather than
-   a free-form path. There are two non-password rows (GUI text boxes; TUI focus-0/1 rows),
-   editable in **both** read-only and `--write` mode:
+   a free-form path. There are two non-password rows, editable in **both** read-only and `--write` mode:
    - an editable **Vault root** path — the folder scanned for vaults; and
-   - a **Vault** control: an editable leaf **name** paired with a **dropdown** (GUI
-     `ComboBox`; TUI `←/→`-cycled row) of the vaults found by `launch::discover_vaults`,
+   - a **Vault** control: an editable leaf **name** paired with a **dropdown**
+     (`ComboBox`) of the vaults found by `launch::discover_vaults`,
      which scans the root **exactly one level deep** for immediate sub-directories holding
      a `vault.pmv` (never recursive, never the root itself; names sorted case-insensitively).
 
@@ -794,12 +786,12 @@ include URGENT.) The four screens are:
 2. **Browse.** The selected tab's records as a list, with per-tab **filters**
    (Accounts by title/type/subtype/owner/"needs review"; Assets by "needs review")
    driven by the in-vault category lists, plus a free-text **search** on the Accounts
-   tab that matches the **username OR the title** (case-insensitive substring; the GUI
-   has a search box, the TUI enters it with `/`). Selection resolves **by record id**,
+   tab that matches the **username OR the title** (case-insensitive substring, in a
+   search box). Selection resolves **by record id**,
    so a filtered or searched list never edits the wrong record. The Accounts list can
-   also be shown as a **grouped tree** (toggle: GUI "grouped" checkbox, TUI `g`):
+   also be shown as a **grouped tree** (toggle: the "grouped" checkbox):
    **owner → type → subtype → account**, each level collapsible (`+`/▸ to expand; egui
-   CollapsingHeaders in the GUI, `Enter` to expand/collapse a node in the TUI), with
+   CollapsingHeaders), with
    the leaf showing the **title** only. An **empty** grouping level is **skipped**
    (no "(none)" placeholder nodes): an account with no owner appears at the top level,
    one with no type hangs directly under its owner, and a fully-ungrouped account is a
@@ -818,7 +810,7 @@ include URGENT.) The four screens are:
    passwords) shows every password at once — it is the only reveal control, and it
    clears on a tab switch so a stale reveal can't linger. All of this only affects the view/edit buffer;
    nothing is written until the record is saved. A one-off **Trim all fields** action
-   (GUI button; TUI `T`) left/right-trims every field on every record across **all
+   (a button on the Accounts filter row) left/right-trims every field on every record across **all
    tabs** in one pass (`records::trim_all_records`), recording each change in history;
    the same trim runs automatically on **every save of every record type**
    (`Record::trim_fields`, secrets such as passwords included).
@@ -829,20 +821,18 @@ include URGENT.) The four screens are:
    Will and Assets hold a single document each, while Real Estate and Taxes hold a
    **folder of multiple documents** (`real_estate/<id>/…`, `taxes/<year>/…`) tracked
    per record by `referenced_doc_ids`. The attach path enforces the 256-byte
-   virtual-path limit (the GUI disables the button with an inline error, the TUI
-   rejects the upload key) and persists the record→document link before reclaiming
+   virtual-path limit (the button is disabled with an inline error) and persists the record→document link before reclaiming
    any old blob (crash-safe ordering, §11). On attach, **a blank filename defaults to
    the source file's basename** (`records::effective_doc_filename`). In **both
    front-ends**, **Export** takes no per-document path: it writes the decrypted file
    into the configured **export directory**, recreating the document's virtual folder
    structure under it (`<export_dir>/<location>/<filename>`, via
    `OpenVault::export_document_into`, which re-sanitizes each path component and never
-   overwrites — `_N` suffix). The GUI exposes one global **Export** button per page; the
-   TUI exports the document whose 1-based number is in the **Doc #** field (`Ctrl+E`).
-   Both read the export directory from the current session's Config value (see Config
+   overwrites — `_N` suffix). The GUI exposes one global **Export** button per page,
+   which reads the export directory from the current session's Config value (see Config
    below); it is never persisted.
-   Each record tab also offers **Export to CSV** (GUI: a "⬇ CSV" button in the list
-   header; TUI: the `e` key) — it writes **all** of that tab's records, one row per
+   Each record tab also offers **Export to CSV** (a "⬇ CSV" button in the list
+   header) — it writes **all** of that tab's records, one row per
    record, to a timestamped file (`<tab>-<YYYYMMDD-HHMMSS>.csv`) in the same export
    directory via `csv::*` + `vault::write_export_bytes` (0600, no-clobber `_N`, fsync).
    Document/file columns hold the file **names** (not blob ids). The Accounts and
@@ -880,8 +870,8 @@ include URGENT.) The four screens are:
    * **`export_dir`** — where the front-ends write cleartext exports (the per-tab CSV
      carries every password in the clear, plus every decrypted document). It is a
      **per-session** value set in Config, and is still the one write-mode-exempt Config
-     control (the TUI carves out its Config focus index 7 alongside the always-allowed
-     `backup`; the GUI renders it outside the writable gate), which keeps read-only
+     control (the GUI renders it, like the always-allowed `backup`, outside the writable
+     gate), which keeps read-only
      document export — the heir use case — working.
    * **`reveal_all_default`** — reveal is a per-session toggle that always starts OFF, and
      the Config checkbox for it is gone from both front-ends.
@@ -925,7 +915,7 @@ button on the **password**, the **username**, and the **URL**. These deliberatel
 - **Password (a secret)** → `copy_secret_to_clipboard` + `copy_to_clipboard`: the Linux
   history-exclusion hint (`x-kde-passwordManagerHint`, honoured by klipper/GPaste/clipman)
   so clipboard managers don't log it, **plus** a 15 s auto-clear timer and an on-exit wipe
-  (`clipboard_dirty`). This is the same path Ctrl+Y uses in the TUI.
+  (`clipboard_dirty`).
 - **Username / URL (not secrets)** → `copy_plain_to_clipboard` + `copy_plain`: a plain
   `set_text` (no history exclusion — a non-secret belongs in normal clipboard history so a
   manager can keep it) and **no** auto-clear. Because the plain copy has just overwritten
@@ -933,8 +923,8 @@ button on the **password**, the **username**, and the **URL**. These deliberatel
   clears `clipboard_dirty`: there is no longer a copied secret to wipe, and leaving the
   timer armed would blank the user's freshly copied URL/username 15 s later. The copy
   button is disabled when its field is empty, and is available in read-only mode (a copy is
-  a read, not an edit). The TUI has no plain-copy button — its Ctrl+Y targets the password
-  field only — so `copy_plain_to_clipboard` is gated on the `gui` feature.
+  a read, not an edit). Only the GUI has copy buttons, so `copy_plain_to_clipboard` is
+  gated on the `gui` feature.
 
 ## 8. Threat model
 
@@ -1025,9 +1015,9 @@ generic ("wrong password or corrupted vault").
 ### 9.3 Clipboard exposure
 See §7.1. Copying a password places it on the shared system clipboard. Other
 applications, clipboard managers, and OS-level cloud-clipboard sync can read it
-while it is there. To bound the window, both front-ends now **auto-clear the
-clipboard 15 seconds after a copy** (the GUI schedules a repaint at the deadline;
-the TUI polls its event loop) **and again on exit** (best-effort). This shrinks
+while it is there. To bound the window, the GUI **auto-clears the
+clipboard 15 seconds after a copy** (it schedules a repaint at the deadline) **and
+again on exit** (best-effort). This shrinks
 but does not eliminate exposure: a clipboard manager or cloud-sync that captures
 the value within those 15 seconds keeps its own copy.
 
@@ -1051,7 +1041,7 @@ Secrets are zeroized on drop throughout: the derived keys and the intermediate
 KDF key (`crypto.rs`), the decrypted plaintext buffers (`Zeroizing`), the whole
 decrypted data model (records/`Change`/`Vault` are `ZeroizeOnDrop`, and the
 in-memory document archive holds `Zeroizing` bytes), and the password-input
-buffers in the TUI, GUI, and CLI.
+buffers in the GUI and CLI.
 
 **Swap mitigation.** The derived encryption key — the highest-value secret, since
 it decrypts the whole vault — is held in heap pages that are **memory-locked**
@@ -1769,19 +1759,19 @@ error rather than focusing the existing window.
 
 `OpenVault::save` returns a `Result`, and the front-ends' `persist()` helper
 returns a bool that is `true` **only** when the write reached disk. The five GUI
-record-save paths, the GUI document **Attach**, GUI `delete_current`, and the TUI
-`save_edit` / `delete_selected` previously called `persist()` and then
-*unconditionally* overwrote the status line with "Saved." / "Deleted." / "Document
-uploaded…". So when a save failed (full disk, or a read-only/poisoned handle after
+record-save paths, the GUI document **Attach**, GUI `delete_current`, and (while it
+existed) the terminal UI's `save_edit` / `delete_selected` previously called
+`persist()` and then *unconditionally* overwrote the status line with "Saved." /
+"Deleted." / "Document uploaded…". So when a save failed (full disk, or a read-only/poisoned handle after
 an interrupted rekey), the user was told it succeeded while the change never
-persisted — and the TUI even discarded the edit buffer. The on-disk state was
+persisted — and the terminal UI even discarded the edit buffer. The on-disk state was
 always *consistent* (this is not corruption; see §12.6), but the reported outcome
 was wrong and the unsaved edit was silently lost.
 
 Fix: every success message and screen transition is now gated on `persist()`. On
 failure the "Save failed: …" status that `persist()` set is preserved, the record
 is left on disk untouched (a "deleted" record reappears only because it was never
-actually removed), and the TUI keeps the edit buffer open so the user can retry.
+actually removed), and the edit buffer stays open so the user can retry.
 The blob-reclaim paths were already correctly gated on `persist()` (so no dangling
 references, §12.6) — only the status messages were not.
 
@@ -1839,21 +1829,19 @@ against the cwd, fold away `.`/`..`) before comparing.
 These are defense-in-depth improvements to the "best-effort" wiping described in
 §9.6:
 
-- **Zeroize before overwrite.** Clicking *Generate* (GUI and TUI) assigned a new
+- **Zeroize before overwrite.** Clicking *Generate* assigned a new
   `String` over the old password; a plain `String` reassignment frees the old heap
   buffer **without** zeroing it. The old value is now `.zeroize()`d first.
 - **Wipe on failed auth.** The GUI only wiped the entered master passwords on a
   *successful* unlock; on a wrong-password/error it left them in the `GuiApp`
-  buffers. It now wipes on the error paths too (matching the TUI, which rebuilds —
-  and thus zeroizes — its `AuthState`). A failed auth is exactly when a user may
+  buffers. It now wipes on the error paths too. A failed auth is exactly when a user may
   step away.
-- **Pre-sized secret buffers.** The GUI master-password fields, the GUI
-  account-password edit buffer, and the TUI password `Field` are mutated in place
-  one keystroke at a time by the UI frameworks; each capacity growth reallocates
+- **Pre-sized secret buffers.** The GUI master-password fields and the
+  account-password edit buffer are mutated in place
+  one keystroke at a time by the UI framework; each capacity growth reallocates
   and frees an un-zeroized fragment of the secret. The buffers are now pre-sized
   (generous `with_capacity` / `reserve`) so typing a normal-length password never
-  reallocates, and the TUI's transient incoming copy is zeroized after it is moved
-  into the pre-sized buffer.
+  reallocates.
 
 #### 13.2.7 Regression tests
 
@@ -1915,7 +1903,7 @@ mirror (§6.3). Each fix carries a regression test (see `HARDENING.md`).
   `COM1`–`COM3`) resolves to a *device*, not a file, so it must never become a real path
   component — otherwise an heir extracting on Windows gets an I/O error where the
   document should be. `records::is_windows_reserved_name` is that rule, and both
-  exporters — the core's `doc_tree_relpath` (GUI/TUI + `export_tree`) and the CLI's
+  exporters — the core's `doc_tree_relpath` (GUI + `export_tree`) and the CLI's
   `safe_relative_path` (`extract`) — call it and apply the same `_`-prefix **repair**, so
   one vault always lays out identically whichever front-end writes it. The repair renames
   rather than drops the component: dropping a directory level collapses documents that
@@ -2019,8 +2007,7 @@ the GUI's window appears on top.
 **Constraint.** The fix is to link the GUI as a **GUI-subsystem** program
 (`#![windows_subsystem = "windows"]`), which suppresses the console. But the subsystem
 is fixed at link time — a single executable cannot be a console app for the CLI
-subcommands (`decrypt`, `extract`, `compact`, …) and the `--tui` terminal UI *and* a
-windowless GUI app. The usual single-binary escape — link as a GUI app and call
+subcommands (`decrypt`, `extract`, `compact`, …) *and* a windowless GUI app. The usual single-binary escape — link as a GUI app and call
 `AttachConsole`/`FreeConsole` at runtime to borrow the parent terminal when needed —
 requires Win32 FFI, i.e. an `unsafe` block, which the crate forbids
 (`#![forbid(unsafe_code)]`).
@@ -2028,8 +2015,8 @@ requires Win32 FFI, i.e. an `unsafe` block, which the crate forbids
 **Mechanism.** The project therefore builds **two binaries** (the `python.exe` /
 `pythonw.exe` pattern):
 
-- **`vaultis`** (`src/main.rs`) — the existing **console** binary: all CLI
-  subcommands plus the `--tui` terminal UI, unchanged.
+- **`vaultis`** (`src/main.rs`) — the **console** binary: all CLI subcommands, and
+  `vaultis [DIR]` launches the same GUI.
 - **`vaultis-gui`** (`src/bin/vaultis-gui.rs`) — a thin **GUI-subsystem** launcher
   carrying `#![cfg_attr(windows, windows_subsystem = "windows")]`. It parses only an
   interactive launch (optional vault `DIR` + `--write`) and calls `gui::run`. The
