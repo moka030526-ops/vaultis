@@ -12,6 +12,27 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-10-10
+
+A maintenance release. The app, vault files, the crypto and the key-derivation paths are
+unchanged from 0.6.0, and the release is compatible both ways with it.
+
+### Changed
+
+- **The build and release pipeline runs on Node 24.** GitHub removed Node 20 from its
+  runners on 2026-09-23. Every action it used now runs on a Node 24 release: checkout v5,
+  upload-artifact v6, download-artifact v7, setup-java v5, setup-android v4. A release
+  dry run now also checks the step where both platforms' packages are gathered and
+  their checksums matched, which previously only a real release ever exercised.
+
+### Fixed
+
+- **The safety copy's byte-for-byte check is now tested to fail on a wrong copy.**
+  Mutation testing showed nothing checked that it could reject a bad copy (a flipped
+  byte, a truncated, extended, missing or extra file, a different vault file). The
+  behaviour was already correct; it is now pinned by a test. See
+  `docs/AUDIT_2026-10-10_round2.md`.
+
 ## [0.6.0] — 2026-10-10
 
 A safety release for every future update. Before a new version first changes a vault, it
