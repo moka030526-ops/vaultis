@@ -297,6 +297,21 @@ if ! mv "$INCOMING" "$APP"; then
     [ -e "$OUTGOING" ] && mv "$OUTGOING" "$APP"
     die "could not put the new vaultis.app in place; the previous one was restored."
 fi
+
+# Keep the version just replaced, so going back is instant and needs no download. It goes
+# under the app's own data folder rather than beside the new one, so Launchpad and
+# Spotlight do not show two vaultis apps. The app itself copies each vault aside before a
+# new version first changes it; this is the other half of an undo.
+PREV_DIR="$HOME/Library/Application Support/dev.vaultis.vaultis/previous"
+KEPT_PREVIOUS=""
+if [ -e "$OUTGOING" ]; then
+    OLD_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+        "$OUTGOING/Contents/Info.plist" 2>/dev/null || echo unknown)
+    if mkdir -p "$PREV_DIR" && rm -rf "$PREV_DIR/vaultis.app" && mv "$OUTGOING" "$PREV_DIR/vaultis.app"; then
+        printf '%s\n' "$OLD_VERSION" > "$PREV_DIR/version.txt"
+        KEPT_PREVIOUS="$PREV_DIR/vaultis.app ($OLD_VERSION)"
+    fi
+fi
 rm -rf "$OUTGOING"
 
 echo
@@ -312,6 +327,11 @@ echo
 echo "  The command-line tools:"
 echo "    \"$APP/Contents/MacOS/vaultis\""
 echo
+if [ -n "$KEPT_PREVIOUS" ]; then
+    echo "  The version it replaced is kept, ready to run again if needed:"
+    echo "    $KEPT_PREVIOUS"
+    echo
+fi
 echo "  Run this file again any time to update, or pass a tag to install a"
 echo "  specific release:  bash ${0##*/} v0.4.0"
 echo "------------------------------------------------------------------------"
@@ -598,6 +618,37 @@ try {
         $SelfPath = (Get-Item -LiteralPath $env:VAULTIS_SELF).FullName
     }
 
+    # Keep the version being replaced, so going back is instant and needs no download:
+    # before anything is overwritten, the CURRENT copies of exactly the files this package
+    # ships (the programs, icons and scripts -- never a vault, never the sample vault) go to
+    # "previous\", replacing whatever an earlier update left there, with the old version
+    # recorded beside them. The app itself copies each vault aside before a new version
+    # first changes it; this is the other half of an undo.
+    $PrevDir = Join-Path $InstallDir "previous"
+    $OldExe = Join-Path $InstallDir "vaultis.exe"
+    if (Test-Path -LiteralPath $OldExe) {
+        if (Test-Path -LiteralPath $PrevDir) {
+            if (Test-LooksLikeVault $PrevDir) {
+                throw "$PrevDir looks like a vault. Move it somewhere else and run this again."
+            }
+            Remove-Item -LiteralPath $PrevDir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $PrevDir -Force | Out-Null
+        # The old program names itself ("vaultis 0.5.0"). One too old or too broken to
+        # answer is still worth keeping, just without a version on the label.
+        try { $OldVersion = ((& $OldExe --version) | Select-Object -First 1).Trim() }
+        catch { $OldVersion = "unknown" }
+        if (-not $OldVersion) { $OldVersion = "unknown" }
+        foreach ($Item in Get-ChildItem -LiteralPath $StageDir -Force -File) {
+            $Current = Join-Path $InstallDir $Item.Name
+            if (Test-Path -LiteralPath $Current -PathType Leaf) {
+                Copy-Item -LiteralPath $Current -Destination $PrevDir -Force
+            }
+        }
+        Set-Content -LiteralPath (Join-Path $PrevDir "version.txt") -Value $OldVersion
+        Write-Host "  kept the version being replaced ($OldVersion) in $PrevDir"
+    }
+
     foreach ($Item in Get-ChildItem -LiteralPath $StageDir -Force) {
         $Target = Join-Path $InstallDir $Item.Name
         if (($UserDataNames -contains $Item.Name) -and (Test-Path -LiteralPath $Target)) {
@@ -685,6 +736,11 @@ Write-Host "  Two shortcuts are on your Desktop:"
 Write-Host "    vaultis (View)  - read-only"
 Write-Host "    vaultis (Edit)  - edit mode"
 Write-Host ""
+if (Test-Path -LiteralPath (Join-Path $InstallDir "previous\vaultis-gui.exe")) {
+    Write-Host "  The version it replaced is kept, ready to run again if needed:"
+    Write-Host "    $InstallDir\previous\vaultis-gui.exe"
+    Write-Host ""
+}
 Write-Host "  Re-run this file any time to update to the latest release,"
 Write-Host "  or pass a tag to install a specific one:  get_vaultis.bat v0.2.1"
 Write-Host "------------------------------------------------------------------------"

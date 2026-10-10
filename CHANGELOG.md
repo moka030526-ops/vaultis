@@ -29,6 +29,9 @@ The full, per-finding security write-up for the hardening work below lives in
   the safety copy covers them.)
 - **Config → Safety-copy all vaults now:** the same kind of copy for every vault under the
   vault root, on demand, kept separately from the update copies.
+- **The installer keeps the version it replaces**, so going back needs no download: in
+  `previous\` beside the install on Windows, and under
+  `~/Library/Application Support/dev.vaultis.vaultis/previous/` on macOS.
 
 ## [0.5.0] — 2026-10-10
 
