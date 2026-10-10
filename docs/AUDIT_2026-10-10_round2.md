@@ -127,7 +127,30 @@ its open — a safe failure, but a wrong one.
 | Installer, PowerShell half: parse + PSScriptAnalyzer | parses; no findings beyond the existing `Write-Host` style |
 | Installer, PowerShell `previous\` block, run for real under `pwsh` | keeps the programs, replaces on re-run, never copies or touches a vault or user file, refuses a vault planted in `previous\` |
 | Fuzzing, 120 s per target (shared CPU with the matrix) | 63,153,057 executions, **0 crash artifacts** |
-| `cargo mutants --in-diff` (82 mutants: `upgrade.rs` + the open-path hunk) | **partial**: 18 of 82 tested — 14 caught, **0 missed**, 4 unviable, 0 timeouts |
+| `cargo mutants --in-diff` (82 mutants: `upgrade.rs` + the open-path hunk) | **complete**: 70 caught, 6 missed, 6 unviable, 0 timeouts — see *Mutation survivors* |
+
+## Mutation survivors (follow-up, after the release)
+
+The run was finished after 0.6.0 shipped (the first 18 mutants before the release, the other
+64 after). Six survived; each was examined:
+
+* **`classify`, `>` → `>=` (line 80): equivalent.** The `v == a` arm above it already takes
+  the equal case, so `>=` can never change the result.
+* **`folder_safe`, `||` → `&&` (line 68): a real gap.** A stamp made only of dots (`".."`)
+  must label the folder `unknown`; nothing asserted it. Not exploitable — the label only ever
+  appears inside `<name>@<label>@<time>`, one component, never a `..` path — but the guard is
+  meant to hold. Now asserted in `upgrade_classification_follows_semver_and_fails_toward_taking_a_copy`.
+* **`trees_identical` / `dirs_identical` / `files_identical` → `Ok(true)`, and `files_identical`
+  `==` → `!=` (lines 282, 295, 314, 323): a real gap, and the one that mattered.** No test ever
+  presented the byte-for-byte verification with a copy that was WRONG, so a check that always
+  said "identical" passed the whole suite — the verification B-1 depends on was unasserted.
+  `the_copy_verification_rejects_every_kind_of_unfaithful_copy` now builds a real copy and
+  breaks it every way it can be wrong: a byte flipped at 150 KiB (past the first 64 KiB read),
+  a truncated file, an extended one, a file missing, an extra file, a different `vault.pmv`.
+  **Re-run on the four functions after the fix:** 21 mutants, **21 caught**.
+
+No production code changed for these; the three comparison functions became `pub(super)` so
+the vault's tests can reach them, as the module's other helpers already are.
 
 ## Not run, or partial
 
@@ -137,13 +160,6 @@ its open — a safe failure, but a wrong one.
 * **Directory fsync is best-effort**, as everywhere in this codebase (some filesystems refuse
   it); file fsync is strict. A filesystem that silently ignores fsync defeats both, as it would
   defeat the vault's own commit protocol.
-* **Mutation testing is partial: 18 of the 82 mutants** in the change were tested (14 caught,
-  0 missed, 4 unviable) before the run was stopped to cut the release; the full run needs about
-  two more hours at `-j 3`. This round therefore does **not** claim "no surviving mutant" for
-  the safety-copy code. The behaviours it exists for are each pinned by a test that was seen to
-  fail on the defective version (B-1, B-2, B-3 above), which is stronger evidence for those
-  specific behaviours than a sample of mutants, but says nothing about the rest. Finish with:
-  `TMPDIR=$PWD/target/mutants-tmp cargo mutants --in-diff round.diff -p vaultis-core --copy-target false -j 3`.
 * **The marker records sizes, not checksums**: the copy is verified byte for byte when made,
   but later bit-rot inside a copy would not be detected by the marker. Adding a hash would need
   a new crypto dependency in the core; not done in this round.
