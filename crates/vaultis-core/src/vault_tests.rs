@@ -17,6 +17,9 @@
 //! hold. `.unwrap()` is used liberally because a panic in a test is just a test failure.
 
 use super::*; // pull every item from the parent module (this file) into the tests
+// Helpers private to one submodule, exercised directly here.
+use super::documents::read_file_capped;
+use super::tree::{highest_mirror_manifest, read_bounded};
 
 /// Backing up a vault you can only READ must work.
 ///

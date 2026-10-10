@@ -5,7 +5,7 @@
 //! vault, together with the document blobs those records reference. It owns the
 //! patch/plan data types and the small, pure, `Record`-generic diff/apply helpers;
 //! the I/O-bound orchestration (reading the source's blobs, copying them into the
-//! destination volume, and the atomic save) lives on `OpenVault` in `vault.rs`,
+//! destination volume, and the atomic save) lives on `OpenVault` in `vault/merge_from.rs`,
 //! which has access to the private key/storage handles.
 //!
 //! ## Semantics (deliberately simple and safe)
@@ -31,7 +31,7 @@
 //! **advisory only**: the real authorization is the user previewing the [`MergePlan`] and
 //! explicitly accepting it. Every blob id/path copied from the source is validated against
 //! the same allowlists `import_tree` uses, and blobs are re-encrypted under the destination
-//! key (never byte-copied). See `vault.rs` for the apply path.
+//! key (never byte-copied). See `vault/merge_from.rs` for the apply path.
 
 use std::collections::HashSet;
 
