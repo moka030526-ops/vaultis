@@ -127,6 +127,9 @@ fn every_documented_feature_is_findable_by_search() {
         // Long-standing behaviour that is easy to miss.
         ("trim all fields", "editing"),
         ("before tax bucket", "tab-summary"),
+        ("safety copy", "backups"),
+        ("vaultis-backups", "backups"),
+        ("previous version", "backups"),
     ] {
         let hits = search(query);
         assert!(

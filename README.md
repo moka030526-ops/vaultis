@@ -314,6 +314,32 @@ this computer.
 Backups are still encrypted — each one needs the **two passwords that were in effect
 when it was made** (see the next section about changing passwords).
 
+### Safety copies when you update
+
+The first time a **new version** of vaultis opens a vault for editing, it copies that
+vault aside **before changing anything**: into a `vaultis-backups` folder beside your
+vault folders, named after the vault and the version that last saved it (for example
+`household@v0.5.0@20261010-120000`). If the new version ever misbehaves, that copy is
+your vault exactly as it was, and it opens with the same two passwords.
+
+- Opening read-only never makes a copy, because read-only never writes.
+- **Config → Safety-copy all vaults now** makes the same kind of copy of every vault
+  under your vault root, whenever you like. The newest 3 of each kind are kept per vault.
+- If a copy can't be made (a full disk, say), the vault is **not** opened for editing.
+  vaultis won't carry on without one. The copy is all-or-nothing: it is written to a
+  hidden staging folder, compared byte for byte with the vault, flushed to disk, marked
+  with a `SAFETY-COPY-COMPLETE` file, and only then renamed into place. If the app or
+  the computer stops mid-copy, the vault is untouched and the next open makes the copy
+  again before going ahead.
+- A vault saved by a **newer** version than the one you are running opens only
+  read-only, so an older version can never overwrite what a newer one stored.
+- The installer keeps the version it replaced (`previous\` beside the new one on
+  Windows; `~/Library/Application Support/dev.vaultis.vaultis/previous/` on a Mac), so
+  you can go back without downloading anything.
+
+Safety copies are on the **same disk** as your vaults. They guard against a bad update,
+not a dead disk, theft or fire — keep using **Backup now** with a separate drive.
+
 ## Updating from another vault
 
 If you keep a second copy of your estate vault somewhere — a spouse's machine, a USB

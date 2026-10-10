@@ -364,6 +364,37 @@ pub(crate) const TOPICS: &[Topic] = &[
                  lost vault with no backup at all. Store the passwords with the same care you give \
                  the data itself, somewhere your executor will genuinely be able to find them.",
             ),
+            Block::Sub("Safety copies when you update vaultis"),
+            Block::P(
+                "The first time a NEW version of vaultis opens a vault for editing, it first copies \
+                 that vault aside, exactly as the previous version left it — before changing a single \
+                 byte. The copy goes into a folder called vaultis-backups beside your vault folders, \
+                 named after the vault and the version that last saved it, such as \
+                 household@v0.5.0@20261010-120000. If the new version ever misbehaves, that copy is \
+                 the vault as it was, and it opens with the same two passwords. Opening a vault \
+                 read-only never needs a copy, because read-only never writes.",
+            ),
+            Block::P(
+                "⚙ Config also has \"Safety-copy all vaults now\", which makes the same kind of copy \
+                 of every vault under your vault root on demand. The newest three of each kind are \
+                 kept per vault. If a copy cannot be made — a full disk, say — vaultis refuses to \
+                 open the vault for editing rather than carry on without one, and says why. A copy \
+                 only counts once it is finished: it is checked against the vault byte for byte, \
+                 flushed to the disk, marked complete, and only then given its name. If the program \
+                 or the computer stops halfway, the vault is untouched and the next attempt starts \
+                 the copy again before anything else happens.",
+            ),
+            Block::P(
+                "Going back: the installer keeps the version it replaced (in a folder called \
+                 previous beside the new one on Windows), so you can run the old version straight \
+                 away. A vault saved by a NEWER version than the one you are running opens only \
+                 read-only, so an older version can never overwrite what a newer one stored.",
+            ),
+            Block::Warn(
+                "Safety copies sit on the SAME disk as your vaults. They protect you from a bad \
+                 update, not from a dead disk, a theft or a fire — for those you still need the \
+                 Backup button and copies kept somewhere else.",
+            ),
             Block::Sub("Recovering from a backup"),
             Block::P(
                 "To restore, simply copy a backup folder back to wherever you keep vaults and open \
