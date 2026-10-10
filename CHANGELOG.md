@@ -12,6 +12,15 @@ The full, per-finding security write-up for the hardening work below lives in
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-10
+
+The terminal UI is removed: the graphical app is now the only interactive interface, and
+the console `vaultis` binary keeps every subcommand. Vault files, the crypto and the
+key-derivation paths are unchanged, and the release is compatible both ways with 0.4.2.
+The rest is internal: the largest source files are split into modules with no behavior
+change, verified by the audit in `docs/AUDIT_2026-10-10.md`, which also found and fixed
+the two test gaps below.
+
 ### Removed
 
 - **The terminal UI (`vaultis --tui`).** The graphical app already did everything the
