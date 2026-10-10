@@ -535,11 +535,16 @@ each changed record through `upsert` so the trim is recorded in that record's hi
 again on exit. The write `generation` is shown on unlock so a
 rollback is noticeable. The GUI validates a document's virtual path against
 `storage::MAX_PATH_LEN` (256 bytes) before attaching. The Config screen has a
-**color-theme picker** (Light / Dark / High-contrast / Solarized / Sepia, built by
-`visuals_for`) whose choice applies live (even read-only) and persists to a small
-non-secret `prefs.json` in the per-user config dir (`load_theme`/`save_theme`,
-best-effort and size-capped/symlink-refused so a hostile file can't stall startup —
-it holds no vault data). Change-password runs through the Auth screen into
+**color-theme picker** (16 themes, Light / Dark / High contrast through Solarized, Nord
+and Catppuccin, built by `visuals_for`), plus the interface size and typeface. All three
+apply live, even read-only, and persist with the two list-grouping defaults to an
+optional, non-secret `prefs.json` in the **vault root**, the folder that holds the vault
+folders (`crate::prefs`). Nothing is written to an OS config directory. The file sits
+outside the encryption, so it may hold only those five cosmetic keys (`PREFS_KEYS`, deny
+by default): the export directory and the reveal default are deliberately never
+persisted (`DESIGN.md` §7). Reads are capped at 64 KiB and refuse a symlink
+(`read_bounded_nofollow`) and writes are atomic, so a hostile file can't stall startup.
+It holds no vault data. Change-password runs through the Auth screen into
 `OpenVault::change_password`.
 
 ### 6.3 Single-instance guard (`single_instance.rs`)
