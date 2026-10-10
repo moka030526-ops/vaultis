@@ -264,6 +264,23 @@ fn main() -> anyhow::Result<()> {
     v.save()?;
     let _ = std::fs::remove_file(&scratch);
 
+    // The shipped sample must carry THIS release's `written_by` stamp. A vault stamped by an
+    // older release is copied to `vaultis-backups/` the first time a newer one opens it for
+    // editing (see vault/upgrade.rs), so a stale stamp would make every user's first practice
+    // edit produce a pointless safety copy of the demo data. The release job builds the sample
+    // with this program, so failing here blocks a release that would ship one.
+    drop(v);
+    let check = OpenVault::open_read_only(path.clone(), pw1.as_bytes(), pw2.as_bytes())?;
+    if check.vault.written_by.as_deref() != Some(vaultis::vault::APP_VERSION) {
+        anyhow::bail!(
+            "the sample vault is stamped {:?}, not this release ({}); it would be safety-copied on \
+             every user's first edit",
+            check.vault.written_by,
+            vaultis::vault::APP_VERSION
+        );
+    }
+    let v = check;
+
     println!("Sample vault created at {}", dir.display());
     println!(
         "  {} urgent · {} instructions · {} trust&will · {} assets/liabilities · {} accounts · \
