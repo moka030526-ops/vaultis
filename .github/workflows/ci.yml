@@ -18,7 +18,7 @@ jobs:
     name: test + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # eframe/arboard link X11/xcb/xkb libs on Linux even though the tests never open
       # a window, so the test binaries need these to LINK.
       - name: Install GUI link deps
@@ -58,7 +58,7 @@ jobs:
     name: supply chain (cargo-audit + cargo-deny)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-audit --locked
@@ -90,7 +90,7 @@ jobs:
     name: windows build (real link)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # A real BUILD on a real Windows runner, not `cargo check` cross-compiled from
@@ -113,7 +113,7 @@ jobs:
     name: macos test + bundle
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -143,7 +143,7 @@ jobs:
     name: fuzz smoke (parsers)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-fuzz --locked
@@ -168,7 +168,7 @@ jobs:
     name: coverage (cargo-llvm-cov, informational)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # eframe/arboard link X11/xcb/xkb even though the tests never open a window.
       - name: Install GUI link deps
         run: |
@@ -190,8 +190,8 @@ jobs:
     name: android apk build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -206,7 +206,7 @@ jobs:
       # `tools`, which meant 0.3.0 was a tag away from shipping a new ZAKAT record
       # kind whose Kotlin had never been compiled. Everything else this job needs is
       # installed explicitly in the next step.
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
       # Match the NDK pinned in mobile/composeApp/build.gradle.kts (ndkVersion).
@@ -222,7 +222,7 @@ jobs:
       # UniFFI bindings, and assembles the APK. Reuses the audited vaultis-core.
       - name: Build the debug APK
         run: mobile/gradlew -p mobile :composeApp:assembleDebug --no-daemon --stacktrace
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: composeApp-debug-apk
           path: mobile/composeApp/build/outputs/apk/debug/composeApp-debug.apk

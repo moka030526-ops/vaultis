@@ -36,7 +36,7 @@ jobs:
     name: windows x86_64
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -116,7 +116,7 @@ jobs:
 
       # On a manual dispatch this is the whole output: download it from the run page and
       # check the packaging before tagging anything.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: vaultis-windows-x86_64
           path: |
@@ -143,7 +143,7 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -215,13 +215,42 @@ jobs:
           shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
           echo "ZIP=$ZIP" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: vaultis-macos-universal
           path: |
             ${{ env.ZIP }}
             ${{ env.ZIP }}.sha256
           if-no-files-found: error
+
+  # A dry run (workflow_dispatch) never reaches `publish`, so without this the hand-off it
+  # depends on -- both platforms' artifacts downloaded and merged into one folder -- would
+  # first be exercised by a REAL release. This job does exactly that download and checks
+  # every file `publish` would attach is there, then stops: it publishes nothing.
+  verify-dry-run:
+    name: check the release hand-off (dry run only)
+    if: github.event_name == 'workflow_dispatch'
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Both packages and their checksums arrived
+        run: |
+          ls -la dist
+          for pattern in 'vaultis-*-windows-x86_64.zip' 'vaultis-*-macos-universal.zip'; do
+            zip=$(ls dist/$pattern 2>/dev/null | head -1)
+            [ -n "$zip" ] || { echo "missing: $pattern"; exit 1; }
+            [ -f "$zip.sha256" ] || { echo "missing: $zip.sha256"; exit 1; }
+            # Compared by hand rather than `sha256sum -c`: the Windows job writes the file
+            # with CRLF, which -c would read as part of the file name.
+            want=$(tr -d '\r' < "$zip.sha256" | awk '{print $1}')
+            have=$(sha256sum "$zip" | awk '{print $1}')
+            [ "$want" = "$have" ] || { echo "checksum mismatch: $zip"; exit 1; }
+            echo "ok: $(basename "$zip") $have"
+          done
 
   # One release, created once both packages exist: a release that appeared with only
   # the Windows zip would send `get_vaultis.bat` on a Mac to /releases/latest and find
@@ -232,8 +261,8 @@ jobs:
     needs: [windows, macos]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true
